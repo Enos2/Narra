@@ -3,8 +3,10 @@
  * Description: Handles user profile, admin actions, RBAC, shadow ban, search, JWT
  * UPDATED: Added enhanced profile updates with bio, location, website, preferences
  * ADDED: Follow/unfollow functionality with twin detection
+ * ADDED: Get following content feed to fetch videos from followed users
  */
 
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -589,6 +591,145 @@ exports.getTwins = async (req, res) => {
     });
   } catch (err) {
     console.error('Get twins error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+// ================================
+// GET CONTENT FROM FOLLOWED USERS
+// ================================
+exports.getFollowingContent = async (req, res) => {
+  try {
+    const currentUserId = req.user._id;
+    const { page = 1, limit = 20, type } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get current user with following list
+    const currentUser = await User.findById(currentUserId);
+    
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const followedUserIds = currentUser.following;
+
+    if (followedUserIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        videos: [],
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          pages: 0
+        }
+      });
+    }
+
+    // Build query for videos from followed users
+    const Video = mongoose.model('Video');
+    const Live = mongoose.model('Live');
+    
+    let videoQuery = {
+      user: { $in: followedUserIds },
+      isDeleted: false,
+      $or: [
+        { status: 'released' },
+        { status: 'live' }
+      ]
+    };
+
+    // Filter by content type if specified
+    if (type === 'video') {
+      videoQuery.type = { $in: ['movie', 'series'] };
+    } else if (type === 'live') {
+      videoQuery.status = 'live';
+    }
+
+    // Get videos
+    const videos = await Video.find(videoQuery)
+      .populate('user', 'name avatar isVerified')
+      .sort({ createdAt: -1, isLive: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Video.countDocuments(videoQuery);
+
+    // Get live streams separately if needed
+    let lives = [];
+    if (!type || type === 'live') {
+      lives = await Live.find({
+        user: { $in: followedUserIds },
+        status: 'live',
+        isDeleted: false
+      })
+      .populate('user', 'name avatar isVerified')
+      .sort({ startedAt: -1 });
+    }
+
+    // Combine videos and lives, sort by date
+    let allContent = [...videos];
+    
+    if (lives.length > 0) {
+      // Convert lives to video-like format
+      const liveContent = lives.map(live => ({
+        _id: live._id,
+        title: live.title,
+        description: live.description,
+        thumbnailUrl: live.thumbnailUrl,
+        status: 'live',
+        type: 'live',
+        isLive: true,
+        user: live.user,
+        viewerCount: live.viewerCount,
+        startedAt: live.startedAt,
+        createdAt: live.createdAt
+      }));
+      
+      allContent = [...liveContent, ...videos];
+      
+      // Sort by createdAt (newest first)
+      allContent.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    // Format response
+    const formattedContent = allContent.map(item => ({
+      _id: item._id,
+      title: item.title,
+      description: item.description,
+      thumbnailUrl: item.thumbnailUrl,
+      status: item.status || (item.isLive ? 'live' : 'released'),
+      type: item.type || 'video',
+      isLive: item.isLive || false,
+      creator: item.user,
+      uploader: item.user?.name || 'Unknown',
+      uploaderAvatar: item.user?.avatar,
+      viewerCount: item.viewerCount,
+      views: item.views,
+      createdAt: item.createdAt,
+      isPaid: item.isPaid || false,
+      price: item.price
+    }));
+
+    res.status(200).json({
+      success: true,
+      videos: formattedContent,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+
+  } catch (err) {
+    console.error('Get following content error:', err);
     res.status(500).json({
       success: false,
       message: 'Server error'

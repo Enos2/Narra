@@ -14,7 +14,7 @@ const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const liveQualificationRoutes = require('./routes/liveQualificationRoutes');
 const messageRoutes = require('./routes/messageRoutes');
-const uploadRoutes = require('./routes/uploadRoutes'); // ADDED: Upload routes for avatars, covers, etc.
+const uploadRoutes = require('./routes/uploadRoutes');
 
 // Middleware
 const errorHandler = require('./middleware/errorMiddleware');
@@ -137,16 +137,25 @@ io.on('connection', (socket) => {
   });
 });
 
+/*
+========================================
+NOW CONNECT MESSAGE CONTROLLER TO SOCKET.IO
+========================================
+*/
 // Pass io instance to message controller
 const messageController = require('./controllers/messageController');
-messageController.setSocketIO(io);
+if (messageController && typeof messageController.setSocketIO === 'function') {
+  messageController.setSocketIO(io);
+  console.log('✅ Message controller connected to Socket.IO');
+} else {
+  console.warn('⚠️ Message controller setSocketIO method not found');
+}
 
 /*
 ========================================
-GLOBAL MIDDLEWARE - FIXED CORS CONFIGURATION
+GLOBAL MIDDLEWARE
 ========================================
 */
-// Configure CORS middleware properly
 const corsOptions = {
   origin: 'http://localhost:5173',
   credentials: true,
@@ -156,7 +165,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
 app.use(express.json());
 
 // Video streaming headers
@@ -236,35 +244,7 @@ app.get('/', (req, res) => {
             <h2>Status: <span class="status online">ONLINE</span></h2>
             <p>Server is running with video streaming and messaging support</p>
             <p>✅ Socket.io enabled for real-time messaging</p>
-            <p>✅ CORS headers properly configured with x-requested-with</p>
-          </div>
-          
-          <div class="card">
-            <h2>Video Streaming:</h2>
-            <p>✅ Video files are being served with proper headers</p>
-            <p>✅ CORS enabled for frontend</p>
-            <p>✅ Accept-Ranges enabled for seeking</p>
-          </div>
-          
-          <div class="card">
-            <h2>Messaging System:</h2>
-            <p>✅ Real-time messaging with Socket.io</p>
-            <p>✅ Age verification for minor/adult communication</p>
-            <p>✅ Role-based access control</p>
-          </div>
-
-          <div class="card">
-            <h2>New Features (March 2026):</h2>
-            <p>✅ Avatar upload with image optimization</p>
-            <p>✅ Profile cover images</p>
-            <p>✅ Follow/Unfollow system with twin detection</p>
-            <p>✅ User verification documents</p>
-            <p>✅ Upload quota tracking</p>
-          </div>
-          
-          <div class="card">
-            <h2>Server Time:</h2>
-            <p>${new Date().toLocaleString()}</p>
+            <p>✅ Message controller connected to Socket.IO</p>
           </div>
         </div>
       </body>
@@ -287,9 +267,9 @@ app.get('/api/health', (req, res) => {
       admin_moderation: true,
       realtime_messaging: true,
       age_verification: true,
-      avatar_upload: true, // ADDED
-      follow_system: true,  // ADDED
-      twin_detection: true   // ADDED
+      avatar_upload: true,
+      follow_system: true,
+      twin_detection: true
     }
   });
 });
@@ -302,11 +282,11 @@ API ROUTES
 app.use('/api/auth', authRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/lives', liveRoutes);
-app.use('/api/users', userRoutes); // Now includes follow routes
+app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/live-qualification', liveQualificationRoutes);
 app.use('/api/messages', messageRoutes);
-app.use('/api/uploads', uploadRoutes); // ADDED: Avatar, cover image, document uploads
+app.use('/api/uploads', uploadRoutes);
 
 /*
 ========================================
@@ -331,7 +311,7 @@ app.use(errorHandler);
 
 /*
 ========================================
-SERVER START (use server.listen instead of app.listen)
+SERVER START
 ========================================
 */
 const PORT = process.env.PORT || 5000;
@@ -344,16 +324,6 @@ server.listen(PORT, () => {
   console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
   console.log(`📁 Video files: http://localhost:${PORT}/uploads`);
   console.log(`💬 Messaging system: ACTIVE`);
-  console.log(`✅ Age verification: ENABLED`);
-  console.log(`✅ CORS headers: x-requested-with allowed`);
-  console.log(`✅ CORS enabled for http://localhost:5173`);
-  console.log('--------------------------------------------');
-  console.log('📸 NEW FEATURES:');
-  console.log('   • Avatar upload with optimization');
-  console.log('   • Profile cover images');
-  console.log('   • Follow/Unfollow system');
-  console.log('   • Twin detection (mutual follows)');
-  console.log('   • Upload quota tracking');
-  console.log('   • Verification documents');
+  console.log(`✅ Message controller: CONNECTED`);
   console.log('============================================\n');
 });

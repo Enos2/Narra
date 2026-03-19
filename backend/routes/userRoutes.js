@@ -1,6 +1,7 @@
 /**
  * File: backend/routes/userRoutes.js
  * Description: Routes for user operations including profile management and follow functionality
+ * UPDATED: Added route for following-content to get videos from followed users
  */
 
 const express = require('express');
@@ -70,6 +71,13 @@ router.get('/:userId/following', userController.getFollowing);
 
 // Get user's twins (mutual followers) (with pagination)
 router.get('/:userId/twins', userController.getTwins);
+
+// ================================
+// FOLLOWING CONTENT FEED
+// ================================
+
+// Get content (videos/lives) from users the current user follows
+router.get('/following-content', userController.getFollowingContent);
 
 // ================================
 // SEARCH (AUTHENTICATED)
