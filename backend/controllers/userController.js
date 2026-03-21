@@ -1,7 +1,7 @@
 /**
  * File: backend/controllers/userController.js
  * Description: Handles user profile, admin actions, RBAC, shadow ban, search, JWT
- * UPDATED: Added enhanced profile updates with bio, location, website, preferences
+ * UPDATED: Added enhanced profile updates with firstName, lastName, middleName, username, gender
  * ADDED: Follow/unfollow functionality with twin detection
  * ADDED: Get following content feed to fetch videos from followed users
  */
@@ -21,9 +21,9 @@ exports.getProfile = async (req, res) => {
       .populate('uploadedVideos', 'title thumbnailUrl views createdAt status')
       .populate('uploadedLives', 'title thumbnailUrl viewers isLive')
       .populate('purchasedVideos', 'title thumbnailUrl price')
-      .populate('followers', 'name avatar isVerified')
-      .populate('following', 'name avatar isVerified')
-      .populate('twins', 'name avatar isVerified');
+      .populate('followers', 'firstName lastName username avatar isVerified')
+      .populate('following', 'firstName lastName username avatar isVerified')
+      .populate('twins', 'firstName lastName username avatar isVerified');
       
     if (!user) {
       return res.status(404).json({ 
@@ -32,12 +32,13 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    // Add computed fields
     const userObject = user.toObject();
     userObject.followerCount = user.followers.length;
     userObject.followingCount = user.following.length;
     userObject.twinCount = user.twins.length;
     userObject.profileComplete = !!(user.avatar && user.bio && user.location);
+    userObject.name = user.fullName;
+    userObject.formattedAccountAge = user.getFormattedAccountAge();
 
     res.status(200).json({ 
       success: true, 
@@ -53,12 +54,15 @@ exports.getProfile = async (req, res) => {
 };
 
 // ================================
-// UPDATE PROFILE (ENHANCED)
+// UPDATE PROFILE (ENHANCED with new fields)
 // ================================
 exports.updateProfile = async (req, res) => {
   try {
     const { 
-      name, 
+      firstName,
+      lastName,
+      middleName,
+      username,
       email, 
       password, 
       currentPassword,
@@ -67,6 +71,7 @@ exports.updateProfile = async (req, res) => {
       website,
       phoneNumber,
       avatar,
+      gender,
       notificationPreferences,
       privacySettings,
       theme,
@@ -82,7 +87,6 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
-    // If trying to change password, verify current password
     if (password) {
       if (!currentPassword) {
         return res.status(400).json({ 
@@ -99,20 +103,57 @@ exports.updateProfile = async (req, res) => {
         });
       }
 
-      // Hash new password
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(password, salt);
       user.lastPasswordChange = new Date();
-      
-      // Increment token version to force logout from other devices
       user.tokenVersion = (user.tokenVersion || 0) + 1;
     }
 
-    // Update basic info
-    if (name) user.name = name;
+    if (firstName) {
+      if (firstName.length < 2) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'First name must be at least 2 characters' 
+        });
+      }
+      user.firstName = firstName;
+    }
+    
+    if (lastName) {
+      if (lastName.length < 2) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Last name must be at least 2 characters' 
+        });
+      }
+      user.lastName = lastName;
+    }
+    
+    if (middleName !== undefined) user.middleName = middleName;
+    
+    if (username && username !== user.username) {
+      const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
+      if (!usernameRegex.test(username)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Username must be 3-30 characters and can only contain letters, numbers, and underscores' 
+        });
+      }
+      
+      const existingUser = await User.findOne({ 
+        username: username.toLowerCase(), 
+        _id: { $ne: user._id } 
+      });
+      if (existingUser) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Username already taken' 
+        });
+      }
+      user.username = username.toLowerCase();
+    }
     
     if (email && email !== user.email) {
-      // Check if email is already taken
       const existingUser = await User.findOne({ email, _id: { $ne: user._id } });
       if (existingUser) {
         return res.status(400).json({ 
@@ -124,15 +165,13 @@ exports.updateProfile = async (req, res) => {
     }
 
     if (dateOfBirth) user.dateOfBirth = dateOfBirth;
-
-    // Update profile fields
+    if (gender !== undefined) user.gender = gender;
     if (bio !== undefined) user.bio = bio;
     if (location !== undefined) user.location = location;
     if (website !== undefined) user.website = website;
     if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
     if (avatar !== undefined) user.avatar = avatar;
 
-    // Update preferences
     if (notificationPreferences) {
       user.notificationPreferences = {
         ...user.notificationPreferences.toObject(),
@@ -152,18 +191,18 @@ exports.updateProfile = async (req, res) => {
 
     await user.save();
 
-    // Return updated user without sensitive data
     const updatedUser = await User.findById(user._id)
       .select('-password -passwordResetToken -passwordResetExpires -twoFactorSecret -loginHistory')
-      .populate('followers', 'name avatar isVerified')
-      .populate('following', 'name avatar isVerified')
-      .populate('twins', 'name avatar isVerified');
+      .populate('followers', 'firstName lastName username avatar isVerified')
+      .populate('following', 'firstName lastName username avatar isVerified')
+      .populate('twins', 'firstName lastName username avatar isVerified');
 
-    // Add computed fields
     const userObject = updatedUser.toObject();
     userObject.followerCount = updatedUser.followers.length;
     userObject.followingCount = updatedUser.following.length;
     userObject.twinCount = updatedUser.twins.length;
+    userObject.name = updatedUser.fullName;
+    userObject.formattedAccountAge = updatedUser.getFormattedAccountAge();
 
     res.status(200).json({ 
       success: true, 
@@ -180,6 +219,64 @@ exports.updateProfile = async (req, res) => {
 };
 
 // ================================
+// CHECK USERNAME AVAILABILITY
+// ================================
+exports.checkUsername = async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username || username.length < 3) {
+      return res.json({ available: true });
+    }
+
+    const existingUser = await User.findOne({ 
+      username: username.toLowerCase(),
+      _id: { $ne: req.user?._id }
+    });
+    
+    res.json({ available: !existingUser });
+  } catch (err) {
+    console.error('Check username error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to check username' 
+    });
+  }
+};
+
+// ================================
+// GET UPLOAD STATUS (QUOTA)
+// ================================
+exports.getUploadStatus = async (req, res) => {
+  try {
+    const Video = require('../models/Video');
+    
+    const videoCount = await Video.countDocuments({ 
+      user: req.user._id, 
+      isDeleted: false 
+    });
+    
+    const quotaGB = req.user.role === 'creator' ? 100 : 10;
+    const currentStorageGB = Math.min(Math.floor(videoCount * 0.1), quotaGB);
+    
+    res.json({
+      success: true,
+      quota: {
+        quotaGB,
+        currentStorageGB,
+        maxVideos: req.user.role === 'creator' ? 1000 : 100,
+        currentVideos: videoCount
+      }
+    });
+  } catch (err) {
+    console.error('Get upload status error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to get upload status' 
+    });
+  }
+};
+
+// ================================
 // FOLLOW A USER
 // ================================
 exports.followUser = async (req, res) => {
@@ -187,7 +284,6 @@ exports.followUser = async (req, res) => {
     const { userId } = req.params;
     const currentUserId = req.user._id;
 
-    // Prevent self-follow
     if (userId === currentUserId.toString()) {
       return res.status(400).json({
         success: false,
@@ -195,7 +291,6 @@ exports.followUser = async (req, res) => {
       });
     }
 
-    // Find target user
     const targetUser = await User.findById(userId);
     if (!targetUser) {
       return res.status(404).json({
@@ -204,7 +299,6 @@ exports.followUser = async (req, res) => {
       });
     }
 
-    // Check if target user is banned/deleted
     if (targetUser.isBanned || targetUser.isDeleted) {
       return res.status(403).json({
         success: false,
@@ -212,7 +306,6 @@ exports.followUser = async (req, res) => {
       });
     }
 
-    // Check privacy settings
     if (targetUser.privacySettings?.profileVisibility === 'private') {
       return res.status(403).json({
         success: false,
@@ -222,7 +315,6 @@ exports.followUser = async (req, res) => {
 
     const currentUser = await User.findById(currentUserId);
 
-    // Check if already following
     if (currentUser.following.includes(userId)) {
       return res.status(400).json({
         success: false,
@@ -230,17 +322,13 @@ exports.followUser = async (req, res) => {
       });
     }
 
-    // Add to following
     currentUser.following.push(userId);
     await currentUser.save();
 
-    // Add to target user's followers
     targetUser.followers.push(currentUserId);
     
-    // Check if it's a twin (mutual follow)
     const isTwin = targetUser.following.includes(currentUserId);
     if (isTwin) {
-      // Add to twins for both users
       if (!currentUser.twins.includes(userId)) {
         currentUser.twins.push(userId);
         await currentUser.save();
@@ -249,18 +337,16 @@ exports.followUser = async (req, res) => {
         targetUser.twins.push(currentUserId);
       }
       
-      // Create notification for twin
       targetUser.notifications.push({
         type: 'follow',
-        message: `${currentUser.name} started following you back! You are now twins! 🎉`,
+        message: `${currentUser.fullName} started following you back! You are now twins! 🎉`,
         relatedId: currentUserId,
         relatedModel: 'User'
       });
     } else {
-      // Create notification for regular follow
       targetUser.notifications.push({
         type: 'follow',
-        message: `${currentUser.name} started following you`,
+        message: `${currentUser.fullName} started following you`,
         relatedId: currentUserId,
         relatedModel: 'User'
       });
@@ -268,15 +354,14 @@ exports.followUser = async (req, res) => {
 
     await targetUser.save();
 
-    // Get updated user data for response
-    await currentUser.populate('following', 'name avatar isVerified');
-    await currentUser.populate('twins', 'name avatar isVerified');
+    await currentUser.populate('following', 'firstName lastName username avatar isVerified');
+    await currentUser.populate('twins', 'firstName lastName username avatar isVerified');
 
     res.status(200).json({
       success: true,
       message: isTwin 
-        ? `You and ${targetUser.name} are now twins! 🎉` 
-        : `You are now following ${targetUser.name}`,
+        ? `You and ${targetUser.fullName} are now twins! 🎉` 
+        : `You are now following ${targetUser.fullName}`,
       isTwin,
       following: currentUser.following,
       twins: currentUser.twins,
@@ -303,7 +388,6 @@ exports.unfollowUser = async (req, res) => {
     const { userId } = req.params;
     const currentUserId = req.user._id;
 
-    // Find users
     const currentUser = await User.findById(currentUserId);
     const targetUser = await User.findById(userId);
 
@@ -314,7 +398,6 @@ exports.unfollowUser = async (req, res) => {
       });
     }
 
-    // Check if actually following
     if (!currentUser.following.includes(userId)) {
       return res.status(400).json({
         success: false,
@@ -322,12 +405,10 @@ exports.unfollowUser = async (req, res) => {
       });
     }
 
-    // Remove from following
     currentUser.following = currentUser.following.filter(
       id => id.toString() !== userId
     );
 
-    // Remove from twins if present
     if (currentUser.twins.includes(userId)) {
       currentUser.twins = currentUser.twins.filter(
         id => id.toString() !== userId
@@ -336,35 +417,31 @@ exports.unfollowUser = async (req, res) => {
 
     await currentUser.save();
 
-    // Remove from target user's followers
     targetUser.followers = targetUser.followers.filter(
       id => id.toString() !== currentUserId.toString()
     );
 
-    // Remove from target user's twins if present
     if (targetUser.twins.includes(currentUserId)) {
       targetUser.twins = targetUser.twins.filter(
         id => id.toString() !== currentUserId.toString()
       );
     }
 
-    // Create notification for unfollow
     targetUser.notifications.push({
       type: 'follow',
-      message: `${currentUser.name} unfollowed you`,
+      message: `${currentUser.fullName} unfollowed you`,
       relatedId: currentUserId,
       relatedModel: 'User'
     });
 
     await targetUser.save();
 
-    // Get updated user data for response
-    await currentUser.populate('following', 'name avatar isVerified');
-    await currentUser.populate('twins', 'name avatar isVerified');
+    await currentUser.populate('following', 'firstName lastName username avatar isVerified');
+    await currentUser.populate('twins', 'firstName lastName username avatar isVerified');
 
     res.status(200).json({
       success: true,
-      message: `You have unfollowed ${targetUser.name}`,
+      message: `You have unfollowed ${targetUser.fullName}`,
       following: currentUser.following,
       twins: currentUser.twins,
       stats: {
@@ -400,7 +477,6 @@ exports.getFollowers = async (req, res) => {
       });
     }
 
-    // Check privacy settings
     if (!user.privacySettings?.showFollowers && 
         (!currentUserId || currentUserId.toString() !== userId)) {
       return res.status(403).json({
@@ -411,16 +487,14 @@ exports.getFollowers = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get followers with pagination
     const followers = await User.find({
       _id: { $in: user.followers }
     })
-    .select('name avatar bio isVerified followerCount createdAt')
+    .select('firstName lastName username avatar bio isVerified followerCount createdAt')
     .skip(skip)
     .limit(parseInt(limit))
     .sort({ createdAt: -1 });
 
-    // Check follow status for current user
     let followersWithStatus = followers;
     if (currentUserId) {
       const currentUser = await User.findById(currentUserId);
@@ -428,6 +502,7 @@ exports.getFollowers = async (req, res) => {
         const fObj = f.toObject();
         return {
           ...fObj,
+          name: fObj.fullName || `${fObj.firstName} ${fObj.lastName}`,
           isFollowing: currentUser.following.includes(f._id),
           isFollowedBy: currentUser.followers.includes(f._id),
           isTwin: currentUser.twins.includes(f._id)
@@ -472,7 +547,6 @@ exports.getFollowing = async (req, res) => {
       });
     }
 
-    // Check privacy settings
     if (!user.privacySettings?.showFollowing && 
         (!currentUserId || currentUserId.toString() !== userId)) {
       return res.status(403).json({
@@ -483,16 +557,14 @@ exports.getFollowing = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get following with pagination
     const following = await User.find({
       _id: { $in: user.following }
     })
-    .select('name avatar bio isVerified followerCount createdAt')
+    .select('firstName lastName username avatar bio isVerified followerCount createdAt')
     .skip(skip)
     .limit(parseInt(limit))
     .sort({ createdAt: -1 });
 
-    // Check follow status for current user
     let followingWithStatus = following;
     if (currentUserId) {
       const currentUser = await User.findById(currentUserId);
@@ -500,7 +572,8 @@ exports.getFollowing = async (req, res) => {
         const fObj = f.toObject();
         return {
           ...fObj,
-          isFollowing: true, // They are in following list
+          name: fObj.fullName || `${fObj.firstName} ${fObj.lastName}`,
+          isFollowing: true,
           isFollowedBy: currentUser.followers.includes(f._id),
           isTwin: currentUser.twins.includes(f._id)
         };
@@ -544,7 +617,6 @@ exports.getTwins = async (req, res) => {
       });
     }
 
-    // Check privacy settings
     if (!user.privacySettings?.showFollowers && 
         (!currentUserId || currentUserId.toString() !== userId)) {
       return res.status(403).json({
@@ -555,16 +627,14 @@ exports.getTwins = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get twins with pagination
     const twins = await User.find({
       _id: { $in: user.twins }
     })
-    .select('name avatar bio isVerified followerCount createdAt')
+    .select('firstName lastName username avatar bio isVerified followerCount createdAt')
     .skip(skip)
     .limit(parseInt(limit))
     .sort({ createdAt: -1 });
 
-    // Check follow status for current user
     let twinsWithStatus = twins;
     if (currentUserId && currentUserId.toString() !== userId) {
       const currentUser = await User.findById(currentUserId);
@@ -572,6 +642,7 @@ exports.getTwins = async (req, res) => {
         const tObj = t.toObject();
         return {
           ...tObj,
+          name: tObj.fullName || `${tObj.firstName} ${tObj.lastName}`,
           isFollowing: currentUser.following.includes(t._id),
           isFollowedBy: currentUser.followers.includes(t._id),
           isTwin: currentUser.twins.includes(t._id)
@@ -607,7 +678,6 @@ exports.getFollowingContent = async (req, res) => {
     const { page = 1, limit = 20, type } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get current user with following list
     const currentUser = await User.findById(currentUserId);
     
     if (!currentUser) {
@@ -632,7 +702,6 @@ exports.getFollowingContent = async (req, res) => {
       });
     }
 
-    // Build query for videos from followed users
     const Video = mongoose.model('Video');
     const Live = mongoose.model('Live');
     
@@ -645,23 +714,20 @@ exports.getFollowingContent = async (req, res) => {
       ]
     };
 
-    // Filter by content type if specified
     if (type === 'video') {
       videoQuery.type = { $in: ['movie', 'series'] };
     } else if (type === 'live') {
       videoQuery.status = 'live';
     }
 
-    // Get videos
     const videos = await Video.find(videoQuery)
-      .populate('user', 'name avatar isVerified')
+      .populate('user', 'firstName lastName username avatar isVerified')
       .sort({ createdAt: -1, isLive: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
     const total = await Video.countDocuments(videoQuery);
 
-    // Get live streams separately if needed
     let lives = [];
     if (!type || type === 'live') {
       lives = await Live.find({
@@ -669,15 +735,13 @@ exports.getFollowingContent = async (req, res) => {
         status: 'live',
         isDeleted: false
       })
-      .populate('user', 'name avatar isVerified')
+      .populate('user', 'firstName lastName username avatar isVerified')
       .sort({ startedAt: -1 });
     }
 
-    // Combine videos and lives, sort by date
     let allContent = [...videos];
     
     if (lives.length > 0) {
-      // Convert lives to video-like format
       const liveContent = lives.map(live => ({
         _id: live._id,
         title: live.title,
@@ -693,12 +757,9 @@ exports.getFollowingContent = async (req, res) => {
       }));
       
       allContent = [...liveContent, ...videos];
-      
-      // Sort by createdAt (newest first)
       allContent.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     }
 
-    // Format response
     const formattedContent = allContent.map(item => ({
       _id: item._id,
       title: item.title,
@@ -708,7 +769,7 @@ exports.getFollowingContent = async (req, res) => {
       type: item.type || 'video',
       isLive: item.isLive || false,
       creator: item.user,
-      uploader: item.user?.name || 'Unknown',
+      uploader: item.user?.fullName || item.user?.username || 'Unknown',
       uploaderAvatar: item.user?.avatar,
       viewerCount: item.viewerCount,
       views: item.views,
@@ -769,7 +830,10 @@ exports.checkFollowStatus = async (req, res) => {
       },
       targetUser: {
         id: targetUser._id,
-        name: targetUser.name,
+        name: targetUser.fullName,
+        firstName: targetUser.firstName,
+        lastName: targetUser.lastName,
+        username: targetUser.username,
         avatar: targetUser.avatar,
         isVerified: targetUser.isVerified,
         privacySettings: targetUser.privacySettings
@@ -794,7 +858,6 @@ exports.getFollowSuggestions = async (req, res) => {
 
     const currentUser = await User.findById(currentUserId);
 
-    // Get popular users that the current user doesn't follow
     const suggestions = await User.find({
       _id: { 
         $ne: currentUserId,
@@ -806,13 +869,13 @@ exports.getFollowSuggestions = async (req, res) => {
     })
     .sort({ followerCount: -1, createdAt: -1 })
     .limit(parseInt(limit))
-    .select('name avatar bio isVerified followerCount createdAt');
+    .select('firstName lastName username avatar bio isVerified followerCount createdAt');
 
-    // Mark if they follow the current user
     const suggestionsWithStatus = suggestions.map(s => {
       const sObj = s.toObject();
       return {
         ...sObj,
+        name: sObj.fullName || `${sObj.firstName} ${sObj.lastName}`,
         followsYou: s.followers.includes(currentUserId)
       };
     });
@@ -851,8 +914,9 @@ exports.searchUsers = async (req, res) => {
       $and: [
         {
           $or: [
-            { name: { $regex: query, $options: 'i' } },
-            { email: { $regex: query, $options: 'i' } },
+            { firstName: { $regex: query, $options: 'i' } },
+            { lastName: { $regex: query, $options: 'i' } },
+            { username: { $regex: query, $options: 'i' } },
             { location: { $regex: query, $options: 'i' } }
           ]
         },
@@ -861,7 +925,6 @@ exports.searchUsers = async (req, res) => {
       ]
     };
 
-    // Don't show private profiles to non-followers
     if (currentUserId) {
       const currentUser = await User.findById(currentUserId);
       filter.$and.push({
@@ -878,14 +941,13 @@ exports.searchUsers = async (req, res) => {
     }
 
     const users = await User.find(filter)
-      .select('name avatar bio isVerified followerCount location privacySettings')
+      .select('firstName lastName username avatar bio isVerified followerCount location privacySettings')
       .skip(skip)
       .limit(parseInt(limit))
       .sort({ followerCount: -1 });
 
     const total = await User.countDocuments(filter);
 
-    // Add follow status for authenticated users
     let usersWithStatus = users;
     if (currentUserId) {
       const currentUser = await User.findById(currentUserId);
@@ -893,6 +955,7 @@ exports.searchUsers = async (req, res) => {
         const uObj = u.toObject();
         return {
           ...uObj,
+          name: uObj.fullName || `${uObj.firstName} ${uObj.lastName}`,
           isFollowing: currentUser.following.includes(u._id),
           isFollowedBy: currentUser.followers.includes(u._id),
           isTwin: currentUser.twins.includes(u._id)
@@ -939,10 +1002,8 @@ exports.getUserById = async (req, res) => {
       });
     }
 
-    // Check privacy settings
     if (user.privacySettings?.profileVisibility === 'private') {
       if (!currentUserId || currentUserId.toString() !== id) {
-        // Check if current user is a follower
         const isFollower = user.followers.includes(currentUserId);
         if (!isFollower) {
           return res.status(403).json({
@@ -957,8 +1018,9 @@ exports.getUserById = async (req, res) => {
     userObject.followerCount = user.followers.length;
     userObject.followingCount = user.following.length;
     userObject.twinCount = user.twins.length;
+    userObject.name = user.fullName;
+    userObject.formattedAccountAge = user.getFormattedAccountAge();
 
-    // Add follow status for authenticated users
     if (currentUserId) {
       const currentUser = await User.findById(currentUserId);
       userObject.isFollowing = currentUser.following.includes(user._id);
@@ -966,7 +1028,6 @@ exports.getUserById = async (req, res) => {
       userObject.isTwin = currentUser.twins.includes(user._id);
     }
 
-    // Remove followers/following lists if privacy settings require
     if (!user.privacySettings?.showFollowers && (!currentUserId || currentUserId.toString() !== id)) {
       delete userObject.followers;
     }
@@ -1011,7 +1072,9 @@ exports.getAllUsers = async (req, res) => {
     if (status === 'deactivated') filter.isDeactivated = true;
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
+        { firstName: { $regex: search, $options: 'i' } },
+        { lastName: { $regex: search, $options: 'i' } },
+        { username: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } }
       ];
     }
@@ -1024,9 +1087,15 @@ exports.getAllUsers = async (req, res) => {
 
     const total = await User.countDocuments(filter);
 
+    const usersWithName = users.map(u => {
+      const uObj = u.toObject();
+      uObj.name = u.fullName;
+      return uObj;
+    });
+
     res.status(200).json({ 
       success: true, 
-      users,
+      users: usersWithName,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -1049,7 +1118,6 @@ exports.getAllUsers = async (req, res) => {
 exports.deleteUser = async (req, res) => {
   try {
     const userId = req.user._id;
-    const isAdmin = ['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role);
 
     if (req.user.isShadowBanned) {
       return res.status(403).json({ 
@@ -1066,13 +1134,14 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    // Soft delete instead of permanent deletion
     user.isDeleted = true;
     user.deletedAt = new Date();
     user.deletedBy = userId;
     user.deleteReason = 'User requested deletion';
-    user.email = `deleted_${user._id}_${user.email}`; // Anonymize email
-    user.name = 'Deleted User';
+    user.email = `deleted_${user._id}_${user.email}`;
+    user.firstName = 'Deleted';
+    user.lastName = 'User';
+    user.username = `deleted_${user._id}`;
     
     await user.save();
 
@@ -1132,7 +1201,7 @@ exports.banUser = async (req, res) => {
       actionType: 'BAN_USER',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} banned ${user.name}`,
+      description: `${req.user.fullName} banned ${user.fullName}`,
       performedBy: req.user._id,
       details: { reason: req.body.reason }
     });
@@ -1141,7 +1210,7 @@ exports.banUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `${user.name} has been banned`, 
+      message: `${user.fullName} has been banned`, 
       user 
     });
   } catch (err) {
@@ -1189,7 +1258,7 @@ exports.unbanUser = async (req, res) => {
       actionType: 'UNBAN_USER',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} unbanned ${user.name}`,
+      description: `${req.user.fullName} unbanned ${user.fullName}`,
       performedBy: req.user._id
     });
 
@@ -1197,7 +1266,7 @@ exports.unbanUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `${user.name} has been unbanned`, 
+      message: `${user.fullName} has been unbanned`, 
       user 
     });
   } catch (err) {
@@ -1237,7 +1306,7 @@ exports.verifyUser = async (req, res) => {
       actionType: 'VERIFY_USER',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} verified ${user.name}`,
+      description: `${req.user.fullName} verified ${user.fullName}`,
       performedBy: req.user._id
     });
 
@@ -1245,7 +1314,7 @@ exports.verifyUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `${user.name} has been verified`, 
+      message: `${user.fullName} has been verified`, 
       user 
     });
   } catch (err) {
@@ -1285,7 +1354,7 @@ exports.unverifyUser = async (req, res) => {
       actionType: 'UNVERIFY_USER',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} unverified ${user.name}`,
+      description: `${req.user.fullName} unverified ${user.fullName}`,
       performedBy: req.user._id,
       details: { reason: req.body.reason }
     });
@@ -1294,7 +1363,7 @@ exports.unverifyUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `${user.name} has been unverified`, 
+      message: `${user.fullName} has been unverified`, 
       user 
     });
   } catch (err) {
@@ -1334,7 +1403,7 @@ exports.deactivateUser = async (req, res) => {
       actionType: 'DEACTIVATE_USER',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} deactivated ${user.name}`,
+      description: `${req.user.fullName} deactivated ${user.fullName}`,
       performedBy: req.user._id,
       details: { reason: req.body.reason }
     });
@@ -1343,7 +1412,7 @@ exports.deactivateUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `${user.name} has been deactivated`, 
+      message: `${user.fullName} has been deactivated`, 
       user 
     });
   } catch (err) {
@@ -1383,7 +1452,7 @@ exports.activateUser = async (req, res) => {
       actionType: 'ACTIVATE_USER',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} activated ${user.name}`,
+      description: `${req.user.fullName} activated ${user.fullName}`,
       performedBy: req.user._id
     });
 
@@ -1391,7 +1460,7 @@ exports.activateUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `${user.name} has been activated`, 
+      message: `${user.fullName} has been activated`, 
       user 
     });
   } catch (err) {
@@ -1435,7 +1504,7 @@ exports.applyShadowBanUser = async (req, res) => {
       actionType: 'SHADOW_BAN',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} shadow banned ${user.name}`,
+      description: `${req.user.fullName} shadow banned ${user.fullName}`,
       performedBy: req.user._id,
       details: { reason, countries, continents }
     });
@@ -1444,7 +1513,7 @@ exports.applyShadowBanUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `${user.name} has been shadow banned`, 
+      message: `${user.fullName} has been shadow banned`, 
       user 
     });
   } catch (err) {
@@ -1486,7 +1555,7 @@ exports.removeShadowBanUser = async (req, res) => {
       actionType: 'UNSHADOW_BAN',
       targetId: user._id,
       targetModel: 'User',
-      description: `${req.user.name} removed shadow ban from ${user.name}`,
+      description: `${req.user.fullName} removed shadow ban from ${user.fullName}`,
       performedBy: req.user._id
     });
 
@@ -1494,7 +1563,7 @@ exports.removeShadowBanUser = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `Shadow ban removed from ${user.name}`, 
+      message: `Shadow ban removed from ${user.fullName}`, 
       user 
     });
   } catch (err) {

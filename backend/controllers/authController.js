@@ -19,14 +19,47 @@ const calculateAge = (dob) => {
 
 /*
 ========================================
-REGISTER
+REGISTER - UPDATED with firstName, lastName, middleName, username, gender
 ========================================
 */
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, dateOfBirth } = req.body;
-    if (!name || !email || !password || !dateOfBirth) {
-      return res.status(400).json({ message: 'All fields are required' });
+    const { 
+      firstName, 
+      lastName, 
+      middleName, 
+      username,
+      email, 
+      password, 
+      dateOfBirth,
+      gender 
+    } = req.body;
+    
+    // Validate required fields
+    if (!firstName || !lastName || !username || !email || !password || !dateOfBirth) {
+      return res.status(400).json({ message: 'All required fields must be filled' });
+    }
+
+    // Validate name lengths
+    if (firstName.length < 2) {
+      return res.status(400).json({ message: 'First name must be at least 2 characters' });
+    }
+    if (lastName.length < 2) {
+      return res.status(400).json({ message: 'Last name must be at least 2 characters' });
+    }
+
+    // Validate username
+    const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
+    if (!usernameRegex.test(username)) {
+      return res.status(400).json({ 
+        message: 'Username must be 3-30 characters and can only contain letters, numbers, and underscores' 
+      });
+    }
+
+    // Check if username exists
+    const existingUsername = await User.findOne({ username: username.toLowerCase() });
+    if (existingUsername) {
+      return res.status(409).json({ message: 'Username already taken' });
     }
 
     const dob = new Date(dateOfBirth);
@@ -35,8 +68,8 @@ exports.register = async (req, res) => {
     }
 
     const age = calculateAge(dob);
-    if (age < 18) {
-      return res.status(403).json({ message: 'You must be at least 18 years old to register' });
+    if (age < 13) {
+      return res.status(403).json({ message: 'You must be at least 13 years old to register' });
     }
 
     const existingUser = await User.findOne({ email });
@@ -48,10 +81,14 @@ exports.register = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
-      name,
+      firstName,
+      lastName,
+      middleName: middleName || '',
+      username: username.toLowerCase(),
       email,
       password: hashedPassword,
       dateOfBirth: dob,
+      gender: gender || '',
       lastLogin: new Date(),
       lastActive: new Date(),
     });
@@ -60,7 +97,30 @@ exports.register = async (req, res) => {
 
     res.status(201).json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { 
+        id: user._id, 
+        firstName: user.firstName,
+        lastName: user.lastName,
+        middleName: user.middleName,
+        username: user.username,
+        name: user.fullName,
+        email: user.email, 
+        role: user.role,
+        gender: user.gender,
+        avatar: user.avatar,
+        bio: user.bio,
+        location: user.location,
+        website: user.website,
+        phoneNumber: user.phoneNumber,
+        dateOfBirth: user.dateOfBirth,
+        createdAt: user.createdAt,
+        followers: user.followers,
+        following: user.following,
+        twins: user.twins,
+        isVerified: user.isVerified,
+        isCreator: user.isCreator,
+        balance: user.balance
+      },
     });
   } catch (err) {
     console.error('REGISTER ERROR:', err);
@@ -113,7 +173,36 @@ exports.login = async (req, res) => {
 
     res.json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { 
+        id: user._id, 
+        firstName: user.firstName,
+        lastName: user.lastName,
+        middleName: user.middleName,
+        username: user.username,
+        name: user.fullName,
+        email: user.email, 
+        role: user.role,
+        gender: user.gender,
+        avatar: user.avatar,
+        bio: user.bio,
+        location: user.location,
+        website: user.website,
+        phoneNumber: user.phoneNumber,
+        dateOfBirth: user.dateOfBirth,
+        createdAt: user.createdAt,
+        followers: user.followers,
+        following: user.following,
+        twins: user.twins,
+        isVerified: user.isVerified,
+        isCreator: user.isCreator,
+        balance: user.balance,
+        notificationPreferences: user.notificationPreferences,
+        privacySettings: user.privacySettings,
+        theme: user.theme,
+        preferredLanguage: user.preferredLanguage,
+        loginHistory: user.loginHistory,
+        payoutMethod: user.payoutMethod
+      },
     });
   } catch (err) {
     console.error('LOGIN ERROR:', err);
@@ -123,7 +212,7 @@ exports.login = async (req, res) => {
 
 /*
 ========================================
-ADMIN LOGIN (FIXED)
+ADMIN LOGIN
 ========================================
 */
 exports.adminLogin = async (req, res) => {
@@ -138,7 +227,7 @@ exports.adminLogin = async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // ✅ ALLOW ALL ADMIN ROLES (MATCH FRONTEND)
+    // ALLOW ALL ADMIN ROLES
     if (!['supportadmin', 'platformadmin', 'superadmin'].includes(user.role)) {
       return res.status(403).json({ message: 'Invalid admin credentials' });
     }
@@ -151,7 +240,6 @@ exports.adminLogin = async (req, res) => {
       return res.status(403).json({ message: 'Admin account deactivated' });
     }
 
-    // Use bcrypt.compare directly
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid credentials' });
@@ -166,7 +254,36 @@ exports.adminLogin = async (req, res) => {
 
     res.json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { 
+        id: user._id, 
+        firstName: user.firstName,
+        lastName: user.lastName,
+        middleName: user.middleName,
+        username: user.username,
+        name: user.fullName,
+        email: user.email, 
+        role: user.role,
+        gender: user.gender,
+        avatar: user.avatar,
+        bio: user.bio,
+        location: user.location,
+        website: user.website,
+        phoneNumber: user.phoneNumber,
+        dateOfBirth: user.dateOfBirth,
+        createdAt: user.createdAt,
+        followers: user.followers,
+        following: user.following,
+        twins: user.twins,
+        isVerified: user.isVerified,
+        isCreator: user.isCreator,
+        balance: user.balance,
+        notificationPreferences: user.notificationPreferences,
+        privacySettings: user.privacySettings,
+        theme: user.theme,
+        preferredLanguage: user.preferredLanguage,
+        loginHistory: user.loginHistory,
+        payoutMethod: user.payoutMethod
+      },
     });
   } catch (err) {
     console.error('ADMIN LOGIN ERROR:', err);
@@ -196,7 +313,37 @@ PROFILE
 ========================================
 */
 exports.getMyProfile = async (req, res) => {
-  res.json(req.user);
+  res.json({
+    id: req.user._id,
+    firstName: req.user.firstName,
+    lastName: req.user.lastName,
+    middleName: req.user.middleName,
+    username: req.user.username,
+    name: req.user.fullName,
+    email: req.user.email,
+    role: req.user.role,
+    gender: req.user.gender,
+    avatar: req.user.avatar,
+    bio: req.user.bio,
+    location: req.user.location,
+    website: req.user.website,
+    phoneNumber: req.user.phoneNumber,
+    dateOfBirth: req.user.dateOfBirth,
+    createdAt: req.user.createdAt,
+    followers: req.user.followers,
+    following: req.user.following,
+    twins: req.user.twins,
+    isVerified: req.user.isVerified,
+    isCreator: req.user.isCreator,
+    balance: req.user.balance,
+    notificationPreferences: req.user.notificationPreferences,
+    privacySettings: req.user.privacySettings,
+    theme: req.user.theme,
+    preferredLanguage: req.user.preferredLanguage,
+    loginHistory: req.user.loginHistory,
+    payoutMethod: req.user.payoutMethod,
+    accountAge: req.user.accountAge
+  });
 };
 
 /*
@@ -272,7 +419,6 @@ exports.resetPassword = async (req, res) => {
       return res.status(400).json({ message: 'Token invalid or expired' });
     }
 
-    // Hash new password before saving
     user.password = await bcrypt.hash(req.body.password, 12);
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
@@ -292,22 +438,29 @@ ADMIN CREATION (SUPER ADMIN ONLY)
 */
 exports.createAdmin = async (req, res) => {
   try {
-    const { name, email, password, role, dateOfBirth } = req.body;
+    const { firstName, lastName, middleName, username, email, password, role, dateOfBirth } = req.body;
 
     if (!['supportadmin', 'platformadmin', 'superadmin'].includes(role)) {
       return res.status(400).json({ message: 'Invalid admin role' });
     }
 
-    const existing = await User.findOne({ email });
-    if (existing) {
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
       return res.status(409).json({ message: 'Email already exists' });
     }
 
-    // Hash password before saving
+    const existingUsername = await User.findOne({ username: username.toLowerCase() });
+    if (existingUsername) {
+      return res.status(409).json({ message: 'Username already taken' });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const admin = await User.create({
-      name,
+      firstName,
+      lastName,
+      middleName: middleName || '',
+      username: username.toLowerCase(),
       email,
       password: hashedPassword,
       role,
@@ -315,9 +468,40 @@ exports.createAdmin = async (req, res) => {
       isVerified: true,
     });
 
-    res.status(201).json({ message: 'Admin created', adminId: admin._id });
+    res.status(201).json({ 
+      message: 'Admin created', 
+      adminId: admin._id,
+      admin: {
+        id: admin._id,
+        firstName: admin.firstName,
+        lastName: admin.lastName,
+        username: admin.username,
+        email: admin.email,
+        role: admin.role
+      }
+    });
   } catch (err) {
     console.error('CREATE ADMIN ERROR:', err);
     res.status(500).json({ message: 'Failed to create admin' });
+  }
+};
+
+/*
+========================================
+CHECK USERNAME AVAILABILITY
+========================================
+*/
+exports.checkUsername = async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username || username.length < 3) {
+      return res.json({ available: true });
+    }
+
+    const existingUser = await User.findOne({ username: username.toLowerCase() });
+    res.json({ available: !existingUser });
+  } catch (err) {
+    console.error('CHECK USERNAME ERROR:', err);
+    res.status(500).json({ message: 'Failed to check username' });
   }
 };

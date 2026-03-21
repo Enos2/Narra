@@ -1,8 +1,7 @@
 /**
  * File: backend/models/User.js
  * Description: Comprehensive User schema for Narra with token versioning for force logout
- * UPDATED: Added live streaming qualification tracking, social features, and preferences
- * FIXED: Pre-save middleware next() function error with validateBeforeSave: false
+ * UPDATED: Added firstName, lastName, middleName, username, gender (male/female only)
  */
 
 const mongoose = require('mongoose');
@@ -143,22 +142,58 @@ USER SCHEMA
 const UserSchema = new mongoose.Schema(
   {
     // ----------------------
-    // BASIC INFO
+    // BASIC INFO - UPDATED with separate name fields
     // ----------------------
-    name: { type: String, required: true, trim: true },
+    firstName: { 
+      type: String, 
+      required: [true, 'First name is required'],
+      trim: true,
+      minlength: [2, 'First name must be at least 2 characters']
+    },
+    lastName: { 
+      type: String, 
+      required: [true, 'Last name is required'],
+      trim: true,
+      minlength: [2, 'Last name must be at least 2 characters']
+    },
+    middleName: { 
+      type: String, 
+      trim: true,
+      default: '' 
+    },
+    username: {
+      type: String,
+      required: [true, 'Username is required'],
+      unique: true,
+      trim: true,
+      lowercase: true,
+      index: true,
+      minlength: [3, 'Username must be at least 3 characters'],
+      maxlength: [30, 'Username cannot exceed 30 characters'],
+      match: [/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores']
+    },
     email: { 
       type: String, 
-      required: true, 
+      required: [true, 'Email is required'], 
       unique: true, 
       lowercase: true,
-      index: true
+      index: true,
+      trim: true,
+      match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
     },
-    password: { type: String, required: true },
+    password: { type: String, required: true, minlength: 6 },
+    
+    // GENDER FIELD - Male and Female only
+    gender: {
+      type: String,
+      enum: ['male', 'female', ''],
+      default: ''
+    },
     
     // ----------------------
     // PROFILE ENHANCEMENTS
     // ----------------------
-    avatar: { type: String, default: null }, // URL to avatar image
+    avatar: { type: String, default: null },
     bio: { type: String, maxlength: 500, default: '' },
     dateOfBirth: { type: Date, required: true },
     phoneNumber: { type: String, default: '' },
@@ -170,7 +205,7 @@ const UserSchema = new mongoose.Schema(
     // ----------------------
     followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    twins: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Mutual followers
+    twins: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     followerCount: { type: Number, default: 0 },
     followingCount: { type: Number, default: 0 },
     twinCount: { type: Number, default: 0 },
@@ -194,7 +229,7 @@ const UserSchema = new mongoose.Schema(
     },
     isFounder: { type: Boolean, default: false, immutable: true },
     isCreator: { type: Boolean, default: false },
-    isSupport: { type: Boolean, default: false }, // ADDED - for toggleSupportAdmin
+    isSupport: { type: Boolean, default: false },
 
     // ----------------------
     // ADMIN CREATION TRACKING
@@ -213,8 +248,6 @@ const UserSchema = new mongoose.Schema(
     },
     canGoLiveGrantedAt: Date,
     canGoLiveGrantedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-
-    // For automatic qualification tracking
     approvedVideoCount: { type: Number, default: 0 },
     totalVideoViews: { type: Number, default: 0 },
     liveQualificationCheckedAt: Date,
@@ -267,7 +300,6 @@ const UserSchema = new mongoose.Schema(
     bannedAt: Date,
     bannedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     banReason: String,
-    
     isShadowBanned: { type: Boolean, default: false },
     shadowBannedCountries: [{ type: String }],
     shadowBannedContinents: [{ type: String }],
@@ -293,7 +325,7 @@ const UserSchema = new mongoose.Schema(
     lastLogin: { type: Date, index: true },
     lastActive: { type: Date, index: true },
     online: { type: Boolean, default: false },
-    accountAge: { type: Number, default: 0 }, // Calculated in days
+    accountAge: { type: Number, default: 0 },
 
     // ----------------------
     // GEO / ANALYTICS
@@ -325,7 +357,7 @@ const UserSchema = new mongoose.Schema(
     watchHistory: [{
       video: { type: mongoose.Schema.Types.ObjectId, ref: 'Video' },
       watchedAt: Date,
-      progress: Number // seconds watched
+      progress: Number
     }],
     ratings: [
       {
@@ -384,31 +416,80 @@ const UserSchema = new mongoose.Schema(
 
 /*
 ========================================
-COMPOUND INDEXES ONLY
+VIRTUAL PROPERTIES
+========================================
+*/
+UserSchema.virtual('fullName').get(function() {
+  let name = `${this.firstName} ${this.lastName}`;
+  if (this.middleName && this.middleName.trim()) {
+    name = `${this.firstName} ${this.middleName} ${this.lastName}`;
+  }
+  return name;
+});
+
+UserSchema.virtual('name').get(function() {
+  return this.fullName;
+});
+
+UserSchema.virtual('profileComplete').get(function() {
+  return !!(this.avatar && this.bio && this.location);
+});
+
+UserSchema.virtual('displayName').get(function() {
+  return this.username || this.fullName || this.email.split('@')[0];
+});
+
+/*
+========================================
+METHOD TO GET FORMATTED ACCOUNT AGE
+========================================
+*/
+UserSchema.methods.getFormattedAccountAge = function() {
+  const now = new Date();
+  const diffTime = Math.abs(now - this.createdAt);
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  if (diffDays < 30) {
+    return `${diffDays} day${diffDays !== 1 ? 's' : ''}`;
+  } else if (diffDays < 365) {
+    const months = Math.floor(diffDays / 30);
+    const remainingDays = diffDays % 30;
+    if (remainingDays === 0) {
+      return `${months} month${months !== 1 ? 's' : ''}`;
+    }
+    return `${months} month${months !== 1 ? 's' : ''}, ${remainingDays} day${remainingDays !== 1 ? 's' : ''}`;
+  } else {
+    const years = Math.floor(diffDays / 365);
+    const remainingDays = diffDays % 365;
+    const months = Math.floor(remainingDays / 30);
+    const days = remainingDays % 30;
+    
+    let result = `${years} year${years !== 1 ? 's' : ''}`;
+    if (months > 0) {
+      result += `, ${months} month${months !== 1 ? 's' : ''}`;
+    }
+    if (days > 0 && months === 0) {
+      result += `, ${days} day${days !== 1 ? 's' : ''}`;
+    }
+    return result;
+  }
+};
+
+/*
+========================================
+COMPOUND INDEXES
 ========================================
 */
 UserSchema.index({ role: 1, lastActive: -1 });
 UserSchema.index({ isDeleted: 1, role: 1 });
 UserSchema.index({ adminDeactivated: 1, role: 1 });
 UserSchema.index({ canGoLive: 1, canGoLiveReason: 1 });
-UserSchema.index({ followers: 1 }); // For social queries
-UserSchema.index({ following: 1 }); // For social queries
-UserSchema.index({ twins: 1 }); // For social queries
-UserSchema.index({ followerCount: -1 }); // For trending users
-UserSchema.index({ location: 1 }); // For geo-based queries
-
-/*
-========================================
-VIRTUAL PROPERTIES
-========================================
-*/
-UserSchema.virtual('profileComplete').get(function() {
-  return !!(this.avatar && this.bio && this.location);
-});
-
-UserSchema.virtual('displayName').get(function() {
-  return this.name || this.email.split('@')[0];
-});
+UserSchema.index({ followers: 1 });
+UserSchema.index({ following: 1 });
+UserSchema.index({ twins: 1 });
+UserSchema.index({ followerCount: -1 });
+UserSchema.index({ location: 1 });
+UserSchema.index({ username: 1 });
 
 /*
 ========================================
@@ -416,12 +497,10 @@ HELPER FUNCTION TO UPDATE DERIVED FIELDS
 ========================================
 */
 function updateDerivedFields(user) {
-  // Update follower/following counts
   if (user.followers) user.followerCount = user.followers.length;
   if (user.following) user.followingCount = user.following.length;
   if (user.twins) user.twinCount = user.twins.length;
   
-  // Calculate account age in days
   if (user.createdAt) {
     const now = new Date();
     const diffTime = Math.abs(now - user.createdAt);
@@ -431,7 +510,7 @@ function updateDerivedFields(user) {
 
 /*
 ========================================
-PRE-VALIDATE MIDDLEWARE (runs even with validateBeforeSave: false)
+PRE-VALIDATE MIDDLEWARE
 ========================================
 */
 UserSchema.pre('validate', function(next) {
@@ -441,13 +520,11 @@ UserSchema.pre('validate', function(next) {
 
 /*
 ========================================
-PRE-SAVE MIDDLEWARE (with safe next() check)
+PRE-SAVE MIDDLEWARE
 ========================================
 */
 UserSchema.pre('save', function(next) {
   updateDerivedFields(this);
-  
-  // Safely call next only if it's a function
   if (typeof next === 'function') {
     next();
   }
@@ -459,7 +536,10 @@ METHODS
 ========================================
 */
 
-// Follow a user
+UserSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
 UserSchema.methods.follow = async function(userId) {
   if (this.following.includes(userId)) {
     return { success: false, message: 'Already following' };
@@ -468,12 +548,10 @@ UserSchema.methods.follow = async function(userId) {
   this.following.push(userId);
   await this.save();
   
-  // Add to target user's followers
   const targetUser = await mongoose.model('User').findById(userId);
   if (targetUser) {
     targetUser.followers.push(this._id);
     
-    // Check if it's a twin (mutual follow)
     if (targetUser.following.includes(this._id)) {
       this.twins.push(userId);
       targetUser.twins.push(this._id);
@@ -487,7 +565,6 @@ UserSchema.methods.follow = async function(userId) {
   return { success: true, message: 'Followed successfully' };
 };
 
-// Unfollow a user
 UserSchema.methods.unfollow = async function(userId) {
   if (!this.following.includes(userId)) {
     return { success: false, message: 'Not following' };
@@ -497,7 +574,6 @@ UserSchema.methods.unfollow = async function(userId) {
   this.twins = this.twins.filter(id => id.toString() !== userId.toString());
   await this.save();
   
-  // Remove from target user's followers
   const targetUser = await mongoose.model('User').findById(userId);
   if (targetUser) {
     targetUser.followers = targetUser.followers.filter(id => id.toString() !== this._id.toString());
@@ -508,40 +584,33 @@ UserSchema.methods.unfollow = async function(userId) {
   return { success: true, message: 'Unfollowed successfully' };
 };
 
-// Get twin count
 UserSchema.methods.getTwins = async function() {
   const twinUsers = await mongoose.model('User')
     .find({ _id: { $in: this.twins } })
-    .select('name avatar isVerified');
+    .select('firstName lastName username avatar isVerified');
   return twinUsers;
 };
 
-// Check if following a user
 UserSchema.methods.isFollowing = function(userId) {
   return this.following.some(id => id.toString() === userId.toString());
 };
 
-// Check if followed by a user
 UserSchema.methods.isFollowedBy = function(userId) {
   return this.followers.some(id => id.toString() === userId.toString());
 };
 
-// Check if twins with a user
 UserSchema.methods.isTwin = function(userId) {
   return this.twins.some(id => id.toString() === userId.toString());
 };
 
-// Check if user qualifies for live streaming automatically
 UserSchema.methods.checkLiveQualification = async function () {
   const Video = mongoose.model('Video');
   const now = new Date();
   
-  // Skip if already manually approved
   if (this.canGoLive && this.canGoLiveReason === 'manual_admin_approval') {
     return { qualified: true, reason: 'manual_admin_approval' };
   }
   
-  // Check if already auto-qualified recently (within last day)
   if (this.liveQualificationCheckedAt && 
       (now - this.liveQualificationCheckedAt) < (24 * 60 * 60 * 1000)) {
     return { 
@@ -550,7 +619,6 @@ UserSchema.methods.checkLiveQualification = async function () {
     };
   }
 
-  // 4. Check active strikes (strikes older than 9 months are ignored)
   const nineMonthsAgo = new Date(now.getTime() - (9 * 30 * 24 * 60 * 60 * 1000));
   const activeStrikes = this.liveStrikes.filter(
     strike => new Date(strike.date) > nineMonthsAgo
@@ -562,7 +630,6 @@ UserSchema.methods.checkLiveQualification = async function () {
     return { qualified: false, reason: 'active_strikes', strikeCount: activeStrikes.length };
   }
 
-  // 3. Check account age (30 days minimum)
   const accountAge = Math.floor((now - this.createdAt) / (1000 * 60 * 60 * 24));
   if (accountAge < 30) {
     this.liveQualificationCheckedAt = now;
@@ -570,7 +637,6 @@ UserSchema.methods.checkLiveQualification = async function () {
     return { qualified: false, reason: 'account_age', days: accountAge };
   }
 
-  // 1 & 2. Get user's approved videos count and total views
   const videos = await Video.find({
     user: this._id,
     approved: true,
@@ -580,12 +646,10 @@ UserSchema.methods.checkLiveQualification = async function () {
   const approvedVideoCount = videos.length;
   const totalVideoViews = videos.reduce((sum, video) => sum + (video.views || 0), 0);
 
-  // Update user stats
   this.approvedVideoCount = approvedVideoCount;
   this.totalVideoViews = totalVideoViews;
   this.liveQualificationCheckedAt = now;
 
-  // Check if qualifies
   if (approvedVideoCount >= 3 && totalVideoViews >= 500) {
     this.canGoLive = true;
     this.canGoLiveReason = 'auto_qualified';
@@ -600,7 +664,6 @@ UserSchema.methods.checkLiveQualification = async function () {
     };
   }
 
-  // Save updated stats even if not qualified
   await this.save();
   return { 
     qualified: false, 
@@ -616,8 +679,6 @@ UserSchema.methods.checkLiveQualification = async function () {
 
 UserSchema.methods.addLiveStrike = async function (reason, issuedBy = null) {
   const now = new Date();
-
-  // Remove strikes older than 9 months
   const nineMonthsAgo = new Date(now.getTime() - (9 * 30 * 24 * 60 * 60 * 1000));
   this.liveStrikes = this.liveStrikes.filter(s => new Date(s.date) > nineMonthsAgo);
 
@@ -627,7 +688,6 @@ UserSchema.methods.addLiveStrike = async function (reason, issuedBy = null) {
     issuedBy: issuedBy || null
   });
 
-  // Auto-disable live privileges if 5 or more strikes in 9 months
   if (this.liveStrikes.length >= 5) {
     this.canGoLive = false;
     this.canGoLiveReason = 'revoked';
@@ -651,7 +711,6 @@ UserSchema.methods.getLiveStrikeCount = function () {
   return this.liveStrikes.filter(s => new Date(s.date) > nineMonthsAgo).length;
 };
 
-// Method to manually grant live privileges
 UserSchema.methods.grantLivePrivilege = async function (adminId) {
   this.canGoLive = true;
   this.canGoLiveReason = 'manual_admin_approval';
@@ -662,14 +721,12 @@ UserSchema.methods.grantLivePrivilege = async function (adminId) {
   return this;
 };
 
-// Method to manually revoke live privileges
 UserSchema.methods.revokeLivePrivilege = async function (adminId, reason = 'Revoked by admin') {
   this.canGoLive = false;
   this.canGoLiveReason = 'revoked';
   this.canGoLiveGrantedAt = null;
   this.canGoLiveGrantedBy = null;
   
-  // Add strike record
   await this.addLiveStrike(reason, adminId);
   
   this.notifications.push({
@@ -682,27 +739,22 @@ UserSchema.methods.revokeLivePrivilege = async function (adminId, reason = 'Revo
   return this;
 };
 
-// Method to invalidate all tokens (force logout)
 UserSchema.methods.invalidateTokens = async function () {
   this.tokenVersion = (this.tokenVersion || 0) + 1;
   this.online = false;
   this.lastActive = new Date();
   
-  // Save without validation - the pre-validate hook will still run
   await this.save({ validateBeforeSave: false });
   return this.tokenVersion;
 };
 
-// Method to check if token is valid
 UserSchema.methods.isTokenValid = function (tokenVersion) {
   return (this.tokenVersion || 0) === tokenVersion;
 };
 
-// Method to add login history
 UserSchema.methods.addLoginHistory = async function (ip, userAgent, location = '') {
   this.loginHistory.push({ ip, userAgent, location, timestamp: new Date() });
   
-  // Keep only last 50 logins
   if (this.loginHistory.length > 50) {
     this.loginHistory = this.loginHistory.slice(-50);
   }
@@ -713,7 +765,6 @@ UserSchema.methods.addLoginHistory = async function (ip, userAgent, location = '
   return this;
 };
 
-// Method to soft delete user
 UserSchema.methods.softDelete = async function (deletedBy, reason = '') {
   this.isDeleted = true;
   this.deletedAt = new Date();
@@ -723,7 +774,6 @@ UserSchema.methods.softDelete = async function (deletedBy, reason = '') {
   this.adminDeactivatedAt = new Date();
   this.adminDeactivationReason = 'SOFT_DELETED';
   
-  // Also revoke live privileges
   if (this.canGoLive) {
     this.canGoLive = false;
     this.canGoLiveReason = 'revoked';
@@ -731,15 +781,11 @@ UserSchema.methods.softDelete = async function (deletedBy, reason = '') {
     this.canGoLiveGrantedBy = null;
   }
   
-  // Force logout
   await this.invalidateTokens();
-  
-  // Save without validation - the pre-validate hook will still run
   await this.save({ validateBeforeSave: false });
   return this;
 };
 
-// Method to restore soft deleted user
 UserSchema.methods.restore = async function () {
   this.isDeleted = false;
   this.deletedAt = null;
@@ -749,12 +795,10 @@ UserSchema.methods.restore = async function () {
   this.adminDeactivatedAt = null;
   this.adminDeactivationReason = null;
   
-  // Save without validation - the pre-validate hook will still run
   await this.save({ validateBeforeSave: false });
   return this;
 };
 
-// Method to update notification preferences
 UserSchema.methods.updateNotificationPreferences = async function (preferences) {
   this.notificationPreferences = {
     ...this.notificationPreferences.toObject(),
@@ -764,7 +808,6 @@ UserSchema.methods.updateNotificationPreferences = async function (preferences) 
   return this.notificationPreferences;
 };
 
-// Method to update privacy settings
 UserSchema.methods.updatePrivacySettings = async function (settings) {
   this.privacySettings = {
     ...this.privacySettings.toObject(),
@@ -786,17 +829,14 @@ UserSchema.statics.forceLogoutAllSessions = async function (userId) {
   return await user.invalidateTokens();
 };
 
-// Find non-deleted users
 UserSchema.statics.findActive = function (conditions = {}) {
   return this.find({ ...conditions, isDeleted: false });
 };
 
-// Find deleted users
 UserSchema.statics.findDeleted = function (conditions = {}) {
   return this.find({ ...conditions, isDeleted: true });
 };
 
-// Check live qualification for all users (admin tool)
 UserSchema.statics.checkAllLiveQualifications = async function () {
   const users = await this.find({ 
     isDeleted: false,
@@ -809,7 +849,8 @@ UserSchema.statics.checkAllLiveQualifications = async function () {
     const qualification = await user.checkLiveQualification();
     results.push({
       userId: user._id,
-      name: user.name,
+      name: user.fullName,
+      username: user.username,
       email: user.email,
       ...qualification
     });
@@ -818,21 +859,19 @@ UserSchema.statics.checkAllLiveQualifications = async function () {
   return results;
 };
 
-// Find popular users based on follower count
 UserSchema.statics.findPopular = function (limit = 10) {
   return this.find({ isDeleted: false, isBanned: false })
     .sort({ followerCount: -1 })
     .limit(limit)
-    .select('name avatar bio followerCount isVerified');
+    .select('firstName lastName username avatar bio followerCount isVerified');
 };
 
-// Find twins between two users
 UserSchema.statics.findTwins = function (userId) {
   return this.find({
     _id: { $ne: userId },
     followers: userId,
     following: userId
-  }).select('name avatar isVerified');
+  }).select('firstName lastName username avatar isVerified');
 };
 
 module.exports = mongoose.model('User', UserSchema);

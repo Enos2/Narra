@@ -15,6 +15,9 @@ const adminRoutes = require('./routes/adminRoutes');
 const liveQualificationRoutes = require('./routes/liveQualificationRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+// ========== ADD AD ROUTES ==========
+const adRoutes = require('./routes/adRoutes');
+// ===================================
 
 // Middleware
 const errorHandler = require('./middleware/errorMiddleware');
@@ -245,6 +248,7 @@ app.get('/', (req, res) => {
             <p>Server is running with video streaming and messaging support</p>
             <p>✅ Socket.io enabled for real-time messaging</p>
             <p>✅ Message controller connected to Socket.IO</p>
+            <p>✅ Ad management API active</p>
           </div>
         </div>
       </body>
@@ -269,7 +273,8 @@ app.get('/api/health', (req, res) => {
       age_verification: true,
       avatar_upload: true,
       follow_system: true,
-      twin_detection: true
+      twin_detection: true,
+      ad_management: true  // Added
     }
   });
 });
@@ -287,6 +292,9 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/live-qualification', liveQualificationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/uploads', uploadRoutes);
+// ========== ADD AD ROUTES ==========
+app.use('/api/ads', adRoutes);
+// ===================================
 
 /*
 ========================================
@@ -325,5 +333,6 @@ server.listen(PORT, () => {
   console.log(`📁 Video files: http://localhost:${PORT}/uploads`);
   console.log(`💬 Messaging system: ACTIVE`);
   console.log(`✅ Message controller: CONNECTED`);
+  console.log(`📢 Ad management: ACTIVE`);
   console.log('============================================\n');
 });

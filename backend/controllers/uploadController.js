@@ -1,13 +1,23 @@
 /**
  * File: backend/controllers/uploadController.js
  * Description: Handles file uploads for videos, thumbnails, trailers, and avatars
+ * UPDATED: Fixed avatar upload with better error handling and fallback for sharp
  */
 
 const Video = require('../models/Video');
 const User = require('../models/User');
 const fs = require('fs');
 const path = require('path');
-const sharp = require('sharp'); // For image optimization (optional, install if needed)
+
+// Check if sharp is installed - if not, use fallback
+let sharp;
+try {
+  sharp = require('sharp');
+  console.log('✅ Sharp image processing loaded');
+} catch (err) {
+  console.warn('⚠️ Sharp not installed, using fallback for image uploads');
+  sharp = null;
+}
 
 /*
 ========================================
@@ -19,10 +29,11 @@ HELPERS
 const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
+    console.log(`📁 Created directory: ${dir}`);
   }
 };
 
-// Save file with validation
+// Save file with validation (fallback when sharp is not available)
 const saveFile = (file, folder, options = {}) => {
   if (!file) return null;
 
@@ -37,27 +48,34 @@ const saveFile = (file, folder, options = {}) => {
   const fileName = `${Date.now()}-${safeName}`;
   const filePath = path.join(uploadDir, fileName);
 
-  // Write file
-  fs.writeFileSync(filePath, file.buffer);
+  try {
+    // Write file
+    fs.writeFileSync(filePath, file.buffer);
+    
+    // Get file size
+    const stats = fs.statSync(filePath);
+    const fileSize = stats.size;
 
-  // Get file size
-  const stats = fs.statSync(filePath);
-  const fileSize = stats.size;
+    console.log(`✅ File saved: ${fileName} (${fileSize} bytes)`);
 
-  return {
-    filePath,
-    url: `/uploads/${folder}/${fileName}`,
-    fileName,
-    fileSize,
-    mimeType: file.mimetype
-  };
+    return {
+      filePath,
+      url: `/uploads/${folder}/${fileName}`,
+      fileName,
+      fileSize,
+      mimeType: file.mimetype
+    };
+  } catch (err) {
+    console.error('Error saving file:', err);
+    return null;
+  }
 };
 
-// Optimize image (for avatars and thumbnails)
+// Optimize image (for avatars and thumbnails) - with fallback
 const optimizeImage = async (file, folder, options = {}) => {
   if (!file) return null;
 
-  const { width = 500, height = 500, quality = 80 } = options;
+  const { width = 400, height = 400, quality = 80 } = options;
   
   const uploadDir = path.join(__dirname, '..', 'uploads', folder);
   ensureDir(uploadDir);
@@ -68,25 +86,39 @@ const optimizeImage = async (file, folder, options = {}) => {
   
   const ext = path.extname(safeName) || '.jpg';
   const baseName = path.basename(safeName, ext);
-  const fileName = `${Date.now()}-${baseName}.jpg`; // Convert to jpg for optimization
+  const fileName = `${Date.now()}-${baseName}.jpg`;
   const filePath = path.join(uploadDir, fileName);
 
-  // Optimize image with sharp
-  await sharp(file.buffer)
-    .resize(width, height, { fit: 'cover', position: 'centre' })
-    .jpeg({ quality })
-    .toFile(filePath);
+  try {
+    // If sharp is available, optimize the image
+    if (sharp) {
+      await sharp(file.buffer)
+        .resize(width, height, { fit: 'cover', position: 'centre' })
+        .jpeg({ quality })
+        .toFile(filePath);
+      
+      console.log(`✅ Image optimized: ${fileName}`);
+    } else {
+      // Fallback: just save the file as is
+      fs.writeFileSync(filePath, file.buffer);
+      console.log(`✅ Image saved (no optimization): ${fileName}`);
+    }
 
-  const stats = fs.statSync(filePath);
+    const stats = fs.statSync(filePath);
 
-  return {
-    filePath,
-    url: `/uploads/${folder}/${fileName}`,
-    fileName,
-    fileSize: stats.size,
-    mimeType: 'image/jpeg',
-    dimensions: { width, height }
-  };
+    return {
+      filePath,
+      url: `/uploads/${folder}/${fileName}`,
+      fileName,
+      fileSize: stats.size,
+      mimeType: 'image/jpeg',
+      dimensions: { width, height }
+    };
+  } catch (err) {
+    console.error('Error optimizing image:', err);
+    // Fallback to saving without optimization
+    return saveFile(file, folder);
+  }
 };
 
 // Validate file type
@@ -105,8 +137,14 @@ const validateFileSize = (file, maxSizeMB) => {
 // Delete file if it exists
 const deleteFile = (filePath) => {
   if (filePath && fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-    return true;
+    try {
+      fs.unlinkSync(filePath);
+      console.log(`🗑️ File deleted: ${filePath}`);
+      return true;
+    } catch (err) {
+      console.error('Error deleting file:', err);
+      return false;
+    }
   }
   return false;
 };
@@ -119,13 +157,13 @@ UPLOAD VIDEO (CREATOR)
 exports.uploadVideo = async (req, res) => {
   try {
     if (!req.user) {
-      return res.status(401).json({ message: 'Unauthorized' });
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
     const {
       title,
       description,
-      type, // 'movie' or 'series'
+      type,
       genre,
       tags,
       ageRating,
@@ -136,60 +174,59 @@ exports.uploadVideo = async (req, res) => {
       isPaid,
       price,
       currency,
-      seasons, // For series only
-      creator,
+      seasons,
       releaseOption,
       releaseDate,
     } = req.body;
 
-    /*
-    ========================================
-    VALIDATION
-    ========================================
-    */
     if (!title || !description || !type || !ageRating) {
       return res.status(400).json({
+        success: false,
         message: 'Missing required fields: title, description, type, and ageRating are required',
       });
     }
 
     if (!req.files || !req.files.thumbnail) {
       return res.status(400).json({
+        success: false,
         message: 'Thumbnail is required',
       });
     }
 
-    // Validate thumbnail
     const thumbnailFile = req.files.thumbnail[0];
     if (!validateFileType(thumbnailFile, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'])) {
       return res.status(400).json({
+        success: false,
         message: 'Thumbnail must be an image (JPEG, PNG, WEBP, or GIF)',
       });
     }
     
-    if (!validateFileSize(thumbnailFile, 5)) { // Max 5MB
+    if (!validateFileSize(thumbnailFile, 5)) {
       return res.status(400).json({
+        success: false,
         message: 'Thumbnail size must be less than 5MB',
       });
     }
 
     if (type === 'movie' && (!req.files.video || !req.files.video[0])) {
       return res.status(400).json({
+        success: false,
         message: 'Video file is required for movies',
       });
     }
 
-    // Validate video file for movies
     if (type === 'movie' && req.files.video) {
       const videoFile = req.files.video[0];
       if (!validateFileType(videoFile, ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'])) {
         return res.status(400).json({
+          success: false,
           message: 'Video must be in MP4, WEBM, OGG, or MOV format',
         });
       }
       
-      if (!validateFileSize(videoFile, 2000)) { // Max 2GB
+      if (!validateFileSize(videoFile, 2000)) {
         return res.status(400).json({
+          success: false,
           message: 'Video size must be less than 2GB',
         });
       }
@@ -197,15 +234,11 @@ exports.uploadVideo = async (req, res) => {
 
     if (type === 'series' && !seasons) {
       return res.status(400).json({
+        success: false,
         message: 'Seasons data is required for series',
       });
     }
 
-    /*
-    ========================================
-    PARSE JSON FIELDS
-    ========================================
-    */
     let parsedGenre = [];
     let parsedTags = [];
     let parsedSeasons = [];
@@ -222,40 +255,30 @@ exports.uploadVideo = async (req, res) => {
       }
     } catch (parseErr) {
       return res.status(400).json({
+        success: false,
         message: 'Invalid JSON format in genre, tags, or seasons fields',
       });
     }
 
-    /*
-    ========================================
-    CREATE BASE VIDEO (ALWAYS PENDING)
-    ========================================
-    */
     const videoDoc = new Video({
       title,
       description,
       type,
       creator: req.user._id,
-      user: req.user._id, // For backward compatibility
+      user: req.user._id,
       genre: parsedGenre,
       tags: parsedTags,
       ageRating,
-
       isSponsored: isSponsored === 'true',
       sponsorDescription: sponsorDescription || '',
-
       isFundraiser: isFundraiser === 'true',
       fundraiserDescription: fundraiserDescription || '',
-
       isPaid: isPaid === 'true',
       price: isPaid === 'true' ? Number(price) || 0 : 0,
       currency: currency || 'USD',
-
       releaseOption: releaseOption || 'immediate',
       releaseDate: releaseDate || null,
-
       seasons: parsedSeasons,
-
       approved: false,
       rejected: false,
       isDeleted: false,
@@ -263,11 +286,6 @@ exports.uploadVideo = async (req, res) => {
       uploadedAt: new Date(),
     });
 
-    /*
-    ========================================
-    FILE HANDLING - THUMBNAIL (REQUIRED)
-    ========================================
-    */
     try {
       const savedThumbnail = await optimizeImage(thumbnailFile, 'thumbnails', { 
         width: 1280, 
@@ -278,17 +296,11 @@ exports.uploadVideo = async (req, res) => {
       videoDoc.thumbnailPath = savedThumbnail.filePath;
     } catch (err) {
       console.error('Thumbnail optimization error:', err);
-      // Fallback to saving without optimization
       const savedThumbnail = saveFile(thumbnailFile, 'thumbnails');
       videoDoc.thumbnailUrl = savedThumbnail.url;
       videoDoc.thumbnailPath = savedThumbnail.filePath;
     }
 
-    /*
-    ========================================
-    FILE HANDLING - MOVIE
-    ========================================
-    */
     if (type === 'movie') {
       const videoFile = req.files.video[0];
       const savedVideo = saveFile(videoFile, 'videos');
@@ -296,7 +308,6 @@ exports.uploadVideo = async (req, res) => {
       videoDoc.filePath = savedVideo.filePath;
       videoDoc.fileSize = savedVideo.fileSize;
 
-      // Handle trailer if provided
       if (req.files.trailer && req.files.trailer[0]) {
         const trailerFile = req.files.trailer[0];
         if (validateFileType(trailerFile, ['video/mp4', 'video/webm', 'video/ogg'])) {
@@ -307,13 +318,7 @@ exports.uploadVideo = async (req, res) => {
       }
     }
 
-    /*
-    ========================================
-    FILE HANDLING - SERIES
-    ========================================
-    */
     if (type === 'series' && parsedSeasons.length > 0) {
-      // Process season trailers
       for (let s = 0; s < parsedSeasons.length; s++) {
         const seasonKey = `season-${s}-trailer`;
         if (req.files[seasonKey] && req.files[seasonKey][0]) {
@@ -325,7 +330,6 @@ exports.uploadVideo = async (req, res) => {
           }
         }
 
-        // Process episode videos
         if (parsedSeasons[s].episodes) {
           for (let e = 0; e < parsedSeasons[s].episodes.length; e++) {
             const videoKey = `season-${s}-episode-${e}-video`;
@@ -356,14 +360,8 @@ exports.uploadVideo = async (req, res) => {
       videoDoc.seasons = parsedSeasons;
     }
 
-    /*
-    ========================================
-    SAVE
-    ========================================
-    */
     await videoDoc.save();
 
-    // Add to user's uploaded videos
     await User.findByIdAndUpdate(req.user._id, {
       $push: { uploadedVideos: videoDoc._id }
     });
@@ -382,14 +380,13 @@ exports.uploadVideo = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: err.message || 'Upload failed',
-      error: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     });
   }
 };
 
 /*
 ========================================
-UPLOAD AVATAR (USER PROFILE)
+UPLOAD AVATAR (USER PROFILE) - FIXED
 ========================================
 */
 exports.uploadAvatar = async (req, res) => {
@@ -407,6 +404,9 @@ exports.uploadAvatar = async (req, res) => {
         message: 'No image file provided' 
       });
     }
+
+    console.log('📸 Uploading avatar for user:', req.user._id);
+    console.log('   File:', req.file.originalname, `(${req.file.size} bytes)`);
 
     // Validate file type
     if (!validateFileType(req.file, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'])) {
@@ -426,23 +426,43 @@ exports.uploadAvatar = async (req, res) => {
 
     // Get current user to delete old avatar if exists
     const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
     
-    // Delete old avatar file if it exists and is not the default
+    // Delete old avatar file if it exists
     if (user.avatar && !user.avatar.includes('default-avatar')) {
       const oldAvatarPath = path.join(__dirname, '..', user.avatar.replace('/uploads/', 'uploads/'));
+      console.log('🗑️ Deleting old avatar:', oldAvatarPath);
       deleteFile(oldAvatarPath);
     }
 
-    // Optimize and save new avatar
-    const savedAvatar = await optimizeImage(req.file, 'avatars', { 
-      width: 400, 
-      height: 400, 
-      quality: 90 
-    });
+    // Save new avatar (try optimization first, fallback to simple save)
+    let savedAvatar;
+    try {
+      savedAvatar = await optimizeImage(req.file, 'avatars', { 
+        width: 400, 
+        height: 400, 
+        quality: 90 
+      });
+      console.log('✅ Avatar optimized and saved:', savedAvatar.url);
+    } catch (optimizeErr) {
+      console.warn('⚠️ Image optimization failed, using fallback:', optimizeErr.message);
+      savedAvatar = saveFile(req.file, 'avatars');
+    }
+
+    if (!savedAvatar) {
+      throw new Error('Failed to save avatar file');
+    }
 
     // Update user's avatar
     user.avatar = savedAvatar.url;
     await user.save();
+
+    console.log('✅ Avatar updated for user:', user._id);
 
     return res.status(200).json({
       success: true,
@@ -450,17 +470,18 @@ exports.uploadAvatar = async (req, res) => {
       avatarUrl: savedAvatar.url,
       user: {
         id: user._id,
-        name: user.name,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
         email: user.email,
         avatar: user.avatar
       }
     });
   } catch (err) {
-    console.error('Avatar upload error:', err);
+    console.error('❌ Avatar upload error:', err);
     return res.status(500).json({ 
       success: false, 
-      message: 'Avatar upload failed',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      message: err.message || 'Avatar upload failed. Please try again.'
     });
   }
 };
@@ -502,17 +523,21 @@ exports.uploadCoverImage = async (req, res) => {
       });
     }
 
-    // Optimize and save cover image
-    const savedCover = await optimizeImage(req.file, 'covers', { 
-      width: 1920, 
-      height: 480, 
-      quality: 85 
-    });
+    // Save cover image
+    let savedCover;
+    try {
+      savedCover = await optimizeImage(req.file, 'covers', { 
+        width: 1920, 
+        height: 480, 
+        quality: 85 
+      });
+    } catch (optimizeErr) {
+      console.warn('Cover optimization failed, using fallback:', optimizeErr.message);
+      savedCover = saveFile(req.file, 'covers');
+    }
 
-    // Update user's cover image (need to add coverImage field to User model)
     const user = await User.findById(req.user._id);
     
-    // Delete old cover if exists
     if (user.coverImage && !user.coverImage.includes('default-cover')) {
       const oldCoverPath = path.join(__dirname, '..', user.coverImage.replace('/uploads/', 'uploads/'));
       deleteFile(oldCoverPath);
@@ -565,7 +590,6 @@ exports.uploadVerificationDocument = async (req, res) => {
       });
     }
 
-    // Validate file type (allow images and PDFs)
     if (!validateFileType(req.file, ['image/jpeg', 'image/png', 'application/pdf'])) {
       return res.status(400).json({
         success: false,
@@ -573,7 +597,6 @@ exports.uploadVerificationDocument = async (req, res) => {
       });
     }
 
-    // Validate file size (max 20MB)
     if (!validateFileSize(req.file, 20)) {
       return res.status(400).json({
         success: false,
@@ -581,10 +604,8 @@ exports.uploadVerificationDocument = async (req, res) => {
       });
     }
 
-    // Save document
     const savedDoc = saveFile(req.file, 'verification');
 
-    // Add to user's verification documents
     const user = await User.findById(req.user._id);
     
     if (!user.verificationDocuments) {
@@ -641,7 +662,6 @@ exports.uploadThumbnail = async (req, res) => {
       });
     }
 
-    // Validate file type
     if (!validateFileType(req.file, ['image/jpeg', 'image/png', 'image/webp'])) {
       return res.status(400).json({
         success: false,
@@ -649,7 +669,6 @@ exports.uploadThumbnail = async (req, res) => {
       });
     }
 
-    // Validate file size
     if (!validateFileSize(req.file, 5)) {
       return res.status(400).json({
         success: false,
@@ -657,22 +676,23 @@ exports.uploadThumbnail = async (req, res) => {
       });
     }
 
-    // Optimize and save thumbnail
-    const savedThumbnail = await optimizeImage(req.file, 'thumbnails', { 
-      width: 1280, 
-      height: 720, 
-      quality: 85 
-    });
+    let savedThumbnail;
+    try {
+      savedThumbnail = await optimizeImage(req.file, 'thumbnails', { 
+        width: 1280, 
+        height: 720, 
+        quality: 85 
+      });
+    } catch (optimizeErr) {
+      savedThumbnail = saveFile(req.file, 'thumbnails');
+    }
 
-    // If videoId provided, update the video's thumbnail
     if (videoId) {
       const video = await Video.findById(videoId);
       
-      // Check if user owns the video
       if (video && (video.creator.toString() === req.user._id.toString() || 
                     video.user.toString() === req.user._id.toString())) {
         
-        // Delete old thumbnail
         if (video.thumbnailPath) {
           deleteFile(video.thumbnailPath);
         }
@@ -720,11 +740,9 @@ exports.deleteFile = async (req, res) => {
       });
     }
 
-    // Convert URL to file path
     const relativePath = fileUrl.replace('/uploads/', 'uploads/');
     const filePath = path.join(__dirname, '..', relativePath);
 
-    // Check if file exists and delete
     const deleted = deleteFile(filePath);
 
     return res.status(200).json({
@@ -755,13 +773,11 @@ exports.getUploadStatus = async (req, res) => {
       });
     }
 
-    // Get user's videos
     const videos = await Video.find({
       user: req.user._id,
       isDeleted: false
     });
 
-    // Calculate total storage used (in bytes)
     let totalStorage = 0;
     videos.forEach(video => {
       if (video.fileSize) totalStorage += video.fileSize;
@@ -776,30 +792,29 @@ exports.getUploadStatus = async (req, res) => {
       }
     });
 
-    // Define quotas based on user role
     const quotas = {
       user: {
         maxVideos: 50,
-        maxStorage: 10 * 1024 * 1024 * 1024, // 10GB
-        maxVideoSize: 2 * 1024 * 1024 * 1024, // 2GB per video
+        maxStorage: 10 * 1024 * 1024 * 1024,
+        maxVideoSize: 2 * 1024 * 1024 * 1024,
         canUpload: true
       },
       creator: {
         maxVideos: 200,
-        maxStorage: 50 * 1024 * 1024 * 1024, // 50GB
-        maxVideoSize: 5 * 1024 * 1024 * 1024, // 5GB per video
+        maxStorage: 50 * 1024 * 1024 * 1024,
+        maxVideoSize: 5 * 1024 * 1024 * 1024,
         canUpload: true
       },
       admin: {
         maxVideos: 1000,
-        maxStorage: 500 * 1024 * 1024 * 1024, // 500GB
-        maxVideoSize: 10 * 1024 * 1024 * 1024, // 10GB per video
+        maxStorage: 500 * 1024 * 1024 * 1024,
+        maxVideoSize: 10 * 1024 * 1024 * 1024,
         canUpload: true
       }
     };
 
     const userQuota = req.user.isCreator ? quotas.creator : 
-                      (req.user.role.includes('admin') ? quotas.admin : quotas.user);
+                      (req.user.role?.includes('admin') ? quotas.admin : quotas.user);
 
     const storageUsedGB = (totalStorage / (1024 * 1024 * 1024)).toFixed(2);
     const quotaGB = (userQuota.maxStorage / (1024 * 1024 * 1024)).toFixed(2);
@@ -812,7 +827,7 @@ exports.getUploadStatus = async (req, res) => {
         currentStorage: totalStorage,
         currentStorageGB: storageUsedGB,
         quotaGB: quotaGB,
-        percentUsed: Math.round((totalStorage / userQuota.maxStorage) * 100),
+        percentUsed: Math.min(100, Math.round((totalStorage / userQuota.maxStorage) * 100)),
         remainingVideos: Math.max(0, userQuota.maxVideos - videos.length),
         remainingStorage: Math.max(0, userQuota.maxStorage - totalStorage)
       }
