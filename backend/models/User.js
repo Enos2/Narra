@@ -1,7 +1,7 @@
 /**
  * File: backend/models/User.js
  * Description: Comprehensive User schema for Narra with token versioning for force logout
- * UPDATED: Added firstName, lastName, middleName, username, gender (male/female only)
+ * FULLY UPDATED: Added restrictions field for upload/goLive/comment permissions
  */
 
 const mongoose = require('mongoose');
@@ -136,6 +136,20 @@ const PrivacySettingsSchema = new mongoose.Schema(
 
 /*
 ========================================
+RESTRICTIONS SCHEMA - ADDED
+========================================
+*/
+const RestrictionsSchema = new mongoose.Schema(
+  {
+    upload: { type: Boolean, default: false },    // false = can upload, true = restricted
+    goLive: { type: Boolean, default: false },    // false = can go live, true = restricted
+    comment: { type: Boolean, default: false }    // false = can comment, true = restricted
+  },
+  { _id: false }
+);
+
+/*
+========================================
 USER SCHEMA
 ========================================
 */
@@ -217,6 +231,11 @@ const UserSchema = new mongoose.Schema(
     privacySettings: { type: PrivacySettingsSchema, default: () => ({}) },
     preferredLanguage: { type: String, default: 'en' },
     theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
+
+    // ----------------------
+    // RESTRICTIONS - ADDED
+    // ----------------------
+    restrictions: { type: RestrictionsSchema, default: () => ({ upload: false, goLive: false, comment: false }) },
 
     // ----------------------
     // ROLES & PERMISSIONS
@@ -411,7 +430,11 @@ const UserSchema = new mongoose.Schema(
       },
     ],
   },
-  { timestamps: true }
+  { 
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
+  }
 );
 
 /*
@@ -437,6 +460,12 @@ UserSchema.virtual('profileComplete').get(function() {
 
 UserSchema.virtual('displayName').get(function() {
   return this.username || this.fullName || this.email.split('@')[0];
+});
+
+UserSchema.virtual('status').get(function() {
+  if (this.isBanned) return 'banned';
+  if (this.isDeactivated) return 'deactivated';
+  return 'active';
 });
 
 /*
@@ -490,6 +519,8 @@ UserSchema.index({ twins: 1 });
 UserSchema.index({ followerCount: -1 });
 UserSchema.index({ location: 1 });
 UserSchema.index({ username: 1 });
+UserSchema.index({ email: 1 });
+UserSchema.index({ createdAt: -1 });
 
 /*
 ========================================
@@ -510,22 +541,116 @@ function updateDerivedFields(user) {
 
 /*
 ========================================
-PRE-VALIDATE MIDDLEWARE
+PRE-VALIDATE MIDDLEWARE - FIXED
 ========================================
 */
 UserSchema.pre('validate', function(next) {
   updateDerivedFields(this);
-  next();
+  if (next && typeof next === 'function') {
+    next();
+  }
 });
 
 /*
 ========================================
-PRE-SAVE MIDDLEWARE
+PRE-SAVE MIDDLEWARE - FIXED
 ========================================
 */
 UserSchema.pre('save', function(next) {
   updateDerivedFields(this);
-  if (typeof next === 'function') {
+  
+  // Hash password if modified and not already hashed
+  if (this.isModified('password') && this.password) {
+    // Check if password is already hashed (bcrypt hashes start with $2)
+    if (!this.password.startsWith('$2')) {
+      const salt = bcrypt.genSaltSync(10);
+      this.password = bcrypt.hashSync(this.password, salt);
+    }
+  }
+  
+  // Ensure restrictions has defaults
+  if (!this.restrictions) {
+    this.restrictions = { upload: false, goLive: false, comment: false };
+  }
+  
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+/*
+========================================
+PRE-FIND MIDDLEWARE - FIXED
+========================================
+*/
+UserSchema.pre('find', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.where({ isDeleted: false });
+  }
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+UserSchema.pre('findOne', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.where({ isDeleted: false });
+  }
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+UserSchema.pre('findById', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.where({ isDeleted: false });
+  }
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+UserSchema.pre('findOneAndUpdate', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.where({ isDeleted: false });
+  }
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+UserSchema.pre('updateOne', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.where({ isDeleted: false });
+  }
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+UserSchema.pre('updateMany', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.where({ isDeleted: false });
+  }
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+UserSchema.pre('countDocuments', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.where({ isDeleted: false });
+  }
+  if (next && typeof next === 'function') {
+    next();
+  }
+});
+
+UserSchema.pre('aggregate', function(next) {
+  if (this.getOptions().includeDeleted !== true) {
+    this.pipeline().unshift({ $match: { isDeleted: false } });
+  }
+  if (next && typeof next === 'function') {
     next();
   }
 });
@@ -537,6 +662,7 @@ METHODS
 */
 
 UserSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!candidatePassword || !this.password) return false;
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
@@ -817,6 +943,15 @@ UserSchema.methods.updatePrivacySettings = async function (settings) {
   return this.privacySettings;
 };
 
+UserSchema.methods.updateRestrictions = async function (restrictions) {
+  this.restrictions = {
+    ...this.restrictions.toObject(),
+    ...restrictions
+  };
+  await this.save();
+  return this.restrictions;
+};
+
 /*
 ========================================
 STATICS
@@ -874,4 +1009,11 @@ UserSchema.statics.findTwins = function (userId) {
   }).select('firstName lastName username avatar isVerified');
 };
 
-module.exports = mongoose.model('User', UserSchema);
+/*
+========================================
+EXPORT MODEL WITH OVERWRITE PROTECTION
+========================================
+*/
+const User = mongoose.models.User || mongoose.model('User', UserSchema);
+
+module.exports = User;

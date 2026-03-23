@@ -19,6 +19,10 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const adRoutes = require('./routes/adRoutes');
 // ===================================
 
+// ========== ADD SEARCH ROUTES ==========
+const searchRoutes = require('./routes/searchRoutes');
+// =======================================
+
 // Middleware
 const errorHandler = require('./middleware/errorMiddleware');
 const { protect } = require('./middleware/authMiddleware');
@@ -249,6 +253,7 @@ app.get('/', (req, res) => {
             <p>✅ Socket.io enabled for real-time messaging</p>
             <p>✅ Message controller connected to Socket.IO</p>
             <p>✅ Ad management API active</p>
+            <p>✅ Unified search API active</p>
           </div>
         </div>
       </body>
@@ -274,7 +279,8 @@ app.get('/api/health', (req, res) => {
       avatar_upload: true,
       follow_system: true,
       twin_detection: true,
-      ad_management: true  // Added
+      ad_management: true,
+      unified_search: true  // Added
     }
   });
 });
@@ -295,6 +301,10 @@ app.use('/api/uploads', uploadRoutes);
 // ========== ADD AD ROUTES ==========
 app.use('/api/ads', adRoutes);
 // ===================================
+
+// ========== ADD SEARCH ROUTES ==========
+app.use('/api/search', searchRoutes);
+// =======================================
 
 /*
 ========================================
@@ -334,5 +344,6 @@ server.listen(PORT, () => {
   console.log(`💬 Messaging system: ACTIVE`);
   console.log(`✅ Message controller: CONNECTED`);
   console.log(`📢 Ad management: ACTIVE`);
+  console.log(`🔍 Unified search: ACTIVE`);
   console.log('============================================\n');
 });

@@ -1,1591 +1,940 @@
 /**
  * File: backend/controllers/userController.js
- * Description: Handles user profile, admin actions, RBAC, shadow ban, search, JWT
- * UPDATED: Added enhanced profile updates with firstName, lastName, middleName, username, gender
- * ADDED: Follow/unfollow functionality with twin detection
- * ADDED: Get following content feed to fetch videos from followed users
+ * Description: User controller with all CRUD operations, follow functionality, and admin actions
+ * FIXED: updateProfile returns proper user data with all fields
  */
 
-const mongoose = require('mongoose');
 const User = require('../models/User');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const Video = require('../models/Video');
+const Live = require('../models/Live');
+const mongoose = require('mongoose');
 
 // ================================
-// GET CURRENT USER PROFILE
+// PUBLIC ROUTES
 // ================================
-exports.getProfile = async (req, res) => {
+
+/**
+ * @desc    Get public user profile by ID (with privacy checks)
+ * @route   GET /api/users/:id/public
+ * @access  Public
+ */
+exports.getPublicUserProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .select('-password -passwordResetToken -passwordResetExpires -twoFactorSecret -loginHistory')
-      .populate('uploadedVideos', 'title thumbnailUrl views createdAt status')
-      .populate('uploadedLives', 'title thumbnailUrl viewers isLive')
-      .populate('purchasedVideos', 'title thumbnailUrl price')
-      .populate('followers', 'firstName lastName username avatar isVerified')
-      .populate('following', 'firstName lastName username avatar isVerified')
-      .populate('twins', 'firstName lastName username avatar isVerified');
-      
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID' });
     }
+    
+    const user = await User.findById(id).select('-password -tokenVersion -loginHistory');
+    
+    if (!user || user.isDeleted) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    if (user.privacySettings?.profileVisibility === 'private') {
+      return res.status(403).json({ success: false, message: 'This profile is private' });
+    }
+    
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    console.error('Get public profile error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
 
-    const userObject = user.toObject();
-    userObject.followerCount = user.followers.length;
-    userObject.followingCount = user.following.length;
-    userObject.twinCount = user.twins.length;
-    userObject.profileComplete = !!(user.avatar && user.bio && user.location);
-    userObject.name = user.fullName;
-    userObject.formattedAccountAge = user.getFormattedAccountAge();
-
-    res.status(200).json({ 
-      success: true, 
-      user: userObject 
+/**
+ * @desc    Search users (public with privacy filters)
+ * @route   GET /api/users/search/public
+ * @access  Public
+ */
+exports.searchUsers = async (req, res) => {
+  try {
+    const { query, limit = 20, page = 1 } = req.query;
+    
+    if (!query || query.length < 2) {
+      return res.status(400).json({ success: false, message: 'Search query must be at least 2 characters' });
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    const searchCondition = {
+      isDeleted: false,
+      isBanned: false,
+      $or: [
+        { username: { $regex: query, $options: 'i' } },
+        { firstName: { $regex: query, $options: 'i' } },
+        { lastName: { $regex: query, $options: 'i' } },
+        { fullName: { $regex: query, $options: 'i' } }
+      ]
+    };
+    
+    const users = await User.find(searchCondition)
+      .select('firstName lastName username avatar bio followerCount isVerified privacySettings')
+      .limit(parseInt(limit))
+      .skip(skip)
+      .sort({ followerCount: -1 });
+    
+    // Filter out private profiles for public search
+    const filteredUsers = users.filter(user => 
+      user.privacySettings?.profileVisibility !== 'private'
+    );
+    
+    const total = await User.countDocuments(searchCondition);
+    
+    res.status(200).json({
+      success: true,
+      data: filteredUsers,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit)
+      }
     });
-  } catch (err) {
-    console.error('Get profile error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+  } catch (error) {
+    console.error('Search users error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
 // ================================
-// UPDATE PROFILE (ENHANCED with new fields)
+// PROTECTED ROUTES
 // ================================
+
+/**
+ * @desc    Get current logged-in profile
+ * @route   GET /api/users/me
+ * @access  Private
+ */
+exports.getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+      .select('-password -tokenVersion')
+      .populate('followers', 'firstName lastName username avatar')
+      .populate('following', 'firstName lastName username avatar')
+      .populate('twins', 'firstName lastName username avatar');
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+/**
+ * @desc    Update own profile - FIXED to return complete user data
+ * @route   PUT /api/users/me
+ * @access  Private
+ */
 exports.updateProfile = async (req, res) => {
   try {
-    const { 
-      firstName,
-      lastName,
-      middleName,
-      username,
-      email, 
-      password, 
-      currentPassword,
-      bio, 
-      location, 
-      website,
-      phoneNumber,
-      avatar,
-      gender,
-      notificationPreferences,
-      privacySettings,
-      theme,
-      preferredLanguage,
-      dateOfBirth
-    } = req.body;
+    const allowedUpdates = [
+      'firstName', 'lastName', 'middleName', 'bio', 'avatar', 
+      'phoneNumber', 'location', 'website', 'gender', 'dateOfBirth',
+      'notificationPreferences', 'privacySettings', 'preferredLanguage', 'theme',
+      'username', 'email'
+    ];
     
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    if (password) {
-      if (!currentPassword) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Current password is required to change password' 
-        });
+    const updates = {};
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
       }
-
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch) {
-        return res.status(401).json({ 
-          success: false, 
-          message: 'Current password is incorrect' 
-        });
+    });
+    
+    // Check username uniqueness if being updated
+    if (req.body.username && req.body.username !== req.user.username) {
+      const existingUser = await User.findOne({ username: req.body.username.toLowerCase() });
+      if (existingUser) {
+        return res.status(400).json({ success: false, message: 'Username already taken' });
       }
-
-      const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(password, salt);
-      user.lastPasswordChange = new Date();
-      user.tokenVersion = (user.tokenVersion || 0) + 1;
-    }
-
-    if (firstName) {
-      if (firstName.length < 2) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'First name must be at least 2 characters' 
-        });
-      }
-      user.firstName = firstName;
+      updates.username = req.body.username.toLowerCase();
     }
     
-    if (lastName) {
-      if (lastName.length < 2) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Last name must be at least 2 characters' 
-        });
+    // Check email uniqueness if being updated
+    if (req.body.email && req.body.email !== req.user.email) {
+      const existingUser = await User.findOne({ email: req.body.email.toLowerCase() });
+      if (existingUser) {
+        return res.status(400).json({ success: false, message: 'Email already taken' });
       }
-      user.lastName = lastName;
+      updates.email = req.body.email.toLowerCase();
     }
     
-    if (middleName !== undefined) user.middleName = middleName;
-    
-    if (username && username !== user.username) {
-      const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
-      if (!usernameRegex.test(username)) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Username must be 3-30 characters and can only contain letters, numbers, and underscores' 
-        });
+    // Handle password change if provided
+    if (req.body.password) {
+      if (!req.body.currentPassword) {
+        return res.status(400).json({ success: false, message: 'Current password is required to change password' });
       }
       
-      const existingUser = await User.findOne({ 
-        username: username.toLowerCase(), 
-        _id: { $ne: user._id } 
-      });
-      if (existingUser) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Username already taken' 
-        });
+      const user = await User.findById(req.user.id);
+      const isMatch = await user.comparePassword(req.body.currentPassword);
+      if (!isMatch) {
+        return res.status(400).json({ success: false, message: 'Current password is incorrect' });
       }
-      user.username = username.toLowerCase();
+      
+      updates.password = req.body.password;
     }
     
-    if (email && email !== user.email) {
-      const existingUser = await User.findOne({ email, _id: { $ne: user._id } });
-      if (existingUser) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Email already in use' 
-        });
-      }
-      user.email = email;
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: updates },
+      { new: true, runValidators: true }
+    ).select('-password -tokenVersion')
+     .populate('followers', 'firstName lastName username avatar')
+     .populate('following', 'firstName lastName username avatar')
+     .populate('twins', 'firstName lastName username avatar');
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    if (dateOfBirth) user.dateOfBirth = dateOfBirth;
-    if (gender !== undefined) user.gender = gender;
-    if (bio !== undefined) user.bio = bio;
-    if (location !== undefined) user.location = location;
-    if (website !== undefined) user.website = website;
-    if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
-    if (avatar !== undefined) user.avatar = avatar;
-
-    if (notificationPreferences) {
-      user.notificationPreferences = {
-        ...user.notificationPreferences.toObject(),
-        ...notificationPreferences
-      };
-    }
-
-    if (privacySettings) {
-      user.privacySettings = {
-        ...user.privacySettings.toObject(),
-        ...privacySettings
-      };
-    }
-
-    if (theme) user.theme = theme;
-    if (preferredLanguage) user.preferredLanguage = preferredLanguage;
-
-    await user.save();
-
-    const updatedUser = await User.findById(user._id)
-      .select('-password -passwordResetToken -passwordResetExpires -twoFactorSecret -loginHistory')
-      .populate('followers', 'firstName lastName username avatar isVerified')
-      .populate('following', 'firstName lastName username avatar isVerified')
-      .populate('twins', 'firstName lastName username avatar isVerified');
-
-    const userObject = updatedUser.toObject();
-    userObject.followerCount = updatedUser.followers.length;
-    userObject.followingCount = updatedUser.following.length;
-    userObject.twinCount = updatedUser.twins.length;
-    userObject.name = updatedUser.fullName;
-    userObject.formattedAccountAge = updatedUser.getFormattedAccountAge();
-
+    
+    // Return complete user data
     res.status(200).json({ 
       success: true, 
       message: 'Profile updated successfully',
-      user: userObject 
+      data: user 
     });
-  } catch (err) {
-    console.error('Update profile error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// CHECK USERNAME AVAILABILITY
-// ================================
+/**
+ * @desc    Delete own account (soft delete)
+ * @route   DELETE /api/users/me
+ * @access  Private
+ */
+exports.deleteUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    await user.softDelete(req.user.id, req.body.reason || 'User requested deletion');
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Account deleted successfully. Your data will be permanently removed in 30 days.'
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+/**
+ * @desc    Check username availability
+ * @route   GET /api/users/check-username
+ * @access  Public/Private
+ */
 exports.checkUsername = async (req, res) => {
   try {
     const { username } = req.query;
-    if (!username || username.length < 3) {
-      return res.json({ available: true });
-    }
-
-    const existingUser = await User.findOne({ 
-      username: username.toLowerCase(),
-      _id: { $ne: req.user?._id }
-    });
     
-    res.json({ available: !existingUser });
-  } catch (err) {
-    console.error('Check username error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to check username' 
-    });
+    if (!username) {
+      return res.status(400).json({ success: false, message: 'Username is required' });
+    }
+    
+    const existingUser = await User.findOne({ username: username.toLowerCase() });
+    const isAvailable = !existingUser;
+    
+    res.status(200).json({ success: true, isAvailable });
+  } catch (error) {
+    console.error('Check username error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// GET UPLOAD STATUS (QUOTA)
-// ================================
+/**
+ * @desc    Get upload status/quota
+ * @route   GET /api/users/upload-status
+ * @access  Private
+ */
 exports.getUploadStatus = async (req, res) => {
   try {
-    const Video = require('../models/Video');
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     
-    const videoCount = await Video.countDocuments({ 
-      user: req.user._id, 
-      isDeleted: false 
+    const videoCount = await Video.countDocuments({
+      user: req.user.id,
+      createdAt: { $gte: thirtyDaysAgo },
+      isDeleted: false
     });
     
-    const quotaGB = req.user.role === 'creator' ? 100 : 10;
-    const currentStorageGB = Math.min(Math.floor(videoCount * 0.1), quotaGB);
+    const totalStorageUsed = await Video.aggregate([
+      { $match: { user: req.user._id, isDeleted: false } },
+      { $group: { _id: null, total: { $sum: '$fileSize' } } }
+    ]);
     
-    res.json({
+    const quotaLimit = 10 * 1024 * 1024 * 1024; // 10GB
+    const used = totalStorageUsed[0]?.total || 0;
+    
+    res.status(200).json({
       success: true,
-      quota: {
-        quotaGB,
-        currentStorageGB,
-        maxVideos: req.user.role === 'creator' ? 1000 : 100,
-        currentVideos: videoCount
+      data: {
+        videoCount,
+        quotaUsed: used,
+        quotaLimit,
+        quotaRemaining: quotaLimit - used,
+        canUpload: used < quotaLimit
       }
     });
-  } catch (err) {
-    console.error('Get upload status error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get upload status' 
-    });
+  } catch (error) {
+    console.error('Get upload status error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
 // ================================
-// FOLLOW A USER
+// FOLLOW/UNFOLLOW ROUTES
 // ================================
+
+/**
+ * @desc    Follow a user
+ * @route   POST /api/users/:userId/follow
+ * @access  Private
+ */
 exports.followUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const currentUserId = req.user._id;
-
-    if (userId === currentUserId.toString()) {
-      return res.status(400).json({
-        success: false,
-        message: 'You cannot follow yourself'
-      });
-    }
-
-    const targetUser = await User.findById(userId);
-    if (!targetUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    if (targetUser.isBanned || targetUser.isDeleted) {
-      return res.status(403).json({
-        success: false,
-        message: 'Cannot follow this user'
-      });
-    }
-
-    if (targetUser.privacySettings?.profileVisibility === 'private') {
-      return res.status(403).json({
-        success: false,
-        message: 'This user has a private profile'
-      });
-    }
-
-    const currentUser = await User.findById(currentUserId);
-
-    if (currentUser.following.includes(userId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Already following this user'
-      });
-    }
-
-    currentUser.following.push(userId);
-    await currentUser.save();
-
-    targetUser.followers.push(currentUserId);
     
-    const isTwin = targetUser.following.includes(currentUserId);
-    if (isTwin) {
-      if (!currentUser.twins.includes(userId)) {
-        currentUser.twins.push(userId);
-        await currentUser.save();
-      }
-      if (!targetUser.twins.includes(currentUserId)) {
-        targetUser.twins.push(currentUserId);
-      }
-      
-      targetUser.notifications.push({
-        type: 'follow',
-        message: `${currentUser.fullName} started following you back! You are now twins! 🎉`,
-        relatedId: currentUserId,
-        relatedModel: 'User'
-      });
-    } else {
-      targetUser.notifications.push({
-        type: 'follow',
-        message: `${currentUser.fullName} started following you`,
-        relatedId: currentUserId,
-        relatedModel: 'User'
-      });
+    if (userId === req.user.id) {
+      return res.status(400).json({ success: false, message: 'You cannot follow yourself' });
     }
-
-    await targetUser.save();
-
-    await currentUser.populate('following', 'firstName lastName username avatar isVerified');
-    await currentUser.populate('twins', 'firstName lastName username avatar isVerified');
-
-    res.status(200).json({
-      success: true,
-      message: isTwin 
-        ? `You and ${targetUser.fullName} are now twins! 🎉` 
-        : `You are now following ${targetUser.fullName}`,
-      isTwin,
-      following: currentUser.following,
-      twins: currentUser.twins,
-      stats: {
-        followingCount: currentUser.following.length,
-        followersCount: currentUser.followers.length,
-        twinCount: currentUser.twins.length
-      }
-    });
-  } catch (err) {
-    console.error('Follow user error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+    
+    const targetUser = await User.findById(userId);
+    if (!targetUser || targetUser.isDeleted) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    const currentUser = await User.findById(req.user.id);
+    const result = await currentUser.follow(userId);
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Follow user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// UNFOLLOW A USER
-// ================================
+/**
+ * @desc    Unfollow a user
+ * @route   DELETE /api/users/:userId/follow
+ * @access  Private
+ */
 exports.unfollowUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const currentUserId = req.user._id;
+    
+    const currentUser = await User.findById(req.user.id);
+    const result = await currentUser.unfollow(userId);
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Unfollow user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
 
-    const currentUser = await User.findById(currentUserId);
-    const targetUser = await User.findById(userId);
+/**
+ * @desc    Check follow status with a user
+ * @route   GET /api/users/:userId/follow-status
+ * @access  Private
+ */
+exports.checkFollowStatus = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUser = await User.findById(req.user.id);
+    
+    if (!currentUser) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    const isFollowing = currentUser.isFollowing(userId);
+    const isFollowedBy = currentUser.isFollowedBy(userId);
+    const isTwin = currentUser.isTwin(userId);
+    
+    res.status(200).json({
+      success: true,
+      isFollowing,
+      isFollowedBy,
+      isTwin
+    });
+  } catch (error) {
+    console.error('Check follow status error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
 
-    if (!targetUser) {
-      return res.status(404).json({
-        success: false,
+/**
+ * @desc    Get follow suggestions (who to follow)
+ * @route   GET /api/users/suggestions
+ * @access  Private
+ */
+exports.getFollowSuggestions = async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user.id);
+    
+    if (!currentUser) {
+      return res.status(200).json({ 
+        success: true, 
+        data: [],
         message: 'User not found'
       });
     }
-
-    if (!currentUser.following.includes(userId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'You are not following this user'
-      });
-    }
-
-    currentUser.following = currentUser.following.filter(
-      id => id.toString() !== userId
-    );
-
-    if (currentUser.twins.includes(userId)) {
-      currentUser.twins = currentUser.twins.filter(
-        id => id.toString() !== userId
-      );
-    }
-
-    await currentUser.save();
-
-    targetUser.followers = targetUser.followers.filter(
-      id => id.toString() !== currentUserId.toString()
-    );
-
-    if (targetUser.twins.includes(currentUserId)) {
-      targetUser.twins = targetUser.twins.filter(
-        id => id.toString() !== currentUserId.toString()
-      );
-    }
-
-    targetUser.notifications.push({
-      type: 'follow',
-      message: `${currentUser.fullName} unfollowed you`,
-      relatedId: currentUserId,
-      relatedModel: 'User'
-    });
-
-    await targetUser.save();
-
-    await currentUser.populate('following', 'firstName lastName username avatar isVerified');
-    await currentUser.populate('twins', 'firstName lastName username avatar isVerified');
-
-    res.status(200).json({
-      success: true,
-      message: `You have unfollowed ${targetUser.fullName}`,
-      following: currentUser.following,
-      twins: currentUser.twins,
-      stats: {
-        followingCount: currentUser.following.length,
-        followersCount: currentUser.followers.length,
-        twinCount: currentUser.twins.length
-      }
-    });
-  } catch (err) {
-    console.error('Unfollow user error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+    
+    const followingIds = (currentUser.following || []).map(id => id.toString());
+    
+    const suggestions = await User.find({
+      _id: { $ne: req.user.id, $nin: followingIds },
+      isDeleted: false,
+      isBanned: false,
+      privacySettings: { profileVisibility: 'public' }
+    })
+    .sort({ followerCount: -1 })
+    .limit(10)
+    .select('firstName lastName username avatar bio followerCount isVerified');
+    
+    res.status(200).json({ success: true, data: suggestions });
+  } catch (error) {
+    console.error('Get suggestions error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
 // ================================
-// GET USER'S FOLLOWERS
+// GET FOLLOWERS/FOLLOWING/TWINS
 // ================================
+
+/**
+ * @desc    Get user's followers (with pagination)
+ * @route   GET /api/users/:userId/followers
+ * @access  Private
+ */
 exports.getFollowers = async (req, res) => {
   try {
     const { userId } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const currentUserId = req.user?._id;
+    
+    const skip = (page - 1) * limit;
     
     const user = await User.findById(userId);
     
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    if (!user.privacySettings?.showFollowers && 
-        (!currentUserId || currentUserId.toString() !== userId)) {
-      return res.status(403).json({
-        success: false,
-        message: 'This user has hidden their followers'
+    
+    const populatedUser = await User.findById(userId)
+      .populate({
+        path: 'followers',
+        select: 'firstName lastName username avatar bio isVerified',
+        options: {
+          skip: parseInt(skip),
+          limit: parseInt(limit)
+        }
       });
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const followers = await User.find({
-      _id: { $in: user.followers }
-    })
-    .select('firstName lastName username avatar bio isVerified followerCount createdAt')
-    .skip(skip)
-    .limit(parseInt(limit))
-    .sort({ createdAt: -1 });
-
-    let followersWithStatus = followers;
-    if (currentUserId) {
-      const currentUser = await User.findById(currentUserId);
-      followersWithStatus = followers.map(f => {
-        const fObj = f.toObject();
-        return {
-          ...fObj,
-          name: fObj.fullName || `${fObj.firstName} ${fObj.lastName}`,
-          isFollowing: currentUser.following.includes(f._id),
-          isFollowedBy: currentUser.followers.includes(f._id),
-          isTwin: currentUser.twins.includes(f._id)
-        };
-      });
-    }
-
+    
     res.status(200).json({
       success: true,
-      followers: followersWithStatus,
+      data: populatedUser.followers || [],
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: user.followers.length,
-        pages: Math.ceil(user.followers.length / parseInt(limit))
+        total: user.followerCount || 0
       }
     });
-  } catch (err) {
-    console.error('Get followers error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+  } catch (error) {
+    console.error('Get followers error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// GET USER'S FOLLOWING
-// ================================
+/**
+ * @desc    Get users that a user is following (with pagination)
+ * @route   GET /api/users/:userId/following
+ * @access  Private
+ */
 exports.getFollowing = async (req, res) => {
   try {
     const { userId } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const currentUserId = req.user?._id;
+    
+    const skip = (page - 1) * limit;
     
     const user = await User.findById(userId);
     
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    if (!user.privacySettings?.showFollowing && 
-        (!currentUserId || currentUserId.toString() !== userId)) {
-      return res.status(403).json({
-        success: false,
-        message: 'This user has hidden who they follow'
+    
+    const populatedUser = await User.findById(userId)
+      .populate({
+        path: 'following',
+        select: 'firstName lastName username avatar bio isVerified',
+        options: {
+          skip: parseInt(skip),
+          limit: parseInt(limit)
+        }
       });
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const following = await User.find({
-      _id: { $in: user.following }
-    })
-    .select('firstName lastName username avatar bio isVerified followerCount createdAt')
-    .skip(skip)
-    .limit(parseInt(limit))
-    .sort({ createdAt: -1 });
-
-    let followingWithStatus = following;
-    if (currentUserId) {
-      const currentUser = await User.findById(currentUserId);
-      followingWithStatus = following.map(f => {
-        const fObj = f.toObject();
-        return {
-          ...fObj,
-          name: fObj.fullName || `${fObj.firstName} ${fObj.lastName}`,
-          isFollowing: true,
-          isFollowedBy: currentUser.followers.includes(f._id),
-          isTwin: currentUser.twins.includes(f._id)
-        };
-      });
-    }
-
+    
     res.status(200).json({
       success: true,
-      following: followingWithStatus,
+      data: populatedUser.following || [],
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: user.following.length,
-        pages: Math.ceil(user.following.length / parseInt(limit))
+        total: user.followingCount || 0
       }
     });
-  } catch (err) {
-    console.error('Get following error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+  } catch (error) {
+    console.error('Get following error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// GET USER'S TWINS (MUTUAL FOLLOWERS)
-// ================================
+/**
+ * @desc    Get user's twins (mutual followers) (with pagination)
+ * @route   GET /api/users/:userId/twins
+ * @access  Private
+ */
 exports.getTwins = async (req, res) => {
   try {
     const { userId } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const currentUserId = req.user?._id;
+    
+    const skip = (page - 1) * limit;
     
     const user = await User.findById(userId);
     
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    if (!user.privacySettings?.showFollowers && 
-        (!currentUserId || currentUserId.toString() !== userId)) {
-      return res.status(403).json({
-        success: false,
-        message: 'This user has hidden their twins'
+    
+    const populatedUser = await User.findById(userId)
+      .populate({
+        path: 'twins',
+        select: 'firstName lastName username avatar bio isVerified',
+        options: {
+          skip: parseInt(skip),
+          limit: parseInt(limit)
+        }
       });
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const twins = await User.find({
-      _id: { $in: user.twins }
-    })
-    .select('firstName lastName username avatar bio isVerified followerCount createdAt')
-    .skip(skip)
-    .limit(parseInt(limit))
-    .sort({ createdAt: -1 });
-
-    let twinsWithStatus = twins;
-    if (currentUserId && currentUserId.toString() !== userId) {
-      const currentUser = await User.findById(currentUserId);
-      twinsWithStatus = twins.map(t => {
-        const tObj = t.toObject();
-        return {
-          ...tObj,
-          name: tObj.fullName || `${tObj.firstName} ${tObj.lastName}`,
-          isFollowing: currentUser.following.includes(t._id),
-          isFollowedBy: currentUser.followers.includes(t._id),
-          isTwin: currentUser.twins.includes(t._id)
-        };
-      });
-    }
-
+    
     res.status(200).json({
       success: true,
-      twins: twinsWithStatus,
+      data: populatedUser.twins || [],
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total: user.twins.length,
-        pages: Math.ceil(user.twins.length / parseInt(limit))
+        total: user.twinCount || 0
       }
     });
-  } catch (err) {
-    console.error('Get twins error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
+  } catch (error) {
+    console.error('Get twins error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
 // ================================
-// GET CONTENT FROM FOLLOWED USERS
+// FOLLOWING CONTENT FEED
 // ================================
+
+/**
+ * @desc    Get content (videos/lives) from users the current user follows
+ * @route   GET /api/users/following-content
+ * @access  Private
+ */
 exports.getFollowingContent = async (req, res) => {
   try {
-    const currentUserId = req.user._id;
-    const { page = 1, limit = 20, type } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const currentUser = await User.findById(currentUserId);
+    const { page = 1, limit = 20, type = 'all' } = req.query;
+    const skip = (page - 1) * limit;
+    
+    const currentUser = await User.findById(req.user.id);
     
     if (!currentUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      return res.status(200).json({ success: true, data: [] });
     }
-
-    const followedUserIds = currentUser.following;
-
-    if (followedUserIds.length === 0) {
-      return res.status(200).json({
-        success: true,
-        videos: [],
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: 0,
-          pages: 0
-        }
-      });
-    }
-
-    const Video = mongoose.model('Video');
-    const Live = mongoose.model('Live');
     
-    let videoQuery = {
-      user: { $in: followedUserIds },
-      isDeleted: false,
-      $or: [
-        { status: 'released' },
-        { status: 'live' }
-      ]
-    };
-
-    if (type === 'video') {
-      videoQuery.type = { $in: ['movie', 'series'] };
-    } else if (type === 'live') {
-      videoQuery.status = 'live';
-    }
-
-    const videos = await Video.find(videoQuery)
-      .populate('user', 'firstName lastName username avatar isVerified')
-      .sort({ createdAt: -1, isLive: -1 })
+    const followingIds = currentUser.following || [];
+    
+    let content = [];
+    
+    if (type === 'videos' || type === 'all') {
+      const videos = await Video.find({
+        user: { $in: followingIds },
+        isDeleted: false,
+        approved: true,
+        scheduledFor: { $lte: new Date() }
+      })
+      .populate('user', 'firstName lastName username avatar')
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
-
-    const total = await Video.countDocuments(videoQuery);
-
-    let lives = [];
-    if (!type || type === 'live') {
-      lives = await Live.find({
-        user: { $in: followedUserIds },
+      
+      content = [...content, ...videos.map(v => ({ ...v.toObject(), contentType: 'video' }))];
+    }
+    
+    if (type === 'lives' || type === 'all') {
+      const lives = await Live.find({
+        user: { $in: followingIds },
         status: 'live',
         isDeleted: false
       })
-      .populate('user', 'firstName lastName username avatar isVerified')
+      .populate('user', 'firstName lastName username avatar')
       .sort({ startedAt: -1 });
-    }
-
-    let allContent = [...videos];
-    
-    if (lives.length > 0) {
-      const liveContent = lives.map(live => ({
-        _id: live._id,
-        title: live.title,
-        description: live.description,
-        thumbnailUrl: live.thumbnailUrl,
-        status: 'live',
-        type: 'live',
-        isLive: true,
-        user: live.user,
-        viewerCount: live.viewerCount,
-        startedAt: live.startedAt,
-        createdAt: live.createdAt
-      }));
       
-      allContent = [...liveContent, ...videos];
-      allContent.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      content = [...content, ...lives.map(l => ({ ...l.toObject(), contentType: 'live' }))];
     }
-
-    const formattedContent = allContent.map(item => ({
-      _id: item._id,
-      title: item.title,
-      description: item.description,
-      thumbnailUrl: item.thumbnailUrl,
-      status: item.status || (item.isLive ? 'live' : 'released'),
-      type: item.type || 'video',
-      isLive: item.isLive || false,
-      creator: item.user,
-      uploader: item.user?.fullName || item.user?.username || 'Unknown',
-      uploaderAvatar: item.user?.avatar,
-      viewerCount: item.viewerCount,
-      views: item.views,
-      createdAt: item.createdAt,
-      isPaid: item.isPaid || false,
-      price: item.price
-    }));
-
-    res.status(200).json({
-      success: true,
-      videos: formattedContent,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit))
-      }
-    });
-
-  } catch (err) {
-    console.error('Get following content error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-};
-
-// ================================
-// CHECK FOLLOW STATUS WITH A USER
-// ================================
-exports.checkFollowStatus = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const currentUserId = req.user._id;
-
-    const currentUser = await User.findById(currentUserId);
-    const targetUser = await User.findById(userId);
-
-    if (!targetUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    const isFollowing = currentUser.following.includes(userId);
-    const isFollowedBy = currentUser.followers.includes(userId);
-    const isTwin = currentUser.twins.includes(userId);
-
-    res.status(200).json({
-      success: true,
-      status: {
-        isFollowing,
-        isFollowedBy,
-        isTwin,
-        canFollow: !isFollowing && !targetUser.isBanned && !targetUser.isDeleted
-      },
-      targetUser: {
-        id: targetUser._id,
-        name: targetUser.fullName,
-        firstName: targetUser.firstName,
-        lastName: targetUser.lastName,
-        username: targetUser.username,
-        avatar: targetUser.avatar,
-        isVerified: targetUser.isVerified,
-        privacySettings: targetUser.privacySettings
-      }
-    });
-  } catch (err) {
-    console.error('Check follow status error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-};
-
-// ================================
-// GET FOLLOW SUGGESTIONS
-// ================================
-exports.getFollowSuggestions = async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-    const currentUserId = req.user._id;
-
-    const currentUser = await User.findById(currentUserId);
-
-    const suggestions = await User.find({
-      _id: { 
-        $ne: currentUserId,
-        $nin: currentUser.following 
-      },
-      isBanned: false,
-      isDeleted: false,
-      'privacySettings.profileVisibility': { $ne: 'private' }
-    })
-    .sort({ followerCount: -1, createdAt: -1 })
-    .limit(parseInt(limit))
-    .select('firstName lastName username avatar bio isVerified followerCount createdAt');
-
-    const suggestionsWithStatus = suggestions.map(s => {
-      const sObj = s.toObject();
-      return {
-        ...sObj,
-        name: sObj.fullName || `${sObj.firstName} ${sObj.lastName}`,
-        followsYou: s.followers.includes(currentUserId)
-      };
-    });
-
-    res.status(200).json({
-      success: true,
-      suggestions: suggestionsWithStatus
-    });
-  } catch (err) {
-    console.error('Get follow suggestions error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-};
-
-// ================================
-// SEARCH USERS
-// ================================
-exports.searchUsers = async (req, res) => {
-  try {
-    const { query, page = 1, limit = 20 } = req.query;
-    const currentUserId = req.user?._id;
     
-    if (!query) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Search query required' 
-      });
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const filter = {
-      $and: [
-        {
-          $or: [
-            { firstName: { $regex: query, $options: 'i' } },
-            { lastName: { $regex: query, $options: 'i' } },
-            { username: { $regex: query, $options: 'i' } },
-            { location: { $regex: query, $options: 'i' } }
-          ]
-        },
-        { isBanned: false },
-        { isDeleted: false }
-      ]
-    };
-
-    if (currentUserId) {
-      const currentUser = await User.findById(currentUserId);
-      filter.$and.push({
-        $or: [
-          { 'privacySettings.profileVisibility': { $ne: 'private' } },
-          { followers: currentUserId },
-          { _id: currentUserId }
-        ]
-      });
-    } else {
-      filter.$and.push({
-        'privacySettings.profileVisibility': { $ne: 'private' }
-      });
-    }
-
-    const users = await User.find(filter)
-      .select('firstName lastName username avatar bio isVerified followerCount location privacySettings')
-      .skip(skip)
-      .limit(parseInt(limit))
-      .sort({ followerCount: -1 });
-
-    const total = await User.countDocuments(filter);
-
-    let usersWithStatus = users;
-    if (currentUserId) {
-      const currentUser = await User.findById(currentUserId);
-      usersWithStatus = users.map(u => {
-        const uObj = u.toObject();
-        return {
-          ...uObj,
-          name: uObj.fullName || `${uObj.firstName} ${uObj.lastName}`,
-          isFollowing: currentUser.following.includes(u._id),
-          isFollowedBy: currentUser.followers.includes(u._id),
-          isTwin: currentUser.twins.includes(u._id)
-        };
-      });
-    }
-
+    content.sort((a, b) => new Date(b.createdAt || b.startedAt) - new Date(a.createdAt || a.startedAt));
+    
     res.status(200).json({
       success: true,
-      users: usersWithStatus,
+      data: content.slice(0, parseInt(limit)),
       pagination: {
         page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit))
+        limit: parseInt(limit)
       }
     });
-  } catch (err) {
-    console.error('Search users error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+  } catch (error) {
+    console.error('Get following content error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
 // ================================
-// GET USER BY ID (PUBLIC PROFILE)
+// GET USER BY ID
 // ================================
+
+/**
+ * @desc    Get user by ID (authenticated - respects privacy settings)
+ * @route   GET /api/users/:id
+ * @access  Private
+ */
 exports.getUserById = async (req, res) => {
   try {
     const { id } = req.params;
-    const currentUserId = req.user?._id;
-
-    const user = await User.findById(id)
-      .select('-password -email -passwordResetToken -passwordResetExpires -twoFactorSecret -loginHistory -adminActions -auditLogs -tokenVersion')
-      .populate('uploadedVideos', 'title thumbnailUrl views createdAt')
-      .populate('uploadedLives', 'title thumbnailUrl viewers isLive');
-
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID' });
     }
-
+    
+    const user = await User.findById(id)
+      .select('-password -tokenVersion -loginHistory')
+      .populate('followers', 'firstName lastName username avatar')
+      .populate('following', 'firstName lastName username avatar')
+      .populate('twins', 'firstName lastName username avatar');
+    
+    if (!user || user.isDeleted) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    // Check privacy settings
     if (user.privacySettings?.profileVisibility === 'private') {
-      if (!currentUserId || currentUserId.toString() !== id) {
-        const isFollower = user.followers.includes(currentUserId);
-        if (!isFollower) {
-          return res.status(403).json({
-            success: false,
-            message: 'This profile is private'
-          });
-        }
+      const isFollower = user.followers.some(f => f._id.toString() === req.user.id);
+      if (!isFollower && req.user.id !== id) {
+        return res.status(403).json({ success: false, message: 'This profile is private' });
       }
     }
-
-    const userObject = user.toObject();
-    userObject.followerCount = user.followers.length;
-    userObject.followingCount = user.following.length;
-    userObject.twinCount = user.twins.length;
-    userObject.name = user.fullName;
-    userObject.formattedAccountAge = user.getFormattedAccountAge();
-
-    if (currentUserId) {
-      const currentUser = await User.findById(currentUserId);
-      userObject.isFollowing = currentUser.following.includes(user._id);
-      userObject.isFollowedBy = currentUser.followers.includes(user._id);
-      userObject.isTwin = currentUser.twins.includes(user._id);
-    }
-
-    if (!user.privacySettings?.showFollowers && (!currentUserId || currentUserId.toString() !== id)) {
-      delete userObject.followers;
-    }
-    if (!user.privacySettings?.showFollowing && (!currentUserId || currentUserId.toString() !== id)) {
-      delete userObject.following;
-    }
-
-    res.status(200).json({ 
-      success: true, 
-      user: userObject 
-    });
-  } catch (err) {
-    console.error('Get user by ID error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    console.error('Get user by ID error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
 // ================================
-// ADMIN: GET ALL USERS
+// ADMIN ROUTES
 // ================================
+
+/**
+ * @desc    Get all users (admin only)
+ * @route   GET /api/users
+ * @access  Private/Admin
+ */
 exports.getAllUsers = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    const { page = 1, limit = 20, role, status, search } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    let filter = { isDeleted: false };
-
+    const { page = 1, limit = 50, role, isVerified, isBanned, search } = req.query;
+    const skip = (page - 1) * limit;
+    
+    const filter = { isDeleted: false };
+    
     if (role) filter.role = role;
-    if (status === 'banned') filter.isBanned = true;
-    if (status === 'active') filter.isBanned = false;
-    if (status === 'verified') filter.isVerified = true;
-    if (status === 'deactivated') filter.isDeactivated = true;
+    if (isVerified !== undefined) filter.isVerified = isVerified === 'true';
+    if (isBanned !== undefined) filter.isBanned = isBanned === 'true';
     if (search) {
       filter.$or = [
-        { firstName: { $regex: search, $options: 'i' } },
-        { lastName: { $regex: search, $options: 'i' } },
         { username: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } }
+        { email: { $regex: search, $options: 'i' } },
+        { firstName: { $regex: search, $options: 'i' } },
+        { lastName: { $regex: search, $options: 'i' } }
       ];
     }
-
+    
     const users = await User.find(filter)
-      .select('-password -passwordResetToken -passwordResetExpires -twoFactorSecret')
+      .select('-password -tokenVersion')
+      .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit))
-      .sort({ createdAt: -1 });
-
+      .limit(parseInt(limit));
+    
     const total = await User.countDocuments(filter);
-
-    const usersWithName = users.map(u => {
-      const uObj = u.toObject();
-      uObj.name = u.fullName;
-      return uObj;
-    });
-
-    res.status(200).json({ 
-      success: true, 
-      users: usersWithName,
+    
+    res.status(200).json({
+      success: true,
+      data: users,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
         total,
-        pages: Math.ceil(total / parseInt(limit))
+        pages: Math.ceil(total / limit)
       }
     });
-  } catch (err) {
-    console.error('Get all users error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+  } catch (error) {
+    console.error('Get all users error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// DELETE OWN ACCOUNT
-// ================================
-exports.deleteUser = async (req, res) => {
-  try {
-    const userId = req.user._id;
-
-    if (req.user.isShadowBanned) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Shadow banned users cannot delete accounts' 
-      });
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    user.isDeleted = true;
-    user.deletedAt = new Date();
-    user.deletedBy = userId;
-    user.deleteReason = 'User requested deletion';
-    user.email = `deleted_${user._id}_${user.email}`;
-    user.firstName = 'Deleted';
-    user.lastName = 'User';
-    user.username = `deleted_${user._id}`;
-    
-    await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: 'Account deleted successfully' 
-    });
-  } catch (err) {
-    console.error('Delete user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
-  }
-};
-
-// ================================
-// ADMIN: BAN USER
-// ================================
+/**
+ * @desc    Ban a user
+ * @route   POST /api/users/:id/ban
+ * @access  Private/Admin
+ */
 exports.banUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    if (req.user.isShadowBanned) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Shadow banned users cannot perform this action' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    const { reason } = req.body;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    if (user.isFounder) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Founder cannot be banned' 
-      });
-    }
-
+    
     user.isBanned = true;
     user.bannedAt = new Date();
-    user.bannedBy = req.user._id;
-    user.banReason = req.body.reason || 'No reason provided';
+    user.bannedBy = req.user.id;
+    user.banReason = reason || 'No reason provided';
     
-    user.adminActions.push({
-      actionType: 'BAN_USER',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} banned ${user.fullName}`,
-      performedBy: req.user._id,
-      details: { reason: req.body.reason }
-    });
-
+    await user.invalidateTokens();
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `${user.fullName} has been banned`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Ban user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'User banned successfully' });
+  } catch (error) {
+    console.error('Ban user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// ADMIN: UNBAN USER
-// ================================
+/**
+ * @desc    Unban a user
+ * @route   POST /api/users/:id/unban
+ * @access  Private/Admin
+ */
 exports.unbanUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    if (req.user.isShadowBanned) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Shadow banned users cannot perform this action' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
+    
     user.isBanned = false;
     user.bannedAt = null;
     user.bannedBy = null;
     user.banReason = null;
     
-    user.adminActions.push({
-      actionType: 'UNBAN_USER',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} unbanned ${user.fullName}`,
-      performedBy: req.user._id
-    });
-
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `${user.fullName} has been unbanned`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Unban user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'User unbanned successfully' });
+  } catch (error) {
+    console.error('Unban user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// ADMIN: VERIFY USER
-// ================================
+/**
+ * @desc    Verify a user
+ * @route   POST /api/users/:id/verify
+ * @access  Private/Admin
+ */
 exports.verifyUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
+    
     user.isVerified = true;
     user.verifiedAt = new Date();
-    user.verifiedBy = req.user._id;
+    user.verifiedBy = req.user.id;
     
-    user.adminActions.push({
-      actionType: 'VERIFY_USER',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} verified ${user.fullName}`,
-      performedBy: req.user._id
-    });
-
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `${user.fullName} has been verified`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Verify user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'User verified successfully' });
+  } catch (error) {
+    console.error('Verify user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// ADMIN: UNVERIFY USER
-// ================================
+/**
+ * @desc    Unverify a user
+ * @route   POST /api/users/:id/unverify
+ * @access  Private/Admin
+ */
 exports.unverifyUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
+    
     user.isVerified = false;
     user.verifiedAt = null;
     user.verifiedBy = null;
     
-    user.adminActions.push({
-      actionType: 'UNVERIFY_USER',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} unverified ${user.fullName}`,
-      performedBy: req.user._id,
-      details: { reason: req.body.reason }
-    });
-
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `${user.fullName} has been unverified`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Unverify user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'User unverified successfully' });
+  } catch (error) {
+    console.error('Unverify user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// ADMIN: DEACTIVATE USER
-// ================================
+/**
+ * @desc    Deactivate a user
+ * @route   PUT /api/users/:id/deactivate
+ * @access  Private/Admin
+ */
 exports.deactivateUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    const { reason } = req.body;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
+    
     user.isDeactivated = true;
     user.deactivatedAt = new Date();
-    user.deactivationReason = req.body.reason || 'Deactivated by admin';
+    user.deactivationReason = reason || 'Deactivated by admin';
+    user.adminDeactivated = true;
+    user.adminDeactivatedAt = new Date();
+    user.adminDeactivationReason = reason || 'Deactivated by admin';
     
-    user.adminActions.push({
-      actionType: 'DEACTIVATE_USER',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} deactivated ${user.fullName}`,
-      performedBy: req.user._id,
-      details: { reason: req.body.reason }
-    });
-
+    await user.invalidateTokens();
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `${user.fullName} has been deactivated`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Deactivate user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'User deactivated successfully' });
+  } catch (error) {
+    console.error('Deactivate user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// ADMIN: ACTIVATE USER
-// ================================
+/**
+ * @desc    Activate a user
+ * @route   PUT /api/users/:id/activate
+ * @access  Private/Admin
+ */
 exports.activateUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
+    
     user.isDeactivated = false;
     user.deactivatedAt = null;
     user.deactivationReason = null;
+    user.adminDeactivated = false;
+    user.adminDeactivatedAt = null;
+    user.adminDeactivationReason = null;
     
-    user.adminActions.push({
-      actionType: 'ACTIVATE_USER',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} activated ${user.fullName}`,
-      performedBy: req.user._id
-    });
-
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `${user.fullName} has been activated`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Activate user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'User activated successfully' });
+  } catch (error) {
+    console.error('Activate user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// ADMIN: SHADOW BAN USER
-// ================================
+/**
+ * @desc    Apply shadow ban to a user
+ * @route   POST /api/users/:id/shadow-ban
+ * @access  Private/Admin
+ */
 exports.applyShadowBanUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    const { countries = [], continents = [] } = req.body;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    const { reason = '', countries = [], continents = [] } = req.body;
-
+    
     user.isShadowBanned = true;
     user.shadowBannedCountries = countries;
     user.shadowBannedContinents = continents;
-    user.shadowBanAppliedBy = req.user._id;
+    user.shadowBanAppliedBy = req.user.id;
     user.shadowBanAppliedAt = new Date();
     
-    user.adminActions.push({
-      actionType: 'SHADOW_BAN',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} shadow banned ${user.fullName}`,
-      performedBy: req.user._id,
-      details: { reason, countries, continents }
-    });
-
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `${user.fullName} has been shadow banned`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Shadow ban user error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'Shadow ban applied successfully' });
+  } catch (error) {
+    console.error('Apply shadow ban error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// ADMIN: REMOVE SHADOW BAN
-// ================================
+/**
+ * @desc    Remove shadow ban from a user
+ * @route   POST /api/users/:id/remove-shadow-ban
+ * @access  Private/Admin
+ */
 exports.removeShadowBanUser = async (req, res) => {
   try {
-    if (!['superadmin', 'platformadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized' 
-      });
-    }
-
-    const user = await User.findById(req.params.id);
+    const { id } = req.params;
+    
+    const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
+    
     user.isShadowBanned = false;
     user.shadowBannedCountries = [];
     user.shadowBannedContinents = [];
     user.shadowBanAppliedBy = null;
     user.shadowBanAppliedAt = null;
     
-    user.adminActions.push({
-      actionType: 'UNSHADOW_BAN',
-      targetId: user._id,
-      targetModel: 'User',
-      description: `${req.user.fullName} removed shadow ban from ${user.fullName}`,
-      performedBy: req.user._id
-    });
-
     await user.save();
-
-    res.status(200).json({ 
-      success: true, 
-      message: `Shadow ban removed from ${user.fullName}`, 
-      user 
-    });
-  } catch (err) {
-    console.error('Remove shadow ban error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    });
+    
+    res.status(200).json({ success: true, message: 'Shadow ban removed successfully' });
+  } catch (error) {
+    console.error('Remove shadow ban error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
 
-// ================================
-// GENERATE JWT
-// ================================
-exports.generateToken = (user) => {
-  return jwt.sign(
-    { 
-      id: user._id, 
-      role: user.role,
-      tokenVersion: user.tokenVersion || 0
-    }, 
-    process.env.JWT_SECRET, 
-    { expiresIn: '30d' }
-  );
-};
+module.exports = exports;

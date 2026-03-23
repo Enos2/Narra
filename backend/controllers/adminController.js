@@ -1,6 +1,7 @@
 /**
  * File: backend/controllers/adminController.js
  * COMPLETE UPDATED VERSION - ALL FUNCTIONS INCLUDED
+ * ADDED: getAdminsCreatedByAdmin function for Super Admin profile
  */
 
 const User = require('../models/User');
@@ -353,6 +354,8 @@ exports.createAdmin = async (req, res) => {
       userAgent: req.get('User-Agent'),
       metadata: { 
         newRole: role,
+        newAdminName: newAdmin.name,
+        newAdminEmail: newAdmin.email,
         createdBy: req.user.email 
       }
     });
@@ -1071,7 +1074,7 @@ exports.unbanUser = async (req, res) => {
 };
 
 /* ========================
-   11️⃣ APPROVE VIDEO (ALL ADMINS) - FIXED
+   11️⃣ APPROVE VIDEO (ALL ADMINS)
 ======================== */
 exports.approveVideo = async (req, res) => {
   try {
@@ -1128,7 +1131,7 @@ exports.approveVideo = async (req, res) => {
 };
 
 /* ========================
-   12️⃣ REJECT VIDEO (ALL ADMINS) - FIXED
+   12️⃣ REJECT VIDEO (ALL ADMINS)
 ======================== */
 exports.rejectVideo = async (req, res) => {
   try {
@@ -1846,7 +1849,7 @@ exports.toggleSupportAdmin = async (req, res) => {
 
     await logAdminAction({
       admin: req.user,
-      actionType: admin.isSupport ? 'TOGGLE_SUPPORT_ROLE' : 'TOGGLE_SUPPORT_ROLE',
+      actionType: admin.isSupport ? 'ASSIGN_SUPPORT' : 'REVOKE_SUPPORT',
       actionLabel: admin.isSupport ? 'Assign Support Role' : 'Revoke Support Role',
       targetType: 'Admin',
       targetId: admin._id,
@@ -2300,6 +2303,94 @@ exports.getAdminAuditLogs = async (req, res) => {
 };
 
 /* ========================
+   36️⃣ GET ADMINS CREATED BY ADMIN (SUPER ADMIN ONLY)
+   NEW FUNCTION FOR ADMIN PROFILE PAGE
+======================== */
+exports.getAdminsCreatedByAdmin = async (req, res) => {
+  try {
+    const { adminId } = req.params;
+    
+    // Only super admins can view this
+    if (req.user.role !== 'superadmin') {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only super admins can view admin creation history' 
+      });
+    }
+    
+    // Find all admins created by this admin from User model
+    const adminsCreated = await User.find({
+      createdBy: adminId,
+      role: { $in: ADMIN_ROLES },
+      isDeleted: { $ne: true }
+    }).select('firstName lastName username email role createdAt avatar isVerified adminDeactivated');
+    
+    // Get creation logs from audit as backup
+    let creationLogs = [];
+    try {
+      creationLogs = await AdminAuditLog.find({
+        adminId: adminId,
+        actionType: 'CREATE_ADMIN'
+      }).sort({ createdAt: -1 });
+    } catch (e) {
+      console.warn('Could not fetch audit logs:', e.message);
+    }
+    
+    // Combine and deduplicate by email
+    const adminsMap = new Map();
+    
+    // Add from User model first
+    adminsCreated.forEach(admin => {
+      const name = admin.name || `${admin.firstName || ''} ${admin.lastName || ''}`.trim() || admin.username;
+      adminsMap.set(admin.email, {
+        id: admin._id,
+        name: name,
+        email: admin.email,
+        role: admin.role,
+        createdAt: admin.createdAt,
+        avatar: admin.avatar,
+        isActive: !admin.adminDeactivated,
+        isVerified: admin.isVerified
+      });
+    });
+    
+    // Add from audit logs if not already present
+    creationLogs.forEach(log => {
+      const email = log.targetEmail || log.metadata?.newAdminEmail;
+      if (email && !adminsMap.has(email)) {
+        adminsMap.set(email, {
+          id: log.targetId,
+          name: log.targetName || log.metadata?.newAdminName || email.split('@')[0],
+          email: email,
+          role: log.metadata?.newRole || 'admin',
+          createdAt: log.createdAt,
+          avatar: null,
+          isActive: true,
+          isVerified: false
+        });
+      }
+    });
+    
+    const admins = Array.from(adminsMap.values()).sort((a, b) => 
+      new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    
+    res.json({ 
+      success: true, 
+      admins,
+      total: admins.length
+    });
+  } catch (err) {
+    console.error('GET ADMINS CREATED ERROR:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch admins created',
+      error: err.message 
+    });
+  }
+};
+
+/* ========================
    EXPORTS - COMPLETE LIST
 ======================== */
 module.exports = {
@@ -2321,6 +2412,7 @@ module.exports = {
   // ADMIN LISTING
   getAllAdmins: exports.getAllAdmins,
   getInactiveAdmins: exports.getInactiveAdmins,
+  getAdminsCreatedByAdmin: exports.getAdminsCreatedByAdmin, // NEW
   
   // USER MANAGEMENT
   getAllUsers: exports.getAllUsers,

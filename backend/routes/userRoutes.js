@@ -1,7 +1,8 @@
 /**
  * File: backend/routes/userRoutes.js
  * Description: Routes for user operations including profile management and follow functionality
- * UPDATED: Added route for following-content to get videos from followed users
+ * UPDATED: Added public profile endpoint for non-authenticated users
+ * FIXED: Removed duplicate route definitions
  */
 
 const express = require('express');
@@ -16,7 +17,7 @@ const { protect, requireRole } = require('../middleware/authMiddleware');
 */
 
 // Get public user profile by ID (with privacy checks)
-router.get('/:id/public', userController.getUserById);
+router.get('/:id/public', userController.getPublicUserProfile);
 
 // Search users (public with privacy filters)
 router.get('/search/public', userController.searchUsers);
@@ -42,6 +43,12 @@ router.put('/me', userController.updateProfile);
 
 // Delete own account (soft delete)
 router.delete('/me', userController.deleteUser);
+
+// Check username availability
+router.get('/check-username', userController.checkUsername);
+
+// Get upload status/quota
+router.get('/upload-status', userController.getUploadStatus);
 
 // ================================
 // FOLLOW/UNFOLLOW ROUTES
@@ -86,6 +93,13 @@ router.get('/following-content', userController.getFollowingContent);
 // Search users (authenticated - shows more details)
 router.get('/search', userController.searchUsers);
 
+// ================================
+// GET USER BY ID (with privacy checks)
+// ================================
+
+// Get user by ID (authenticated - respects privacy settings)
+router.get('/:id', userController.getUserById);
+
 /*
 |---------------------------------------------------------------------------
 | ADMIN ROUTES (RESTRICTED ACCESS)
@@ -122,8 +136,5 @@ router.post('/:id/shadow-ban', requireRole('superadmin', 'platformadmin'), userC
 
 // Remove shadow ban from a user
 router.post('/:id/remove-shadow-ban', requireRole('superadmin', 'platformadmin'), userController.removeShadowBanUser);
-
-// Get user by ID (admin version - full details)
-router.get('/:id', requireRole('superadmin', 'platformadmin', 'supportadmin'), userController.getUserById);
 
 module.exports = router;

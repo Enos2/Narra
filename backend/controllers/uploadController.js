@@ -1,7 +1,7 @@
 /**
  * File: backend/controllers/uploadController.js
  * Description: Handles file uploads for videos, thumbnails, trailers, and avatars
- * UPDATED: Fixed avatar upload with better error handling and fallback for sharp
+ * FIXED: Avatar upload uses findByIdAndUpdate instead of save to bypass validation
  */
 
 const Video = require('../models/Video');
@@ -458,23 +458,27 @@ exports.uploadAvatar = async (req, res) => {
       throw new Error('Failed to save avatar file');
     }
 
-    // Update user's avatar
-    user.avatar = savedAvatar.url;
-    await user.save();
+    // FIXED: Use findByIdAndUpdate instead of save() to bypass validation
+    // This prevents the username validation error during avatar upload
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: { avatar: savedAvatar.url } },
+      { new: true, runValidators: false } // runValidators: false bypasses validation
+    ).select('-password -tokenVersion');
 
-    console.log('✅ Avatar updated for user:', user._id);
+    console.log('✅ Avatar updated for user:', updatedUser._id);
 
     return res.status(200).json({
       success: true,
       message: 'Avatar uploaded successfully',
       avatarUrl: savedAvatar.url,
       user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        username: user.username,
-        email: user.email,
-        avatar: user.avatar
+        id: updatedUser._id,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        username: updatedUser.username,
+        email: updatedUser.email,
+        avatar: updatedUser.avatar
       }
     });
   } catch (err) {
@@ -536,15 +540,11 @@ exports.uploadCoverImage = async (req, res) => {
       savedCover = saveFile(req.file, 'covers');
     }
 
-    const user = await User.findById(req.user._id);
-    
-    if (user.coverImage && !user.coverImage.includes('default-cover')) {
-      const oldCoverPath = path.join(__dirname, '..', user.coverImage.replace('/uploads/', 'uploads/'));
-      deleteFile(oldCoverPath);
-    }
-
-    user.coverImage = savedCover.url;
-    await user.save();
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: { coverImage: savedCover.url } },
+      { new: true, runValidators: false }
+    );
 
     return res.status(200).json({
       success: true,
@@ -606,20 +606,20 @@ exports.uploadVerificationDocument = async (req, res) => {
 
     const savedDoc = saveFile(req.file, 'verification');
 
-    const user = await User.findById(req.user._id);
-    
-    if (!user.verificationDocuments) {
-      user.verificationDocuments = [];
-    }
-
-    user.verificationDocuments.push({
-      type: documentType,
-      url: savedDoc.url,
-      uploadedAt: new Date(),
-      status: 'pending'
-    });
-
-    await user.save();
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { 
+        $push: { 
+          verificationDocuments: {
+            type: documentType,
+            url: savedDoc.url,
+            uploadedAt: new Date(),
+            status: 'pending'
+          }
+        } 
+      },
+      { new: true, runValidators: false }
+    );
 
     return res.status(200).json({
       success: true,

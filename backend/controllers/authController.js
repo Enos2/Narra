@@ -17,9 +17,49 @@ const calculateAge = (dob) => {
   return age;
 };
 
+// Helper to format user response with restrictions
+const formatUserResponse = (user) => {
+  return {
+    id: user._id,
+    _id: user._id,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    middleName: user.middleName || '',
+    username: user.username,
+    name: user.fullName,
+    email: user.email,
+    role: user.role,
+    gender: user.gender || '',
+    avatar: user.avatar,
+    bio: user.bio || '',
+    location: user.location || '',
+    website: user.website || '',
+    phoneNumber: user.phoneNumber || '',
+    dateOfBirth: user.dateOfBirth,
+    createdAt: user.createdAt,
+    status: user.isBanned ? 'banned' : (user.isDeactivated ? 'deactivated' : 'active'),
+    restrictions: user.restrictions || { upload: false, goLive: false, comment: false },
+    canGoLive: user.canGoLive || false,
+    isVerified: user.isVerified || false,
+    isCreator: user.isCreator || false,
+    balance: user.balance || 0,
+    followers: user.followers || [],
+    following: user.following || [],
+    twins: user.twins || [],
+    notificationPreferences: user.notificationPreferences || {},
+    privacySettings: user.privacySettings || {},
+    theme: user.theme || 'system',
+    preferredLanguage: user.preferredLanguage || 'en',
+    loginHistory: user.loginHistory || [],
+    payoutMethod: user.payoutMethod || null,
+    purchasedVideoIds: user.purchasedVideos || [],
+    tokenVersion: user.tokenVersion || 0
+  };
+};
+
 /*
 ========================================
-REGISTER - UPDATED with firstName, lastName, middleName, username, gender
+REGISTER - UPDATED with restrictions
 ========================================
 */
 exports.register = async (req, res) => {
@@ -89,6 +129,7 @@ exports.register = async (req, res) => {
       password: hashedPassword,
       dateOfBirth: dob,
       gender: gender || '',
+      restrictions: { upload: false, goLive: false, comment: false }, // Add restrictions with defaults
       lastLogin: new Date(),
       lastActive: new Date(),
     });
@@ -97,30 +138,7 @@ exports.register = async (req, res) => {
 
     res.status(201).json({
       token,
-      user: { 
-        id: user._id, 
-        firstName: user.firstName,
-        lastName: user.lastName,
-        middleName: user.middleName,
-        username: user.username,
-        name: user.fullName,
-        email: user.email, 
-        role: user.role,
-        gender: user.gender,
-        avatar: user.avatar,
-        bio: user.bio,
-        location: user.location,
-        website: user.website,
-        phoneNumber: user.phoneNumber,
-        dateOfBirth: user.dateOfBirth,
-        createdAt: user.createdAt,
-        followers: user.followers,
-        following: user.following,
-        twins: user.twins,
-        isVerified: user.isVerified,
-        isCreator: user.isCreator,
-        balance: user.balance
-      },
+      user: formatUserResponse(user),
     });
   } catch (err) {
     console.error('REGISTER ERROR:', err);
@@ -130,7 +148,7 @@ exports.register = async (req, res) => {
 
 /*
 ========================================
-LOGIN (NORMAL USERS ONLY)
+LOGIN (NORMAL USERS ONLY) - UPDATED with restrictions
 ========================================
 */
 exports.login = async (req, res) => {
@@ -173,36 +191,7 @@ exports.login = async (req, res) => {
 
     res.json({
       token,
-      user: { 
-        id: user._id, 
-        firstName: user.firstName,
-        lastName: user.lastName,
-        middleName: user.middleName,
-        username: user.username,
-        name: user.fullName,
-        email: user.email, 
-        role: user.role,
-        gender: user.gender,
-        avatar: user.avatar,
-        bio: user.bio,
-        location: user.location,
-        website: user.website,
-        phoneNumber: user.phoneNumber,
-        dateOfBirth: user.dateOfBirth,
-        createdAt: user.createdAt,
-        followers: user.followers,
-        following: user.following,
-        twins: user.twins,
-        isVerified: user.isVerified,
-        isCreator: user.isCreator,
-        balance: user.balance,
-        notificationPreferences: user.notificationPreferences,
-        privacySettings: user.privacySettings,
-        theme: user.theme,
-        preferredLanguage: user.preferredLanguage,
-        loginHistory: user.loginHistory,
-        payoutMethod: user.payoutMethod
-      },
+      user: formatUserResponse(user),
     });
   } catch (err) {
     console.error('LOGIN ERROR:', err);
@@ -212,7 +201,7 @@ exports.login = async (req, res) => {
 
 /*
 ========================================
-ADMIN LOGIN
+ADMIN LOGIN - UPDATED with restrictions
 ========================================
 */
 exports.adminLogin = async (req, res) => {
@@ -254,36 +243,7 @@ exports.adminLogin = async (req, res) => {
 
     res.json({
       token,
-      user: { 
-        id: user._id, 
-        firstName: user.firstName,
-        lastName: user.lastName,
-        middleName: user.middleName,
-        username: user.username,
-        name: user.fullName,
-        email: user.email, 
-        role: user.role,
-        gender: user.gender,
-        avatar: user.avatar,
-        bio: user.bio,
-        location: user.location,
-        website: user.website,
-        phoneNumber: user.phoneNumber,
-        dateOfBirth: user.dateOfBirth,
-        createdAt: user.createdAt,
-        followers: user.followers,
-        following: user.following,
-        twins: user.twins,
-        isVerified: user.isVerified,
-        isCreator: user.isCreator,
-        balance: user.balance,
-        notificationPreferences: user.notificationPreferences,
-        privacySettings: user.privacySettings,
-        theme: user.theme,
-        preferredLanguage: user.preferredLanguage,
-        loginHistory: user.loginHistory,
-        payoutMethod: user.payoutMethod
-      },
+      user: formatUserResponse(user),
     });
   } catch (err) {
     console.error('ADMIN LOGIN ERROR:', err);
@@ -309,41 +269,11 @@ exports.logout = async (req, res) => {
 
 /*
 ========================================
-PROFILE
+PROFILE - UPDATED with restrictions
 ========================================
 */
 exports.getMyProfile = async (req, res) => {
-  res.json({
-    id: req.user._id,
-    firstName: req.user.firstName,
-    lastName: req.user.lastName,
-    middleName: req.user.middleName,
-    username: req.user.username,
-    name: req.user.fullName,
-    email: req.user.email,
-    role: req.user.role,
-    gender: req.user.gender,
-    avatar: req.user.avatar,
-    bio: req.user.bio,
-    location: req.user.location,
-    website: req.user.website,
-    phoneNumber: req.user.phoneNumber,
-    dateOfBirth: req.user.dateOfBirth,
-    createdAt: req.user.createdAt,
-    followers: req.user.followers,
-    following: req.user.following,
-    twins: req.user.twins,
-    isVerified: req.user.isVerified,
-    isCreator: req.user.isCreator,
-    balance: req.user.balance,
-    notificationPreferences: req.user.notificationPreferences,
-    privacySettings: req.user.privacySettings,
-    theme: req.user.theme,
-    preferredLanguage: req.user.preferredLanguage,
-    loginHistory: req.user.loginHistory,
-    payoutMethod: req.user.payoutMethod,
-    accountAge: req.user.accountAge
-  });
+  res.json(formatUserResponse(req.user));
 };
 
 /*
@@ -433,7 +363,7 @@ exports.resetPassword = async (req, res) => {
 
 /*
 ========================================
-ADMIN CREATION (SUPER ADMIN ONLY)
+ADMIN CREATION (SUPER ADMIN ONLY) - UPDATED with restrictions
 ========================================
 */
 exports.createAdmin = async (req, res) => {
@@ -466,19 +396,13 @@ exports.createAdmin = async (req, res) => {
       role,
       dateOfBirth,
       isVerified: true,
+      restrictions: { upload: false, goLive: false, comment: false }, // Admins have no restrictions
     });
 
     res.status(201).json({ 
       message: 'Admin created', 
       adminId: admin._id,
-      admin: {
-        id: admin._id,
-        firstName: admin.firstName,
-        lastName: admin.lastName,
-        username: admin.username,
-        email: admin.email,
-        role: admin.role
-      }
+      admin: formatUserResponse(admin)
     });
   } catch (err) {
     console.error('CREATE ADMIN ERROR:', err);
@@ -503,5 +427,74 @@ exports.checkUsername = async (req, res) => {
   } catch (err) {
     console.error('CHECK USERNAME ERROR:', err);
     res.status(500).json({ message: 'Failed to check username' });
+  }
+};
+
+/*
+========================================
+UPDATE RESTRICTIONS (ADMIN ONLY)
+========================================
+*/
+exports.updateUserRestrictions = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { upload, goLive, comment } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Only superadmin and platformadmin can update restrictions
+    if (req.user.role !== 'superadmin' && req.user.role !== 'platformadmin') {
+      return res.status(403).json({ message: 'Not authorized to update restrictions' });
+    }
+
+    // Update restrictions
+    if (upload !== undefined) user.restrictions.upload = upload;
+    if (goLive !== undefined) user.restrictions.goLive = goLive;
+    if (comment !== undefined) user.restrictions.comment = comment;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'User restrictions updated',
+      restrictions: user.restrictions
+    });
+  } catch (err) {
+    console.error('UPDATE RESTRICTIONS ERROR:', err);
+    res.status(500).json({ message: 'Failed to update restrictions' });
+  }
+};
+
+/*
+========================================
+GET USER RESTRICTIONS (ADMIN ONLY)
+========================================
+*/
+exports.getUserRestrictions = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).select('restrictions username firstName lastName email');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        restrictions: user.restrictions || { upload: false, goLive: false, comment: false }
+      }
+    });
+  } catch (err) {
+    console.error('GET RESTRICTIONS ERROR:', err);
+    res.status(500).json({ message: 'Failed to get restrictions' });
   }
 };

@@ -1,8 +1,8 @@
 /**
  * File: backend/routes/adminRoutes.js
  * COMPLETE FIXED VERSION - ALL ROUTES INCLUDED
- * ADDED: removeVideo, permanentlyDeleteVideo, restrictVideo, removeVideoRestriction,
- *        flagVideo, removeVideoFlag, shadowBanVideo, removeShadowBanVideo
+ * ADDED: Admin Profile routes for self-management
+ * ADDED: Get admins created by admin route for Super Admin profile
  */
 
 const express = require('express');
@@ -85,7 +85,6 @@ router.get('/videos/moderation', protect, requireAnyAdmin, async (req, res) => {
   try {
     const { status = 'pending' } = req.query;
     
-    // Build query based on status
     let query = { isDeleted: { $ne: true } };
     
     if (status === 'pending') {
@@ -100,16 +99,13 @@ router.get('/videos/moderation', protect, requireAnyAdmin, async (req, res) => {
     } else if (status === 'all') {
       // For all videos, just apply isDeleted filter
     } else {
-      // For custom statuses like 'flagged', 'restricted', 'shadowBanned', 'removed'
       query.status = status;
     }
 
-    // Get videos with creator info
     const videos = await Video.find(query)
       .populate('creator', 'name email username avatar')
       .sort({ uploadedAt: -1 });
 
-    // Log the admin action
     try {
       await logAdminAction({
         admin: req.user,
@@ -319,13 +315,7 @@ router.put('/videos/:id/reject', protect, requireAnyAdmin, async (req, res) => {
   }
 });
 
-// ============ NEW ROUTES ADDED BELOW ============
-
-/**
- * REMOVE VIDEO (Soft Delete)
- * PUT /api/admin/videos/:id/remove
- * This matches what the frontend calls
- */
+// REMOVE VIDEO (Soft Delete)
 router.delete('/videos/:id/remove', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -377,10 +367,7 @@ router.delete('/videos/:id/remove', protect, requireAnyAdmin, async (req, res) =
   }
 });
 
-/**
- * RESTORE VIDEO
- * PUT /api/admin/videos/:id/restore
- */
+// RESTORE VIDEO
 router.put('/videos/:id/restore', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -431,10 +418,7 @@ router.put('/videos/:id/restore', protect, requireAnyAdmin, async (req, res) => 
   }
 });
 
-/**
- * RESTRICT VIDEO
- * PUT /api/admin/videos/:id/restrict
- */
+// RESTRICT VIDEO
 router.put('/videos/:id/restrict', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -488,10 +472,7 @@ router.put('/videos/:id/restrict', protect, requireAnyAdmin, async (req, res) =>
   }
 });
 
-/**
- * REMOVE VIDEO RESTRICTION
- * PUT /api/admin/videos/:id/remove-restriction
- */
+// REMOVE VIDEO RESTRICTION
 router.put('/videos/:id/remove-restriction', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -543,10 +524,7 @@ router.put('/videos/:id/remove-restriction', protect, requireAnyAdmin, async (re
   }
 });
 
-/**
- * FLAG VIDEO
- * PUT /api/admin/videos/:id/flag
- */
+// FLAG VIDEO
 router.put('/videos/:id/flag', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -600,10 +578,7 @@ router.put('/videos/:id/flag', protect, requireAnyAdmin, async (req, res) => {
   }
 });
 
-/**
- * REMOVE VIDEO FLAG
- * PUT /api/admin/videos/:id/remove-flag
- */
+// REMOVE VIDEO FLAG
 router.put('/videos/:id/remove-flag', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -655,10 +630,7 @@ router.put('/videos/:id/remove-flag', protect, requireAnyAdmin, async (req, res)
   }
 });
 
-/**
- * SHADOW BAN VIDEO
- * PUT /api/admin/videos/:id/shadow-ban
- */
+// SHADOW BAN VIDEO
 router.put('/videos/:id/shadow-ban', protect, requireSuperOrPlatformAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -717,10 +689,7 @@ router.put('/videos/:id/shadow-ban', protect, requireSuperOrPlatformAdmin, async
   }
 });
 
-/**
- * REMOVE SHADOW BAN VIDEO
- * PUT /api/admin/videos/:id/remove-shadow-ban
- */
+// REMOVE SHADOW BAN VIDEO
 router.put('/videos/:id/remove-shadow-ban', protect, requireSuperOrPlatformAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -775,11 +744,7 @@ router.put('/videos/:id/remove-shadow-ban', protect, requireSuperOrPlatformAdmin
   }
 });
 
-/**
- * PERMANENTLY DELETE VIDEO
- * DELETE /api/admin/videos/:id/permanent
- * SUPER ADMIN ONLY
- */
+// PERMANENTLY DELETE VIDEO
 router.delete('/videos/:id/permanent', protect, requireSuperAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -790,7 +755,6 @@ router.delete('/videos/:id/permanent', protect, requireSuperAdmin, async (req, r
       });
     }
 
-    // Log before deletion
     await logAdminAction({
       admin: req.user,
       actionType: 'PERMANENT_DELETE_VIDEO',
@@ -810,7 +774,6 @@ router.delete('/videos/:id/permanent', protect, requireSuperAdmin, async (req, r
       }
     });
 
-    // Actually delete from database
     await video.deleteOne();
 
     res.json({ 
@@ -867,6 +830,12 @@ router.put('/admins/:id/toggle-support', protect, requirePlatformAdmin, adminCon
 router.post('/admins/:id/force-logout', protect, requireAnyAdmin, adminController.forceAdminLogout);
 
 /* =====================================================
+   NEW ROUTE: GET ADMINS CREATED BY A SPECIFIC ADMIN
+   (Super Admin only - for profile page)
+===================================================== */
+router.get('/admins/created-by/:adminId', protect, requireSuperAdmin, adminController.getAdminsCreatedByAdmin);
+
+/* =====================================================
    USER MANAGEMENT
 ===================================================== */
 
@@ -918,6 +887,209 @@ router.get('/audit/logs', protect, requireAnyAdmin, adminController.getAuditLogs
 router.get('/audit/logs/recent', protect, requireAnyAdmin, adminController.getRecentAuditLogs);
 router.get('/audit/filters', protect, requireAnyAdmin, adminController.getAuditFilterOptions);
 router.get('/audit-logs', protect, requireAnyAdmin, adminController.getRecentAuditLogs);
+
+/* =====================================================
+   ADMIN PROFILE ROUTES (SELF-MANAGEMENT)
+===================================================== */
+
+// GET current admin profile
+router.get('/profile/me', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const admin = await User.findById(req.user._id)
+      .select('-password -tokenVersion')
+      .populate('followers', 'firstName lastName username avatar')
+      .populate('following', 'firstName lastName username avatar')
+      .populate('twins', 'firstName lastName username avatar');
+    
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'Admin not found' });
+    }
+    
+    // Add admin-specific fields
+    const adminData = {
+      ...admin.toObject(),
+      isAdminActive: !admin.adminDeactivated,
+      adminDeactivatedAt: admin.adminDeactivatedAt,
+      adminDeactivationReason: admin.adminDeactivationReason,
+      createdBy: admin.createdBy,
+      adminCreatedAt: admin.adminCreatedAt
+    };
+    
+    res.json({ success: true, data: adminData });
+  } catch (err) {
+    console.error('GET ADMIN PROFILE ERROR:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch admin profile' });
+  }
+});
+
+// UPDATE admin profile
+router.put('/profile/me', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const admin = await User.findById(req.user._id);
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'Admin not found' });
+    }
+
+    const allowedUpdates = [
+      'firstName', 'lastName', 'middleName', 'username', 'email', 
+      'bio', 'location', 'website', 'phoneNumber', 'avatar'
+    ];
+    
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        admin[field] = req.body[field];
+      }
+    });
+
+    // Handle password change
+    if (req.body.password) {
+      if (!req.body.currentPassword) {
+        return res.status(400).json({ success: false, message: 'Current password required' });
+      }
+      const isMatch = await admin.comparePassword(req.body.currentPassword);
+      if (!isMatch) {
+        return res.status(400).json({ success: false, message: 'Current password incorrect' });
+      }
+      admin.password = req.body.password;
+    }
+
+    await admin.save();
+
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'UPDATE_PROFILE',
+      actionLabel: 'Update Profile',
+      targetType: 'Admin',
+      targetId: admin._id,
+      targetName: admin.name || admin.email,
+      description: `Updated profile information`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: {
+        updatedFields: Object.keys(req.body).filter(k => allowedUpdates.includes(k))
+      }
+    });
+
+    const updatedAdmin = await User.findById(admin._id).select('-password -tokenVersion');
+    res.json({ success: true, message: 'Profile updated successfully', data: updatedAdmin });
+  } catch (err) {
+    console.error('UPDATE ADMIN PROFILE ERROR:', err);
+    res.status(500).json({ success: false, message: 'Failed to update profile' });
+  }
+});
+
+// GET admin statistics (actions count, etc.)
+router.get('/profile/stats', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    let AdminAuditLog;
+    try {
+      AdminAuditLog = require('../models/AdminAuditLog');
+    } catch (e) {
+      return res.json({ 
+        success: true, 
+        stats: { 
+          totalActions: 0, 
+          actionsThisWeek: 0, 
+          actionsThisMonth: 0,
+          approvedVideos: 0,
+          rejectedVideos: 0,
+          bannedUsers: 0,
+          flaggedContent: 0
+        } 
+      });
+    }
+
+    // Get all actions by this admin
+    const adminActions = await AdminAuditLog.find({
+      $or: [
+        { adminId: req.user._id },
+        { adminEmail: req.user.email }
+      ]
+    }).sort({ createdAt: -1 });
+
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const actionsThisWeek = adminActions.filter(a => new Date(a.createdAt) > weekAgo).length;
+    const actionsThisMonth = adminActions.filter(a => new Date(a.createdAt) > monthAgo).length;
+    
+    // Count specific action types
+    const approvedVideos = adminActions.filter(a => 
+      a.actionType === 'APPROVE_VIDEO' || a.actionType?.includes('APPROVE')
+    ).length;
+    
+    const rejectedVideos = adminActions.filter(a => 
+      a.actionType === 'REJECT_VIDEO' || a.actionType?.includes('REJECT')
+    ).length;
+    
+    const bannedUsers = adminActions.filter(a => 
+      a.actionType === 'BAN_USER' || a.actionType?.includes('BAN')
+    ).length;
+    
+    const flaggedContent = adminActions.filter(a => 
+      a.actionType === 'FLAG_VIDEO' || a.actionType?.includes('FLAG')
+    ).length;
+
+    res.json({
+      success: true,
+      stats: {
+        totalActions: adminActions.length,
+        actionsThisWeek,
+        actionsThisMonth,
+        approvedVideos,
+        rejectedVideos,
+        bannedUsers,
+        flaggedContent
+      }
+    });
+  } catch (err) {
+    console.error('GET ADMIN STATS ERROR:', err);
+    res.json({ 
+      success: true, 
+      stats: { 
+        totalActions: 0, 
+        actionsThisWeek: 0, 
+        actionsThisMonth: 0,
+        approvedVideos: 0,
+        rejectedVideos: 0,
+        bannedUsers: 0,
+        flaggedContent: 0
+      } 
+    });
+  }
+});
+
+// GET recent actions by this admin
+router.get('/profile/recent-actions', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    
+    let AdminAuditLog;
+    try {
+      AdminAuditLog = require('../models/AdminAuditLog');
+    } catch (e) {
+      return res.json({ success: true, actions: [] });
+    }
+
+    const recentActions = await AdminAuditLog.find({
+      $or: [
+        { adminId: req.user._id },
+        { adminEmail: req.user.email }
+      ]
+    })
+    .sort({ createdAt: -1 })
+    .limit(parseInt(limit));
+
+    res.json({
+      success: true,
+      actions: recentActions
+    });
+  } catch (err) {
+    console.error('GET RECENT ACTIONS ERROR:', err);
+    res.json({ success: true, actions: [] });
+  }
+});
 
 /* =====================================================
    ROUTE ALIASES FOR BACKWARD COMPATIBILITY
