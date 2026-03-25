@@ -1,8 +1,6 @@
 /**
  * File: backend/models/AdminAuditLog.js
- * Description: Centralized audit log for all admin actions with rich context.
- * Enhanced for searchability and human-readable logging.
- * COMPLETE VERSION - INCLUDES ALL MODERATION ACTIONS
+ * ADDED: ADMIN_LOGIN and ADMIN_LOGOUT to enum lists
  */
 
 const mongoose = require("mongoose");
@@ -18,7 +16,7 @@ const AdminAuditLogSchema = new mongoose.Schema(
     adminName: {
       type: String,
       required: true,
-      index: true, // For searching by admin name
+      index: true,
     },
     adminRole: {
       type: String,
@@ -30,12 +28,15 @@ const AdminAuditLogSchema = new mongoose.Schema(
       index: true,
     },
 
-    // WHAT was done - COMPLETE ENUM WITH ALL ACTIONS
+    // WHAT was done - ADDED ADMIN_LOGIN and ADMIN_LOGOUT
     actionType: {
       type: String,
       required: true,
       index: true,
       enum: [
+        // ===== AUTH ACTIONS =====
+        'ADMIN_LOGIN', 'ADMIN_LOGOUT',
+        
         // ===== MODERATION ACTIONS =====
         'VIEW_MODERATION', 'VIEW_VIDEO_DETAILS',
         
@@ -68,11 +69,14 @@ const AdminAuditLogSchema = new mongoose.Schema(
       ]
     },
     
-    // Human-readable labels - COMPLETE
+    // Human-readable labels - ADDED Admin Login and Admin Logout
     actionLabel: {
       type: String,
       required: true,
       enum: [
+        // ===== AUTH ACTIONS =====
+        'Admin Login', 'Admin Logout',
+        
         // Moderation
         'View Moderation Queue', 'View Video Details',
         
@@ -113,7 +117,7 @@ const AdminAuditLogSchema = new mongoose.Schema(
     },
     targetId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: false, // Some actions don't have a target ID (e.g., viewing queue)
+      required: false,
       index: true,
     },
     targetName: {
@@ -182,3 +186,7 @@ AdminAuditLogSchema.index({
 });
 
 module.exports = mongoose.model("AdminAuditLog", AdminAuditLogSchema);
+
+/**
+ * File: backend/models/AdminAuditLog.js (END)
+ */

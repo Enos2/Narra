@@ -1,3 +1,8 @@
+/**
+ * File: backend/routes/authRoutes.js
+ * UPDATED: Routes for authentication (login/logout now have audit logging in controller)
+ */
+
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
@@ -15,10 +20,10 @@ router.post('/register', authController.register);
 // Normal user login
 router.post('/login', authController.login);
 
-// Admin login
+// Admin login (audit logging is handled inside authController.adminLogin)
 router.post('/admin/login', authController.adminLogin);
 
-// Logout (requires authentication)
+// Logout (audit logging is handled inside authController.logout for admin users)
 router.post('/logout', protect, authController.logout);
 
 // Request password reset
@@ -52,3 +57,7 @@ ADMIN ROUTES - REMOVE THIS
 // router.post('/admin/create', protect, superAdminOnly, authController.createAdmin);
 
 module.exports = router;
+
+/**
+ * File: backend/routes/authRoutes.js (END)
+ */

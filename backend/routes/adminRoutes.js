@@ -1,6 +1,7 @@
 /**
  * File: backend/routes/adminRoutes.js
  * COMPLETE FIXED VERSION - ALL ROUTES INCLUDED
+ * FIXED: Removed VIEW_MODERATION audit logging from videos/moderation route
  * ADDED: Admin Profile routes for self-management
  * ADDED: Get admins created by admin route for Super Admin profile
  */
@@ -81,6 +82,7 @@ const logAdminAction = async ({ admin, actionType, actionLabel, targetType, targ
 ===================================================== */
 
 // GET VIDEOS FOR MODERATION
+// FIXED: Removed VIEW_MODERATION audit logging to prevent duplicate logs
 router.get('/videos/moderation', protect, requireAnyAdmin, async (req, res) => {
   try {
     const { status = 'pending' } = req.query;
@@ -106,20 +108,9 @@ router.get('/videos/moderation', protect, requireAnyAdmin, async (req, res) => {
       .populate('creator', 'name email username avatar')
       .sort({ uploadedAt: -1 });
 
-    try {
-      await logAdminAction({
-        admin: req.user,
-        actionType: 'VIEW_MODERATION',
-        actionLabel: 'View Moderation Queue',
-        targetType: 'Video',
-        description: `Viewed ${status} videos for moderation (${videos.length} videos)`,
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
-        metadata: { status, count: videos.length }
-      });
-    } catch (logErr) {
-      console.error('Failed to log admin action:', logErr);
-    }
+    // FIXED: REMOVED AUDIT LOGGING - This was causing duplicate logs
+    // Audit logs should only be created for actual actions (approve, reject, delete, etc.)
+    // NOT for simply viewing the moderation queue
 
     return res.status(200).json({
       success: true,

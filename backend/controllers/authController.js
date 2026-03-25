@@ -1,7 +1,20 @@
+/**
+ * File: backend/controllers/authController.js
+ * UPDATED: Added audit logging for admin login and logout
+ */
+
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const authMiddleware = require('../middleware/authMiddleware');
+
+// Import AdminAuditLog for audit logging
+let AdminAuditLog;
+try {
+  AdminAuditLog = require('../models/AdminAuditLog');
+} catch (e) {
+  console.warn('AdminAuditLog model not available for auth logging');
+}
 
 /*
 ========================================
@@ -15,6 +28,42 @@ const calculateAge = (dob) => {
   const m = today.getMonth() - dob.getMonth();
   if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
   return age;
+};
+
+/**
+ * Log admin action to audit log
+ */
+const logAdminAuthAction = async ({
+  admin,
+  actionType,
+  actionLabel,
+  description,
+  ipAddress = null,
+  userAgent = null,
+  metadata = {}
+}) => {
+  try {
+    if (!AdminAuditLog) return;
+    
+    const logEntry = new AdminAuditLog({
+      adminId: admin._id,
+      adminName: admin.name || admin.username || 'Unknown',
+      adminRole: admin.role,
+      adminEmail: admin.email,
+      actionType,
+      actionLabel,
+      targetType: 'System',
+      description,
+      ipAddress,
+      userAgent,
+      metadata
+    });
+
+    await logEntry.save();
+    console.log(`[AUDIT] ${actionLabel} by ${admin.email}`);
+  } catch (err) {
+    console.error('Failed to log admin auth action:', err);
+  }
 };
 
 // Helper to format user response with restrictions
@@ -201,12 +250,15 @@ exports.login = async (req, res) => {
 
 /*
 ========================================
-ADMIN LOGIN - UPDATED with restrictions
+ADMIN LOGIN - UPDATED with audit logging
 ========================================
 */
 exports.adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
+    const ipAddress = req.ip;
+    const userAgent = req.get('User-Agent');
+    
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password required' });
     }
@@ -241,6 +293,20 @@ exports.adminLogin = async (req, res) => {
 
     const token = authMiddleware.generateToken(user);
 
+    // ADDED: Log admin login to audit log
+    await logAdminAuthAction({
+      admin: user,
+      actionType: 'ADMIN_LOGIN',
+      actionLabel: 'Admin Login',
+      description: `Admin ${user.email} logged in successfully`,
+      ipAddress,
+      userAgent,
+      metadata: {
+        loginTime: new Date().toISOString(),
+        role: user.role
+      }
+    });
+
     res.json({
       token,
       user: formatUserResponse(user),
@@ -253,13 +319,33 @@ exports.adminLogin = async (req, res) => {
 
 /*
 ========================================
-LOGOUT
+LOGOUT - UPDATED with audit logging
 ========================================
 */
 exports.logout = async (req, res) => {
   try {
-    req.user.online = false;
-    await req.user.save({ validateBeforeSave: false });
+    const user = req.user;
+    const isAdmin = ['supportadmin', 'platformadmin', 'superadmin'].includes(user.role);
+    
+    user.online = false;
+    await user.save({ validateBeforeSave: false });
+
+    // ADDED: Log admin logout to audit log (only for admin users)
+    if (isAdmin && AdminAuditLog) {
+      await logAdminAuthAction({
+        admin: user,
+        actionType: 'ADMIN_LOGOUT',
+        actionLabel: 'Admin Logout',
+        description: `Admin ${user.email} logged out`,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        metadata: {
+          logoutTime: new Date().toISOString(),
+          role: user.role
+        }
+      });
+    }
+
     res.json({ message: 'Logged out successfully' });
   } catch (err) {
     console.error('LOGOUT ERROR:', err);
@@ -498,3 +584,7 @@ exports.getUserRestrictions = async (req, res) => {
     res.status(500).json({ message: 'Failed to get restrictions' });
   }
 };
+
+/**
+ * File: backend/controllers/authController.js (END)
+ */

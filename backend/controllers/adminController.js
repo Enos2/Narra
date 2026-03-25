@@ -1,7 +1,8 @@
 /**
  * File: backend/controllers/adminController.js
  * COMPLETE UPDATED VERSION - ALL FUNCTIONS INCLUDED
- * ADDED: getAdminsCreatedByAdmin function for Super Admin profile
+ * FIXED: Removed duplicate VIEW_MODERATION logging
+ * ADDED: Login/Logout audit logging support
  */
 
 const User = require('../models/User');
@@ -2303,8 +2304,157 @@ exports.getAdminAuditLogs = async (req, res) => {
 };
 
 /* ========================
-   36️⃣ GET ADMINS CREATED BY ADMIN (SUPER ADMIN ONLY)
-   NEW FUNCTION FOR ADMIN PROFILE PAGE
+   36️⃣ GET VIDEOS FOR ADMIN MODERATION
+   FIXED: Removed duplicate VIEW_MODERATION audit logging
+======================== */
+const getVideosForAdminModeration = async (req, res) => {
+  try {
+    console.log('========== GET VIDEOS FOR MODERATION ==========');
+    console.log('User:', req.user?.email);
+    console.log('Role:', req.user?.role);
+    console.log('Query params:', req.query);
+    
+    if (!req.user || !['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
+      console.log('❌ Admin access denied for role:', req.user?.role);
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Admin access required' 
+      });
+    }
+
+    const {
+      status = 'all',
+      type = 'all',
+      search = '',
+      page = 1,
+      limit = 12,
+      sortBy = 'uploadedAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    console.log('Filters - status:', status, 'type:', type, 'search:', search);
+
+    const query = { isDeleted: false };
+
+    // If status is 'all', show ALL videos regardless of status
+    if (status !== 'all') {
+      query.status = status;
+    }
+
+    if (type !== 'all') {
+      query.type = type;
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { title: searchRegex },
+        { description: searchRegex },
+        { tags: searchRegex }
+      ];
+    }
+
+    console.log('MongoDB Query:', JSON.stringify(query));
+
+    const sortOptions = {};
+    if (sortBy === 'title') {
+      sortOptions.title = sortOrder === 'desc' ? -1 : 1;
+    } else if (sortBy === 'views') {
+      sortOptions.views = sortOrder === 'desc' ? -1 : 1;
+    } else if (sortBy === 'createdAt') {
+      sortOptions.createdAt = sortOrder === 'desc' ? -1 : 1;
+    } else {
+      sortOptions.uploadedAt = sortOrder === 'desc' ? -1 : 1;
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const videos = await Video.find(query)
+      .populate('creator', 'name email avatar isVerified')
+      .populate('approvedBy', 'name email')
+      .populate('releasedBy', 'name email')
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    console.log(`Found ${videos.length} videos`);
+
+    const total = await Video.countDocuments(query);
+
+    const formattedVideos = videos.map(video => ({
+      _id: video._id,
+      title: video.title,
+      description: video.description,
+      thumbnailUrl: video.thumbnailUrl,
+      videoUrl: video.videoUrl,
+      trailerUrl: video.trailerUrl,
+      type: video.type,
+      ageRating: video.ageRating,
+      genre: video.genre || [],
+      tags: video.tags || [],
+      language: video.language,
+      creator: video.creator,
+      uploadedBy: video.creator,
+      uploadedAt: video.uploadedAt,
+      status: video.status,
+      approved: video.approved,
+      approvedBy: video.approvedBy,
+      approvedAt: video.approvedAt,
+      released: video.released,
+      releasedBy: video.releasedBy,
+      releasedAt: video.releasedAt,
+      rejectionReason: video.rejectionReason,
+      views: video.views || 0,
+      likesCount: video.likes?.length || 0,
+      dislikesCount: video.dislikes?.length || 0,
+      averageRating: video.averageRating || 0,
+      isPaid: video.isPaid,
+      price: video.price || 0,
+      isPrivate: video.isPrivate,
+      isSponsored: video.isSponsored,
+      isFundraiser: video.isFundraiser,
+      totalSeasons: video.totalSeasons || 0,
+      totalEpisodes: video.totalEpisodes || 0,
+      seasons: video.type === 'series' ? video.seasons?.map(season => ({
+        title: season.title,
+        seasonNumber: season.seasonNumber,
+        isPublished: season.isPublished,
+        episodes: season.episodes?.map(episode => ({
+          title: episode.title,
+          episodeNumber: episode.episodeNumber,
+          published: episode.published
+        }))
+      })) : []
+    }));
+
+    // FIXED: REMOVED AUDIT LOGGING FOR VIEW_MODERATION
+    // This was causing duplicate logs every time the moderation page loads
+    // Audit logs should only be created for actual actions (approve, reject, delete, etc.)
+    // NOT for simply viewing the moderation queue
+
+    console.log('========== END ==========');
+
+    res.json({
+      success: true,
+      videos: formattedVideos,
+      total,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(total / parseInt(limit))
+    });
+  } catch (err) {
+    console.error('❌ Get videos for admin moderation error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch videos for moderation', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
+  }
+};
+
+/* ========================
+   37️⃣ GET ADMINS CREATED BY ADMIN (SUPER ADMIN ONLY)
 ======================== */
 exports.getAdminsCreatedByAdmin = async (req, res) => {
   try {
@@ -2412,7 +2562,7 @@ module.exports = {
   // ADMIN LISTING
   getAllAdmins: exports.getAllAdmins,
   getInactiveAdmins: exports.getInactiveAdmins,
-  getAdminsCreatedByAdmin: exports.getAdminsCreatedByAdmin, // NEW
+  getAdminsCreatedByAdmin: exports.getAdminsCreatedByAdmin,
   
   // USER MANAGEMENT
   getAllUsers: exports.getAllUsers,
@@ -2447,5 +2597,8 @@ module.exports = {
   removeShadowBanContent: exports.removeShadowBanContent,
   
   // AUDIT & ADMIN TOOLS
-  forceAdminLogout: exports.forceAdminLogout
+  forceAdminLogout: exports.forceAdminLogout,
+  
+  // MODERATION VIEW (without audit logging)
+  getVideosForAdminModeration
 };
