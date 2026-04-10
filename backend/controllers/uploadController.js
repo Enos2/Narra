@@ -1,7 +1,8 @@
 /**
  * File: backend/controllers/uploadController.js
- * Description: Handles file uploads for videos, thumbnails, trailers, and avatars
- * FIXED: Avatar upload uses findByIdAndUpdate instead of save to bypass validation
+ * FIXED: req.files is a flat array when using upload.any() — must use
+ *        getFile()/getFiles() helpers instead of req.files.fieldName
+ * ADDED: Optional per-episode thumbnail support
  */
 
 const Video = require('../models/Video');
@@ -9,7 +10,6 @@ const User = require('../models/User');
 const fs = require('fs');
 const path = require('path');
 
-// Check if sharp is installed - if not, use fallback
 let sharp;
 try {
   sharp = require('sharp');
@@ -25,7 +25,6 @@ HELPERS
 ========================================
 */
 
-// Ensure upload directory exists
 const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -33,37 +32,45 @@ const ensureDir = (dir) => {
   }
 };
 
-// Save file with validation (fallback when sharp is not available)
-const saveFile = (file, folder, options = {}) => {
+/**
+ * When multer uses upload.any(), req.files is a FLAT ARRAY:
+ *   [{ fieldname: 'thumbnail', buffer, ... }, { fieldname: 'season-0-episode-0-video', ... }]
+ *
+ * These helpers replace the broken req.files.fieldName pattern.
+ */
+const getFile = (files, fieldname) => {
+  if (!files || !Array.isArray(files)) return null;
+  return files.find(f => f.fieldname === fieldname) || null;
+};
+
+const getFiles = (files, fieldname) => {
+  if (!files || !Array.isArray(files)) return [];
+  return files.filter(f => f.fieldname === fieldname);
+};
+
+const saveFile = (file, folder) => {
   if (!file) return null;
 
   const uploadDir = path.join(__dirname, '..', 'uploads', folder);
   ensureDir(uploadDir);
 
-  // Sanitize filename
   const safeName = file.originalname
     .replace(/\s+/g, '_')
     .replace(/[^a-zA-Z0-9._-]/g, '');
-  
+
   const fileName = `${Date.now()}-${safeName}`;
   const filePath = path.join(uploadDir, fileName);
 
   try {
-    // Write file
     fs.writeFileSync(filePath, file.buffer);
-    
-    // Get file size
     const stats = fs.statSync(filePath);
-    const fileSize = stats.size;
-
-    console.log(`✅ File saved: ${fileName} (${fileSize} bytes)`);
-
+    console.log(`✅ File saved: ${fileName} (${stats.size} bytes)`);
     return {
       filePath,
       url: `/uploads/${folder}/${fileName}`,
       fileName,
-      fileSize,
-      mimeType: file.mimetype
+      fileSize: stats.size,
+      mimeType: file.mimetype,
     };
   } catch (err) {
     console.error('Error saving file:', err);
@@ -71,71 +78,60 @@ const saveFile = (file, folder, options = {}) => {
   }
 };
 
-// Optimize image (for avatars and thumbnails) - with fallback
 const optimizeImage = async (file, folder, options = {}) => {
   if (!file) return null;
 
   const { width = 400, height = 400, quality = 80 } = options;
-  
   const uploadDir = path.join(__dirname, '..', 'uploads', folder);
   ensureDir(uploadDir);
 
   const safeName = file.originalname
     .replace(/\s+/g, '_')
     .replace(/[^a-zA-Z0-9._-]/g, '');
-  
+
   const ext = path.extname(safeName) || '.jpg';
   const baseName = path.basename(safeName, ext);
   const fileName = `${Date.now()}-${baseName}.jpg`;
   const filePath = path.join(uploadDir, fileName);
 
   try {
-    // If sharp is available, optimize the image
     if (sharp) {
       await sharp(file.buffer)
         .resize(width, height, { fit: 'cover', position: 'centre' })
         .jpeg({ quality })
         .toFile(filePath);
-      
       console.log(`✅ Image optimized: ${fileName}`);
     } else {
-      // Fallback: just save the file as is
       fs.writeFileSync(filePath, file.buffer);
       console.log(`✅ Image saved (no optimization): ${fileName}`);
     }
 
     const stats = fs.statSync(filePath);
-
     return {
       filePath,
       url: `/uploads/${folder}/${fileName}`,
       fileName,
       fileSize: stats.size,
       mimeType: 'image/jpeg',
-      dimensions: { width, height }
+      dimensions: { width, height },
     };
   } catch (err) {
     console.error('Error optimizing image:', err);
-    // Fallback to saving without optimization
     return saveFile(file, folder);
   }
 };
 
-// Validate file type
 const validateFileType = (file, allowedTypes) => {
   if (!file) return false;
   return allowedTypes.includes(file.mimetype);
 };
 
-// Validate file size (in MB)
 const validateFileSize = (file, maxSizeMB) => {
   if (!file) return false;
-  const maxSizeBytes = maxSizeMB * 1024 * 1024;
-  return file.size <= maxSizeBytes;
+  return file.size <= maxSizeMB * 1024 * 1024;
 };
 
-// Delete file if it exists
-const deleteFile = (filePath) => {
+const deleteFileFromDisk = (filePath) => {
   if (filePath && fs.existsSync(filePath)) {
     try {
       fs.unlinkSync(filePath);
@@ -149,9 +145,14 @@ const deleteFile = (filePath) => {
   return false;
 };
 
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
+
 /*
 ========================================
 UPLOAD VIDEO (CREATOR)
+FIXED: use getFile() / getFiles() instead of req.files.fieldName
+ADDED: optional per-episode thumbnail
 ========================================
 */
 exports.uploadVideo = async (req, res) => {
@@ -159,6 +160,12 @@ exports.uploadVideo = async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
+
+    const files = req.files; // flat array from upload.any()
+
+    // Debug: log what files arrived
+    console.log('📦 Received files:', files ? files.map(f => `${f.fieldname} (${f.size} bytes)`) : 'none');
+    console.log('📦 Received body fields:', Object.keys(req.body));
 
     const {
       title,
@@ -177,8 +184,14 @@ exports.uploadVideo = async (req, res) => {
       seasons,
       releaseOption,
       releaseDate,
+      language,
+      subtitles,
+      commentsDisabled,
+      isPrivate,
+      contentFlags,
     } = req.body;
 
+    // ── Required field validation ──────────────────────────────────────────
     if (!title || !description || !type || !ageRating) {
       return res.status(400).json({
         success: false,
@@ -186,21 +199,22 @@ exports.uploadVideo = async (req, res) => {
       });
     }
 
-    if (!req.files || !req.files.thumbnail) {
+    // ── Thumbnail validation (FIXED: use getFile() not req.files.thumbnail) ──
+    const thumbnailFile = getFile(files, 'thumbnail');
+    if (!thumbnailFile) {
       return res.status(400).json({
         success: false,
         message: 'Thumbnail is required',
       });
     }
 
-    const thumbnailFile = req.files.thumbnail[0];
-    if (!validateFileType(thumbnailFile, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'])) {
+    if (!validateFileType(thumbnailFile, IMAGE_TYPES)) {
       return res.status(400).json({
         success: false,
         message: 'Thumbnail must be an image (JPEG, PNG, WEBP, or GIF)',
       });
     }
-    
+
     if (!validateFileSize(thumbnailFile, 5)) {
       return res.status(400).json({
         success: false,
@@ -208,22 +222,21 @@ exports.uploadVideo = async (req, res) => {
       });
     }
 
-    if (type === 'movie' && (!req.files.video || !req.files.video[0])) {
-      return res.status(400).json({
-        success: false,
-        message: 'Video file is required for movies',
-      });
-    }
-
-    if (type === 'movie' && req.files.video) {
-      const videoFile = req.files.video[0];
-      if (!validateFileType(videoFile, ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'])) {
+    // ── Movie-specific video validation ────────────────────────────────────
+    if (type === 'movie') {
+      const videoFile = getFile(files, 'video');
+      if (!videoFile) {
+        return res.status(400).json({
+          success: false,
+          message: 'Video file is required for movies',
+        });
+      }
+      if (!validateFileType(videoFile, VIDEO_TYPES)) {
         return res.status(400).json({
           success: false,
           message: 'Video must be in MP4, WEBM, OGG, or MOV format',
         });
       }
-      
       if (!validateFileSize(videoFile, 2000)) {
         return res.status(400).json({
           success: false,
@@ -232,6 +245,7 @@ exports.uploadVideo = async (req, res) => {
       }
     }
 
+    // ── Series requires seasons payload ───────────────────────────────────
     if (type === 'series' && !seasons) {
       return res.status(400).json({
         success: false,
@@ -239,27 +253,35 @@ exports.uploadVideo = async (req, res) => {
       });
     }
 
+    // ── Parse JSON fields ──────────────────────────────────────────────────
     let parsedGenre = [];
     let parsedTags = [];
     let parsedSeasons = [];
+    let parsedContentFlags = {};
+    let parsedSubtitles = [];
 
     try {
       parsedGenre = genre ? JSON.parse(genre) : [];
       parsedTags = tags ? JSON.parse(tags) : [];
-      
+      parsedSubtitles = subtitles ? JSON.parse(subtitles) : [];
+      parsedContentFlags = contentFlags ? JSON.parse(contentFlags) : {};
+
       if (!Array.isArray(parsedGenre)) parsedGenre = [];
       if (!Array.isArray(parsedTags)) parsedTags = [];
-      
+      if (!Array.isArray(parsedSubtitles)) parsedSubtitles = [];
+
       if (type === 'series' && seasons) {
         parsedSeasons = JSON.parse(seasons);
       }
     } catch (parseErr) {
+      console.error('JSON parse error:', parseErr);
       return res.status(400).json({
         success: false,
-        message: 'Invalid JSON format in genre, tags, or seasons fields',
+        message: 'Invalid JSON format in genre, tags, subtitles, or seasons fields',
       });
     }
 
+    // ── Build video document ───────────────────────────────────────────────
     const videoDoc = new Video({
       title,
       description,
@@ -269,6 +291,11 @@ exports.uploadVideo = async (req, res) => {
       genre: parsedGenre,
       tags: parsedTags,
       ageRating,
+      language: language || 'English',
+      subtitles: parsedSubtitles,
+      commentsDisabled: commentsDisabled === 'true',
+      isPrivate: isPrivate === 'true',
+      contentFlags: parsedContentFlags,
       isSponsored: isSponsored === 'true',
       sponsorDescription: sponsorDescription || '',
       isFundraiser: isFundraiser === 'true',
@@ -286,85 +313,122 @@ exports.uploadVideo = async (req, res) => {
       uploadedAt: new Date(),
     });
 
+    // ── Save thumbnail ─────────────────────────────────────────────────────
     try {
-      const savedThumbnail = await optimizeImage(thumbnailFile, 'thumbnails', { 
-        width: 1280, 
-        height: 720, 
-        quality: 85 
+      const savedThumbnail = await optimizeImage(thumbnailFile, 'thumbnails', {
+        width: 1280,
+        height: 720,
+        quality: 85,
       });
       videoDoc.thumbnailUrl = savedThumbnail.url;
       videoDoc.thumbnailPath = savedThumbnail.filePath;
     } catch (err) {
       console.error('Thumbnail optimization error:', err);
       const savedThumbnail = saveFile(thumbnailFile, 'thumbnails');
+      if (!savedThumbnail) {
+        return res.status(500).json({ success: false, message: 'Failed to save thumbnail' });
+      }
       videoDoc.thumbnailUrl = savedThumbnail.url;
       videoDoc.thumbnailPath = savedThumbnail.filePath;
     }
 
+    // ── Movie: save main video + optional trailer ──────────────────────────
     if (type === 'movie') {
-      const videoFile = req.files.video[0];
+      const videoFile = getFile(files, 'video');
       const savedVideo = saveFile(videoFile, 'videos');
+      if (!savedVideo) {
+        return res.status(500).json({ success: false, message: 'Failed to save video file' });
+      }
       videoDoc.videoUrl = savedVideo.url;
       videoDoc.filePath = savedVideo.filePath;
       videoDoc.fileSize = savedVideo.fileSize;
 
-      if (req.files.trailer && req.files.trailer[0]) {
-        const trailerFile = req.files.trailer[0];
-        if (validateFileType(trailerFile, ['video/mp4', 'video/webm', 'video/ogg'])) {
-          const savedTrailer = saveFile(trailerFile, 'trailers');
+      const trailerFile = getFile(files, 'trailer');
+      if (trailerFile && validateFileType(trailerFile, VIDEO_TYPES)) {
+        const savedTrailer = saveFile(trailerFile, 'trailers');
+        if (savedTrailer) {
           videoDoc.trailerUrl = savedTrailer.url;
           videoDoc.trailerPath = savedTrailer.filePath;
         }
       }
     }
 
+    // ── Series: save season trailers + episode videos/trailers/thumbnails ──
     if (type === 'series' && parsedSeasons.length > 0) {
       for (let s = 0; s < parsedSeasons.length; s++) {
-        const seasonKey = `season-${s}-trailer`;
-        if (req.files[seasonKey] && req.files[seasonKey][0]) {
-          const trailerFile = req.files[seasonKey][0];
-          if (validateFileType(trailerFile, ['video/mp4', 'video/webm', 'video/ogg'])) {
-            const savedTrailer = saveFile(trailerFile, 'trailers');
-            parsedSeasons[s].trailerUrl = savedTrailer.url;
-            parsedSeasons[s].trailerPath = savedTrailer.filePath;
+
+        // Season trailer (optional)
+        const seasonTrailerFile = getFile(files, `season-${s}-trailer`);
+        if (seasonTrailerFile && validateFileType(seasonTrailerFile, VIDEO_TYPES)) {
+          const saved = saveFile(seasonTrailerFile, 'trailers');
+          if (saved) {
+            parsedSeasons[s].trailerUrl = saved.url;
+            parsedSeasons[s].trailerPath = saved.filePath;
           }
         }
 
         if (parsedSeasons[s].episodes) {
           for (let e = 0; e < parsedSeasons[s].episodes.length; e++) {
-            const videoKey = `season-${s}-episode-${e}-video`;
-            const episodeTrailerKey = `season-${s}-episode-${e}-trailer`;
 
-            if (req.files[videoKey] && req.files[videoKey][0]) {
-              const videoFile = req.files[videoKey][0];
-              if (validateFileType(videoFile, ['video/mp4', 'video/webm', 'video/ogg'])) {
-                const savedVideo = saveFile(videoFile, 'videos');
-                parsedSeasons[s].episodes[e].videoUrl = savedVideo.url;
-                parsedSeasons[s].episodes[e].filePath = savedVideo.filePath;
-                parsedSeasons[s].episodes[e].fileSize = savedVideo.fileSize;
+            // Episode video (required per episode)
+            const episodeVideoFile = getFile(files, `season-${s}-episode-${e}-video`);
+            if (episodeVideoFile && validateFileType(episodeVideoFile, VIDEO_TYPES)) {
+              const saved = saveFile(episodeVideoFile, 'videos');
+              if (saved) {
+                parsedSeasons[s].episodes[e].videoUrl = saved.url;
+                parsedSeasons[s].episodes[e].filePath = saved.filePath;
+                parsedSeasons[s].episodes[e].fileSize = saved.fileSize;
               }
             }
 
-            if (req.files[episodeTrailerKey] && req.files[episodeTrailerKey][0]) {
-              const trailerFile = req.files[episodeTrailerKey][0];
-              if (validateFileType(trailerFile, ['video/mp4', 'video/webm', 'video/ogg'])) {
-                const savedTrailer = saveFile(trailerFile, 'trailers');
-                parsedSeasons[s].episodes[e].trailerUrl = savedTrailer.url;
-                parsedSeasons[s].episodes[e].trailerPath = savedTrailer.filePath;
+            // Episode trailer (optional)
+            const episodeTrailerFile = getFile(files, `season-${s}-episode-${e}-trailer`);
+            if (episodeTrailerFile && validateFileType(episodeTrailerFile, VIDEO_TYPES)) {
+              const saved = saveFile(episodeTrailerFile, 'trailers');
+              if (saved) {
+                parsedSeasons[s].episodes[e].trailerUrl = saved.url;
+                parsedSeasons[s].episodes[e].trailerPath = saved.filePath;
+              }
+            }
+
+            // Episode thumbnail (optional) — NEW
+            const episodeThumbnailFile = getFile(files, `season-${s}-episode-${e}-thumbnail`);
+            if (episodeThumbnailFile && validateFileType(episodeThumbnailFile, IMAGE_TYPES)) {
+              try {
+                const saved = await optimizeImage(episodeThumbnailFile, 'thumbnails', {
+                  width: 1280,
+                  height: 720,
+                  quality: 85,
+                });
+                if (saved) {
+                  parsedSeasons[s].episodes[e].thumbnailUrl = saved.url;
+                  parsedSeasons[s].episodes[e].thumbnailPath = saved.filePath;
+                  console.log(`✅ Episode ${s}-${e} thumbnail saved`);
+                }
+              } catch (thumbErr) {
+                console.warn(`⚠️ Episode ${s}-${e} thumbnail optimization failed, using fallback`);
+                const saved = saveFile(episodeThumbnailFile, 'thumbnails');
+                if (saved) {
+                  parsedSeasons[s].episodes[e].thumbnailUrl = saved.url;
+                  parsedSeasons[s].episodes[e].thumbnailPath = saved.filePath;
+                }
               }
             }
           }
         }
       }
-      
+
       videoDoc.seasons = parsedSeasons;
     }
 
+    // ── Persist ────────────────────────────────────────────────────────────
     await videoDoc.save();
 
     await User.findByIdAndUpdate(req.user._id, {
-      $push: { uploadedVideos: videoDoc._id }
+      $push: { uploadedVideos: videoDoc._id },
     });
+
+    console.log(`✅ ${type} uploaded: "${title}" (ID: ${videoDoc._id})`);
 
     return res.status(201).json({
       success: true,
@@ -386,37 +450,26 @@ exports.uploadVideo = async (req, res) => {
 
 /*
 ========================================
-UPLOAD AVATAR (USER PROFILE) - FIXED
+UPLOAD AVATAR
 ========================================
 */
 exports.uploadAvatar = async (req, res) => {
   try {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
-      });
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No image file provided' 
-      });
+      return res.status(400).json({ success: false, message: 'No image file provided' });
     }
 
-    console.log('📸 Uploading avatar for user:', req.user._id);
-    console.log('   File:', req.file.originalname, `(${req.file.size} bytes)`);
-
-    // Validate file type
-    if (!validateFileType(req.file, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'])) {
+    if (!validateFileType(req.file, IMAGE_TYPES)) {
       return res.status(400).json({
         success: false,
         message: 'Avatar must be an image (JPEG, PNG, WEBP, or GIF)',
       });
     }
 
-    // Validate file size (max 5MB)
     if (!validateFileSize(req.file, 5)) {
       return res.status(400).json({
         success: false,
@@ -424,49 +477,30 @@ exports.uploadAvatar = async (req, res) => {
       });
     }
 
-    // Get current user to delete old avatar if exists
     const user = await User.findById(req.user._id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-    
-    // Delete old avatar file if it exists
-    if (user.avatar && !user.avatar.includes('default-avatar')) {
-      const oldAvatarPath = path.join(__dirname, '..', user.avatar.replace('/uploads/', 'uploads/'));
-      console.log('🗑️ Deleting old avatar:', oldAvatarPath);
-      deleteFile(oldAvatarPath);
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Save new avatar (try optimization first, fallback to simple save)
+    if (user.avatar && !user.avatar.includes('default-avatar')) {
+      const oldPath = path.join(__dirname, '..', user.avatar.replace('/uploads/', 'uploads/'));
+      deleteFileFromDisk(oldPath);
+    }
+
     let savedAvatar;
     try {
-      savedAvatar = await optimizeImage(req.file, 'avatars', { 
-        width: 400, 
-        height: 400, 
-        quality: 90 
-      });
-      console.log('✅ Avatar optimized and saved:', savedAvatar.url);
-    } catch (optimizeErr) {
-      console.warn('⚠️ Image optimization failed, using fallback:', optimizeErr.message);
+      savedAvatar = await optimizeImage(req.file, 'avatars', { width: 400, height: 400, quality: 90 });
+    } catch {
       savedAvatar = saveFile(req.file, 'avatars');
     }
 
-    if (!savedAvatar) {
-      throw new Error('Failed to save avatar file');
-    }
+    if (!savedAvatar) throw new Error('Failed to save avatar file');
 
-    // FIXED: Use findByIdAndUpdate instead of save() to bypass validation
-    // This prevents the username validation error during avatar upload
     const updatedUser = await User.findByIdAndUpdate(
       req.user._id,
       { $set: { avatar: savedAvatar.url } },
-      { new: true, runValidators: false } // runValidators: false bypasses validation
+      { new: true, runValidators: false }
     ).select('-password -tokenVersion');
-
-    console.log('✅ Avatar updated for user:', updatedUser._id);
 
     return res.status(200).json({
       success: true,
@@ -478,85 +512,50 @@ exports.uploadAvatar = async (req, res) => {
         lastName: updatedUser.lastName,
         username: updatedUser.username,
         email: updatedUser.email,
-        avatar: updatedUser.avatar
-      }
+        avatar: updatedUser.avatar,
+      },
     });
   } catch (err) {
     console.error('❌ Avatar upload error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      message: err.message || 'Avatar upload failed. Please try again.'
-    });
+    return res.status(500).json({ success: false, message: err.message || 'Avatar upload failed' });
   }
 };
 
 /*
 ========================================
-UPLOAD COVER IMAGE (USER PROFILE)
+UPLOAD COVER IMAGE
 ========================================
 */
 exports.uploadCoverImage = async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
-      });
-    }
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No image file provided' });
 
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No image file provided' 
-      });
-    }
-
-    // Validate file type
     if (!validateFileType(req.file, ['image/jpeg', 'image/png', 'image/webp'])) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cover image must be JPEG, PNG, or WEBP',
-      });
+      return res.status(400).json({ success: false, message: 'Cover image must be JPEG, PNG, or WEBP' });
     }
 
-    // Validate file size (max 10MB)
     if (!validateFileSize(req.file, 10)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cover image size must be less than 10MB',
-      });
+      return res.status(400).json({ success: false, message: 'Cover image size must be less than 10MB' });
     }
 
-    // Save cover image
     let savedCover;
     try {
-      savedCover = await optimizeImage(req.file, 'covers', { 
-        width: 1920, 
-        height: 480, 
-        quality: 85 
-      });
-    } catch (optimizeErr) {
-      console.warn('Cover optimization failed, using fallback:', optimizeErr.message);
+      savedCover = await optimizeImage(req.file, 'covers', { width: 1920, height: 480, quality: 85 });
+    } catch {
       savedCover = saveFile(req.file, 'covers');
     }
 
-    const user = await User.findByIdAndUpdate(
+    await User.findByIdAndUpdate(
       req.user._id,
       { $set: { coverImage: savedCover.url } },
       { new: true, runValidators: false }
     );
 
-    return res.status(200).json({
-      success: true,
-      message: 'Cover image uploaded successfully',
-      coverUrl: savedCover.url
-    });
+    return res.status(200).json({ success: true, message: 'Cover image uploaded successfully', coverUrl: savedCover.url });
   } catch (err) {
     console.error('Cover image upload error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Cover image upload failed' 
-    });
+    return res.status(500).json({ success: false, message: 'Cover image upload failed' });
   }
 };
 
@@ -567,153 +566,78 @@ UPLOAD VERIFICATION DOCUMENT
 */
 exports.uploadVerificationDocument = async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
-      });
-    }
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const { documentType } = req.body;
-
     if (!documentType || !['id', 'passport', 'license'].includes(documentType)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid document type (id, passport, license) is required'
-      });
+      return res.status(400).json({ success: false, message: 'Valid document type (id, passport, license) is required' });
     }
 
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No document file provided' 
-      });
-    }
+    if (!req.file) return res.status(400).json({ success: false, message: 'No document file provided' });
 
     if (!validateFileType(req.file, ['image/jpeg', 'image/png', 'application/pdf'])) {
-      return res.status(400).json({
-        success: false,
-        message: 'Document must be JPEG, PNG, or PDF',
-      });
+      return res.status(400).json({ success: false, message: 'Document must be JPEG, PNG, or PDF' });
     }
 
     if (!validateFileSize(req.file, 20)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Document size must be less than 20MB',
-      });
+      return res.status(400).json({ success: false, message: 'Document size must be less than 20MB' });
     }
 
     const savedDoc = saveFile(req.file, 'verification');
 
-    const user = await User.findByIdAndUpdate(
+    await User.findByIdAndUpdate(
       req.user._id,
-      { 
-        $push: { 
-          verificationDocuments: {
-            type: documentType,
-            url: savedDoc.url,
-            uploadedAt: new Date(),
-            status: 'pending'
-          }
-        } 
-      },
+      { $push: { verificationDocuments: { type: documentType, url: savedDoc.url, uploadedAt: new Date(), status: 'pending' } } },
       { new: true, runValidators: false }
     );
 
-    return res.status(200).json({
-      success: true,
-      message: 'Verification document uploaded successfully',
-      document: {
-        type: documentType,
-        url: savedDoc.url,
-        status: 'pending'
-      }
-    });
+    return res.status(200).json({ success: true, message: 'Verification document uploaded successfully', document: { type: documentType, url: savedDoc.url, status: 'pending' } });
   } catch (err) {
     console.error('Document upload error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Document upload failed' 
-    });
+    return res.status(500).json({ success: false, message: 'Document upload failed' });
   }
 };
 
 /*
 ========================================
-UPLOAD VIDEO THUMBNAIL (STANDALONE)
+UPLOAD STANDALONE THUMBNAIL
 ========================================
 */
 exports.uploadThumbnail = async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
-      });
-    }
-
-    const { videoId } = req.body;
-
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No image file provided' 
-      });
-    }
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No image file provided' });
 
     if (!validateFileType(req.file, ['image/jpeg', 'image/png', 'image/webp'])) {
-      return res.status(400).json({
-        success: false,
-        message: 'Thumbnail must be JPEG, PNG, or WEBP',
-      });
+      return res.status(400).json({ success: false, message: 'Thumbnail must be JPEG, PNG, or WEBP' });
     }
 
     if (!validateFileSize(req.file, 5)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Thumbnail size must be less than 5MB',
-      });
+      return res.status(400).json({ success: false, message: 'Thumbnail size must be less than 5MB' });
     }
 
     let savedThumbnail;
     try {
-      savedThumbnail = await optimizeImage(req.file, 'thumbnails', { 
-        width: 1280, 
-        height: 720, 
-        quality: 85 
-      });
-    } catch (optimizeErr) {
+      savedThumbnail = await optimizeImage(req.file, 'thumbnails', { width: 1280, height: 720, quality: 85 });
+    } catch {
       savedThumbnail = saveFile(req.file, 'thumbnails');
     }
 
+    const { videoId } = req.body;
     if (videoId) {
       const video = await Video.findById(videoId);
-      
-      if (video && (video.creator.toString() === req.user._id.toString() || 
-                    video.user.toString() === req.user._id.toString())) {
-        
-        if (video.thumbnailPath) {
-          deleteFile(video.thumbnailPath);
-        }
-        
+      if (video && (video.creator.toString() === req.user._id.toString() || video.user.toString() === req.user._id.toString())) {
+        if (video.thumbnailPath) deleteFileFromDisk(video.thumbnailPath);
         video.thumbnailUrl = savedThumbnail.url;
         video.thumbnailPath = savedThumbnail.filePath;
         await video.save();
       }
     }
 
-    return res.status(200).json({
-      success: true,
-      message: 'Thumbnail uploaded successfully',
-      thumbnailUrl: savedThumbnail.url
-    });
+    return res.status(200).json({ success: true, message: 'Thumbnail uploaded successfully', thumbnailUrl: savedThumbnail.url });
   } catch (err) {
     console.error('Thumbnail upload error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Thumbnail upload failed' 
-    });
+    return res.status(500).json({ success: false, message: 'Thumbnail upload failed' });
   }
 };
 
@@ -724,38 +648,19 @@ DELETE FILE
 */
 exports.deleteFile = async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
-      });
-    }
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const { fileUrl } = req.body;
-
-    if (!fileUrl) {
-      return res.status(400).json({
-        success: false,
-        message: 'File URL is required'
-      });
-    }
+    if (!fileUrl) return res.status(400).json({ success: false, message: 'File URL is required' });
 
     const relativePath = fileUrl.replace('/uploads/', 'uploads/');
     const filePath = path.join(__dirname, '..', relativePath);
+    const deleted = deleteFileFromDisk(filePath);
 
-    const deleted = deleteFile(filePath);
-
-    return res.status(200).json({
-      success: true,
-      message: deleted ? 'File deleted successfully' : 'File not found',
-      deleted
-    });
+    return res.status(200).json({ success: true, message: deleted ? 'File deleted successfully' : 'File not found', deleted });
   } catch (err) {
     console.error('File deletion error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'File deletion failed' 
-    });
+    return res.status(500).json({ success: false, message: 'File deletion failed' });
   }
 };
 
@@ -766,17 +671,9 @@ GET UPLOAD STATUS / QUOTA
 */
 exports.getUploadStatus = async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
-      });
-    }
+    if (!req.user) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
-    const videos = await Video.find({
-      user: req.user._id,
-      isDeleted: false
-    });
+    const videos = await Video.find({ user: req.user._id, isDeleted: false });
 
     let totalStorage = 0;
     videos.forEach(video => {
@@ -793,31 +690,13 @@ exports.getUploadStatus = async (req, res) => {
     });
 
     const quotas = {
-      user: {
-        maxVideos: 50,
-        maxStorage: 10 * 1024 * 1024 * 1024,
-        maxVideoSize: 2 * 1024 * 1024 * 1024,
-        canUpload: true
-      },
-      creator: {
-        maxVideos: 200,
-        maxStorage: 50 * 1024 * 1024 * 1024,
-        maxVideoSize: 5 * 1024 * 1024 * 1024,
-        canUpload: true
-      },
-      admin: {
-        maxVideos: 1000,
-        maxStorage: 500 * 1024 * 1024 * 1024,
-        maxVideoSize: 10 * 1024 * 1024 * 1024,
-        canUpload: true
-      }
+      user:    { maxVideos: 50,   maxStorage: 10  * 1024 ** 3, maxVideoSize: 2  * 1024 ** 3, canUpload: true },
+      creator: { maxVideos: 200,  maxStorage: 50  * 1024 ** 3, maxVideoSize: 5  * 1024 ** 3, canUpload: true },
+      admin:   { maxVideos: 1000, maxStorage: 500 * 1024 ** 3, maxVideoSize: 10 * 1024 ** 3, canUpload: true },
     };
 
-    const userQuota = req.user.isCreator ? quotas.creator : 
-                      (req.user.role?.includes('admin') ? quotas.admin : quotas.user);
-
-    const storageUsedGB = (totalStorage / (1024 * 1024 * 1024)).toFixed(2);
-    const quotaGB = (userQuota.maxStorage / (1024 * 1024 * 1024)).toFixed(2);
+    const userQuota = req.user.isCreator ? quotas.creator :
+      (req.user.role?.includes('admin') ? quotas.admin : quotas.user);
 
     return res.status(200).json({
       success: true,
@@ -825,28 +704,17 @@ exports.getUploadStatus = async (req, res) => {
         ...userQuota,
         currentVideos: videos.length,
         currentStorage: totalStorage,
-        currentStorageGB: storageUsedGB,
-        quotaGB: quotaGB,
+        currentStorageGB: (totalStorage / 1024 ** 3).toFixed(2),
+        quotaGB: (userQuota.maxStorage / 1024 ** 3).toFixed(2),
         percentUsed: Math.min(100, Math.round((totalStorage / userQuota.maxStorage) * 100)),
         remainingVideos: Math.max(0, userQuota.maxVideos - videos.length),
-        remainingStorage: Math.max(0, userQuota.maxStorage - totalStorage)
-      }
+        remainingStorage: Math.max(0, userQuota.maxStorage - totalStorage),
+      },
     });
   } catch (err) {
     console.error('Get upload status error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get upload status' 
-    });
+    return res.status(500).json({ success: false, message: 'Failed to get upload status' });
   }
 };
 
-// Export helper functions for use in other controllers
-exports.helpers = {
-  saveFile,
-  optimizeImage,
-  validateFileType,
-  validateFileSize,
-  deleteFile,
-  ensureDir
-};
+exports.helpers = { saveFile, optimizeImage, validateFileType, validateFileSize, deleteFile: deleteFileFromDisk, ensureDir };

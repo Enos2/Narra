@@ -35,18 +35,10 @@ router.post(
   uploadController.uploadCoverImage
 );
 
-// Video upload (multiple files)
+// Video upload - accepts ANY field names dynamically (supports movies and series with unlimited seasons/episodes)
 router.post(
   '/video',
-  upload.fields([
-    { name: 'thumbnail', maxCount: 1 },
-    { name: 'video', maxCount: 1 },
-    { name: 'trailer', maxCount: 1 },
-    { name: 'season-0-trailer', maxCount: 1 },
-    { name: 'season-0-episode-0-video', maxCount: 1 },
-    { name: 'season-0-episode-0-trailer', maxCount: 1 }
-    // Add more as needed for series
-  ]),
+  upload.any(), // This accepts any field names like 'video', 'thumbnail', 'trailer', 'season-0-episode-1-video', etc.
   uploadController.uploadVideo
 );
 
