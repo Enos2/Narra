@@ -4,6 +4,10 @@
  * HLS preview, access, moderation, paid streams, fundraiser/sponsorship,
  * RBAC, live privileges & strikes.
  * UPDATED: Added automatic qualification system and all admin moderation functions
+ * UPDATED: Added notifications for grant/revoke live privileges and strikes
+ * UPDATED: Removed admin name from notifications (shows just "Admin")
+ * UPDATED: Added audit logging for live privilege actions
+ * FIXED: getUserLiveDetails now calculates approvedVideoCount and totalVideoViews from videos collection
  */
 
 const Live = require('../models/Live');
@@ -11,6 +15,76 @@ const User = require('../models/User');
 const Video = require('../models/Video');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
+const NotificationService = require('../services/notificationService');
+const AdminAuditLog = require('../models/AdminAuditLog');
+
+// Helper function to log admin actions
+const logAdminAction = async ({ admin, actionType, actionLabel, targetType, targetId, targetName, targetEmail, description, reason, ipAddress, userAgent, metadata = {} }) => {
+  try {
+    const logEntry = new AdminAuditLog({
+      adminId: admin._id,
+      adminName: admin.name || admin.username || 'Unknown',
+      adminRole: admin.role,
+      adminEmail: admin.email,
+      actionType,
+      actionLabel,
+      targetType,
+      targetId,
+      targetName,
+      targetEmail,
+      description,
+      reason,
+      ipAddress,
+      userAgent,
+      metadata
+    });
+
+    await logEntry.save();
+    console.log(`[AUDIT] ${actionLabel} by ${admin.email}`);
+  } catch (err) {
+    console.error('Failed to log admin action:', err);
+  }
+};
+
+/**
+ * Helper function to get user's video stats (approved videos and total views)
+ */
+const getUserVideoStats = async (userId) => {
+  try {
+    const videos = await Video.find({
+      creator: userId,
+      approved: true,
+      isDeleted: { $ne: true }
+    }).select('views');
+    
+    return {
+      approvedVideoCount: videos.length,
+      totalVideoViews: videos.reduce((sum, video) => sum + (video.views || 0), 0)
+    };
+  } catch (error) {
+    console.error('Error getting user video stats:', error);
+    return { approvedVideoCount: 0, totalVideoViews: 0 };
+  }
+};
+
+/**
+ * Helper function to calculate active strikes (strikes within last 9 months)
+ */
+const calculateActiveStrikes = (liveStrikes) => {
+  if (!liveStrikes || !Array.isArray(liveStrikes)) return 0;
+  const nineMonthsAgo = new Date(Date.now() - (9 * 30 * 24 * 60 * 60 * 1000));
+  return liveStrikes.filter(strike => new Date(strike.date) > nineMonthsAgo).length;
+};
+
+/**
+ * Helper function to calculate account age in days
+ */
+const calculateAccountAgeDays = (createdAt) => {
+  if (!createdAt) return 0;
+  const now = new Date();
+  const created = new Date(createdAt);
+  return Math.floor((now - created) / (1000 * 60 * 60 * 24));
+};
 
 /**
  * Check if user qualifies for live streaming
@@ -20,12 +94,10 @@ const checkUserLiveQualification = async (userId) => {
     const user = await User.findById(userId);
     if (!user) return { qualified: false, reason: 'user_not_found' };
     
-    // Check manual approval first
     if (user.canGoLive && user.canGoLiveReason === 'manual_admin_approval') {
       return { qualified: true, reason: 'manual_admin_approval' };
     }
     
-    // Check auto-qualification
     return await user.checkLiveQualification();
   } catch (error) {
     console.error('Error checking live qualification:', error);
@@ -40,14 +112,12 @@ const checkUserLiveQualification = async (userId) => {
  */
 const createLive = async (req, res) => {
   try {
-    // DEBUG: Log incoming request
     console.log('Create live request received:', {
       body: req.body,
       files: req.files,
       user: req.user ? req.user._id : 'No user'
     });
 
-    // Check if req.body exists
     if (!req.body) {
       return res.status(400).json({ 
         success: false, 
@@ -55,11 +125,9 @@ const createLive = async (req, res) => {
       });
     }
 
-    // Check user's live qualification
     const qualification = await checkUserLiveQualification(req.user._id);
     
     if (!qualification.qualified) {
-      // Get user details for helpful error message
       const user = await User.findById(req.user._id);
       
       return res.status(403).json({ 
@@ -91,25 +159,23 @@ const createLive = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Shadow banned users cannot create live streams' });
     }
 
-    // Extract with defaults to prevent destructuring error
     const {
-   title = '',
-   description = '',
-   thumbnailUrl = '',
-   scheduledAt = null,
-   isPaid = false,
-   price = 0,
-   currency = 'USD',
-   isSponsored = false,
-   sponsorDescription = '',
-   isFundraiser = false,
-   fundraiserDescription = '',
-   category = 'general',
-   tags = [],
-   ageRating = 'PG'
-  } = req.body;
+      title = '',
+      description = '',
+      thumbnailUrl = '',
+      scheduledAt = null,
+      isPaid = false,
+      price = 0,
+      currency = 'USD',
+      isSponsored = false,
+      sponsorDescription = '',
+      isFundraiser = false,
+      fundraiserDescription = '',
+      category = 'general',
+      tags = [],
+      ageRating = 'PG'
+    } = req.body;
 
-    // Parse tags if it's a JSON string
     let parsedTags = tags;
     if (typeof tags === 'string') {
       try {
@@ -119,7 +185,6 @@ const createLive = async (req, res) => {
       }
     }
 
-    // Validate required fields
     if (!title || title.trim() === '') {
       return res.status(400).json({ success: false, message: 'Title is required' });
     }
@@ -128,20 +193,14 @@ const createLive = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Cannot be both sponsored and fundraiser' });
     }
 
-    // Generate unique stream key
     const streamKey = crypto.randomBytes(16).toString('hex');
     const rtmpServerUrl = process.env.RTMP_SERVER_URL || 'rtmp://localhost:1935/live';
     const streamUrl = `${rtmpServerUrl}/${streamKey}`;
-    
-    // HLS URL for web playback
     const hlsServerUrl = process.env.HLS_SERVER_URL || 'http://localhost:8000';
     const hlsUrl = `${hlsServerUrl}/live/${streamKey}/index.m3u8`;
 
-    // Handle file uploads if present
     let finalThumbnailUrl = thumbnailUrl;
     if (req.files && req.files.thumbnailUrl) {
-      // You would typically upload to cloud storage here
-      // For now, use a placeholder or save path
       finalThumbnailUrl = `/uploads/thumbnails/${req.files.thumbnailUrl[0].filename}`;
     }
 
@@ -191,7 +250,6 @@ const createLive = async (req, res) => {
         streamKey, 
         streamUrl,
         hlsUrl,
-        // RTMP settings for OBS
         obsSettings: {
           server: rtmpServerUrl,
           streamKey: streamKey,
@@ -226,7 +284,6 @@ const getLiveFeed = async (req, res) => {
     .sort({ startedAt: -1, scheduledAt: 1 })
     .lean();
 
-    // Add HLS URLs for live streams
     const livesWithUrls = lives.map(live => ({
       ...live,
       playbackUrl: live.status === 'live' ? live.hlsUrl : null,
@@ -262,7 +319,6 @@ const checkLiveAccess = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Live stream not available' });
     }
 
-    // Check if stream is live
     if (live.status !== 'live') {
       return res.status(400).json({ 
         success: false, 
@@ -316,7 +372,6 @@ const joinLive = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Live stream not available' });
     }
 
-    // Check if stream is live
     if (live.status !== 'live') {
       return res.status(400).json({ 
         success: false, 
@@ -343,7 +398,6 @@ const joinLive = async (req, res) => {
       });
     }
 
-    // Add viewer if not already watching
     if (!live.viewers.includes(req.user._id)) {
       live.viewers.push(req.user._id);
       live.totalViews += 1;
@@ -376,7 +430,7 @@ const joinLive = async (req, res) => {
 
 /**
  * --------------------------
- * START STREAM (when OBS connects)
+ * START STREAM
  * --------------------------
  */
 const startStream = async (req, res) => {
@@ -387,18 +441,15 @@ const startStream = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Live stream not found' });
     }
 
-    // Check permissions
     if (live.host.toString() !== req.user._id.toString() && 
         !['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Not authorized to start this stream' });
     }
 
-    // Check if already live
     if (live.status === 'live') {
       return res.status(400).json({ success: false, message: 'Stream is already live' });
     }
 
-    // Update stream status
     live.status = 'live';
     live.startedAt = new Date();
     live.viewers = [];
@@ -431,7 +482,7 @@ const startStream = async (req, res) => {
 
 /**
  * --------------------------
- * STOP STREAM (when OBS disconnects)
+ * STOP STREAM
  * --------------------------
  */
 const stopStream = async (req, res) => {
@@ -442,13 +493,11 @@ const stopStream = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Live stream not found' });
     }
 
-    // Check permissions
     if (live.host.toString() !== req.user._id.toString() && 
         !['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Not authorized to stop this stream' });
     }
 
-    // Check if already ended
     if (live.status !== 'live') {
       return res.status(400).json({ 
         success: false, 
@@ -457,11 +506,9 @@ const stopStream = async (req, res) => {
       });
     }
 
-    // Calculate duration
     const endedAt = new Date();
     const duration = Math.floor((endedAt - live.startedAt) / 1000);
 
-    // Update stream status
     live.status = 'ended';
     live.endedAt = endedAt;
     live.duration = duration;
@@ -612,6 +659,46 @@ const updateLiveStatus = async (req, res) => {
     live.approvedAt = status === 'approved' ? new Date() : null;
 
     await live.save();
+
+    // Audit log for live stream status change
+    await logAdminAction({
+      admin: req.user,
+      actionType: `LIVE_${status.toUpperCase()}`,
+      actionLabel: `${status.charAt(0).toUpperCase() + status.slice(1)} Live Stream`,
+      targetType: 'LiveStream',
+      targetId: live._id,
+      targetName: live.title,
+      targetEmail: null,
+      description: `${status} live stream "${live.title}"`,
+      reason: status === 'rejected' ? removalReason : null,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { liveTitle: live.title, liveId: live._id, status }
+    });
+
+    // Send notification (without admin name)
+    if (status === 'approved') {
+      await NotificationService.createNotification({
+        userId: live.host,
+        type: 'admin',
+        title: 'Live Stream Approved',
+        message: `Your live stream "${live.title}" has been approved by Admin. You can now schedule or start your stream.`,
+        priority: 'high',
+        link: { url: `/live/${live._id}`, text: 'View Stream' },
+        triggeredBy: req.user._id,
+        data: { liveTitle: live.title, liveId: live._id }
+      });
+    } else if (status === 'rejected') {
+      await NotificationService.createNotification({
+        userId: live.host,
+        type: 'admin',
+        title: 'Live Stream Rejected',
+        message: `Your live stream "${live.title}" was rejected by Admin. Reason: ${removalReason || 'Content does not meet guidelines'}.`,
+        priority: 'high',
+        triggeredBy: req.user._id,
+        data: { liveTitle: live.title, liveId: live._id, reason: removalReason }
+      });
+    }
     
     res.json({ 
       success: true, 
@@ -630,14 +717,13 @@ const updateLiveStatus = async (req, res) => {
 
 /**
  * --------------------------
- * ADMIN: GRANT / REVOKE LIVE PRIVILEGE
+ * ADMIN: GRANT / REVOKE LIVE PRIVILEGE (WITH NOTIFICATIONS & AUDIT LOG)
  * --------------------------
  */
 const setLivePrivilege = async (req, res) => {
   try {
     const { userId, canGoLive, reason } = req.body;
     
-    // Authorization check
     if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Not authorized' });
     }
@@ -647,8 +733,6 @@ const setLivePrivilege = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Permission hierarchy check
-    // Support Admin can only view
     if (req.user.role === 'supportadmin') {
       return res.status(403).json({ 
         success: false, 
@@ -656,7 +740,6 @@ const setLivePrivilege = async (req, res) => {
       });
     }
 
-    // Check if trying to modify another admin
     const isTargetAdmin = ['superadmin', 'platformadmin', 'supportadmin'].includes(targetUser.role);
     if (isTargetAdmin && req.user.role !== 'superadmin') {
       return res.status(403).json({ 
@@ -665,11 +748,37 @@ const setLivePrivilege = async (req, res) => {
       });
     }
 
-    // Update privilege
     if (canGoLive) {
       await targetUser.grantLivePrivilege(req.user._id);
       
-      // Add admin action log
+      // Notification without admin name
+      await NotificationService.createNotification({
+        userId: targetUser._id,
+        type: 'admin',
+        title: 'Live Streaming Access Granted',
+        message: `Admin has granted you live streaming privileges! You can now go live and interact with your audience.`,
+        priority: 'high',
+        link: { url: `/live/create`, text: 'Go Live Now' },
+        triggeredBy: req.user._id,
+        data: { grantedByEmail: req.user.email }
+      });
+      
+      // Audit log
+      await logAdminAction({
+        admin: req.user,
+        actionType: 'GRANT_LIVE_PRIVILEGE',
+        actionLabel: 'Grant Live Privilege',
+        targetType: 'User',
+        targetId: targetUser._id,
+        targetName: targetUser.name || targetUser.email,
+        targetEmail: targetUser.email,
+        description: `Granted live streaming privileges to ${targetUser.name || targetUser.email}`,
+        reason: reason || 'Manual approval by admin',
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        metadata: { grantedBy: req.user.email, targetRole: targetUser.role }
+      });
+      
       targetUser.adminActions.push({
         actionType: 'GRANT_LIVE_PRIVILEGE',
         targetId: targetUser._id,
@@ -681,7 +790,34 @@ const setLivePrivilege = async (req, res) => {
     } else {
       await targetUser.revokeLivePrivilege(req.user._id, reason || 'Revoked by admin');
       
-      // Add admin action log
+      // Notification without admin name
+      await NotificationService.createNotification({
+        userId: targetUser._id,
+        type: 'admin',
+        title: 'Live Streaming Access Revoked',
+        message: `Admin has revoked your live streaming privileges. Reason: ${reason || 'Policy violation'}. Please contact support if you believe this is an error.`,
+        priority: 'urgent',
+        link: { url: `/support`, text: 'Contact Support' },
+        triggeredBy: req.user._id,
+        data: { reason: reason || 'Revoked by admin' }
+      });
+      
+      // Audit log
+      await logAdminAction({
+        admin: req.user,
+        actionType: 'REVOKE_LIVE_PRIVILEGE',
+        actionLabel: 'Revoke Live Privilege',
+        targetType: 'User',
+        targetId: targetUser._id,
+        targetName: targetUser.name || targetUser.email,
+        targetEmail: targetUser.email,
+        description: `Revoked live streaming privileges from ${targetUser.name || targetUser.email}`,
+        reason: reason || 'Revoked by admin',
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        metadata: { revokedBy: req.user.email, targetRole: targetUser.role }
+      });
+      
       targetUser.adminActions.push({
         actionType: 'REVOKE_LIVE_PRIVILEGE',
         targetId: targetUser._id,
@@ -694,7 +830,6 @@ const setLivePrivilege = async (req, res) => {
 
     await targetUser.save();
 
-    // Get updated qualification status
     const qualification = await targetUser.checkLiveQualification();
 
     res.json({ 
@@ -726,7 +861,7 @@ const setLivePrivilege = async (req, res) => {
 
 /**
  * --------------------------
- * ADMIN: ADD LIVE STRIKE
+ * ADMIN: ADD LIVE STRIKE (WITH NOTIFICATION & AUDIT LOG)
  * --------------------------
  */
 const addLiveStrike = async (req, res) => {
@@ -741,10 +876,44 @@ const addLiveStrike = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Add strike
+    const nineMonthsAgo = new Date(Date.now() - (9 * 30 * 24 * 60 * 60 * 1000));
+    const currentStrikeCount = targetUser.liveStrikes?.filter(s => new Date(s.date) > nineMonthsAgo).length || 0;
+    const newStrikeCount = currentStrikeCount + 1;
+
     await targetUser.addLiveStrike(reason, req.user._id);
 
-    // Add admin action log
+    let message = `You have received a live streaming violation strike (${newStrikeCount}/5). Reason: ${reason || 'Violation of community guidelines'}.`;
+    if (newStrikeCount >= 5) {
+      message = `You have received your 5th strike. Your live streaming privileges have been automatically revoked. Reason: ${reason || 'Multiple violations'}.`;
+    }
+    
+    // Notification without admin name
+    await NotificationService.createNotification({
+      userId: targetUser._id,
+      type: 'admin',
+      title: 'Live Streaming Strike',
+      message,
+      priority: 'urgent',
+      triggeredBy: req.user._id,
+      data: { strikeCount: newStrikeCount, reason }
+    });
+
+    // Audit log
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'ADD_LIVE_STRIKE',
+      actionLabel: 'Add Live Strike',
+      targetType: 'User',
+      targetId: targetUser._id,
+      targetName: targetUser.name || targetUser.email,
+      targetEmail: targetUser.email,
+      description: `Added live strike to ${targetUser.name || targetUser.email}`,
+      reason: reason,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { strikeCount: newStrikeCount, reason }
+    });
+
     targetUser.adminActions.push({
       actionType: 'ADD_LIVE_STRIKE',
       targetId: targetUser._id,
@@ -756,7 +925,6 @@ const addLiveStrike = async (req, res) => {
 
     await targetUser.save();
 
-    // Check if user still qualifies for live streaming
     const qualification = await targetUser.checkLiveQualification();
     
     res.json({ 
@@ -784,7 +952,85 @@ const addLiveStrike = async (req, res) => {
 
 /**
  * --------------------------
- * ADMIN: GET USER LIVE DETAILS
+ * ADMIN: REMOVE STRIKE (WITH NOTIFICATION & AUDIT LOG)
+ * --------------------------
+ */
+const removeStrike = async (req, res) => {
+  try {
+    const { id: userId, strikeId } = req.params;
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const strikeIndex = user.liveStrikes.findIndex(
+      strike => strike._id.toString() === strikeId
+    );
+
+    if (strikeIndex === -1) {
+      return res.status(404).json({ success: false, message: 'Strike not found' });
+    }
+
+    const removedStrike = user.liveStrikes[strikeIndex];
+    user.liveStrikes.splice(strikeIndex, 1);
+    
+    await user.save();
+
+    // Notification without admin name
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Live Streaming Strike Removed',
+      message: `Admin has removed a strike from your account. You now have ${user.liveStrikes.length} active strike(s).`,
+      priority: 'normal',
+      triggeredBy: req.user._id,
+      data: { removedStrike, remainingStrikes: user.liveStrikes.length }
+    });
+
+    // Audit log
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'REMOVE_LIVE_STRIKE',
+      actionLabel: 'Remove Live Strike',
+      targetType: 'User',
+      targetId: user._id,
+      targetName: user.name || user.email,
+      targetEmail: user.email,
+      description: `Removed live strike from ${user.name || user.email}`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { removedStrike, remainingStrikes: user.liveStrikes.length }
+    });
+
+    const qualification = await user.checkLiveQualification();
+
+    res.json({
+      success: true,
+      message: 'Strike removed successfully',
+      removedStrike,
+      user: {
+        _id: user._id,
+        name: user.name,
+        liveStrikes: user.liveStrikes.length,
+        canGoLive: user.canGoLive,
+        canGoLiveReason: user.canGoLiveReason,
+        qualification
+      }
+    });
+  } catch (err) {
+    console.error('Remove strike error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to remove strike',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+};
+
+/**
+ * --------------------------
+ * ADMIN: GET USER LIVE DETAILS - FIXED with accurate stats
  * --------------------------
  */
 const getUserLiveDetails = async (req, res) => {
@@ -799,22 +1045,20 @@ const getUserLiveDetails = async (req, res) => {
 
     if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
 
-    // Get user's live streams
+    // Get accurate video stats from videos collection (not from user's stored values)
+    const videoStats = await getUserVideoStats(targetUser._id);
+    
     const userLives = await Live.find({ host: req.params.userId })
       .select('title status startedAt endedAt viewers peakViewers totalViews')
       .sort({ createdAt: -1 })
       .lean();
 
-    // Calculate qualification stats
-    const accountAge = Math.floor((new Date() - new Date(targetUser.createdAt)) / (1000 * 60 * 60 * 24));
-    const activeStrikes = targetUser.liveStrikes?.filter(s => {
-      const nineMonthsAgo = new Date(Date.now() - (9 * 30 * 24 * 60 * 60 * 1000));
-      return new Date(s.date) > nineMonthsAgo;
-    }).length || 0;
+    const accountAge = calculateAccountAgeDays(targetUser.createdAt);
+    const activeStrikes = calculateActiveStrikes(targetUser.liveStrikes);
 
     const qualifiesAutomatically = 
-      targetUser.approvedVideoCount >= 3 && 
-      targetUser.totalVideoViews >= 500 && 
+      videoStats.approvedVideoCount >= 3 && 
+      videoStats.totalVideoViews >= 500 && 
       accountAge >= 30 && 
       activeStrikes === 0;
 
@@ -822,6 +1066,9 @@ const getUserLiveDetails = async (req, res) => {
       success: true,
       user: {
         ...targetUser,
+        // Override with accurate stats from videos collection
+        approvedVideoCount: videoStats.approvedVideoCount,
+        totalVideoViews: videoStats.totalVideoViews,
         liveStreams: userLives,
         totalStreams: userLives.length,
         activeStreams: userLives.filter(l => l.status === 'live').length,
@@ -830,14 +1077,14 @@ const getUserLiveDetails = async (req, res) => {
         activeStrikes: activeStrikes,
         qualifiesAutomatically: qualifiesAutomatically,
         qualificationStatus: {
-          approvedVideos: targetUser.approvedVideoCount || 0,
-          totalViews: targetUser.totalVideoViews || 0,
+          approvedVideos: videoStats.approvedVideoCount,
+          totalViews: videoStats.totalVideoViews,
           accountAgeDays: accountAge,
           activeStrikes: activeStrikes,
           meetsRequirements: qualifiesAutomatically,
           missingRequirements: {
-            approvedVideos: Math.max(0, 3 - (targetUser.approvedVideoCount || 0)),
-            totalViews: Math.max(0, 500 - (targetUser.totalVideoViews || 0)),
+            approvedVideos: Math.max(0, 3 - videoStats.approvedVideoCount),
+            totalViews: Math.max(0, 500 - videoStats.totalVideoViews),
             accountAgeDays: Math.max(0, 30 - accountAge),
             noActiveStrikes: activeStrikes === 0
           }
@@ -871,6 +1118,20 @@ const shadowBanLive = async (req, res) => {
     live.isShadowBanned = true;
     await live.save();
     
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'SHADOW_BAN_LIVE',
+      actionLabel: 'Shadow Ban Live Stream',
+      targetType: 'LiveStream',
+      targetId: live._id,
+      targetName: live.title,
+      targetEmail: null,
+      description: `Shadow banned live stream "${live.title}"`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { liveTitle: live.title, liveId: live._id }
+    });
+    
     res.json({ 
       success: true, 
       message: 'Live stream shadow banned' 
@@ -901,6 +1162,20 @@ const deleteLive = async (req, res) => {
 
     live.isDeleted = true;
     await live.save();
+
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'DELETE_LIVE',
+      actionLabel: 'Delete Live Stream',
+      targetType: 'LiveStream',
+      targetId: live._id,
+      targetName: live.title,
+      targetEmail: null,
+      description: `Deleted live stream "${live.title}"`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { liveTitle: live.title, liveId: live._id }
+    });
 
     res.json({ 
       success: true, 
@@ -955,27 +1230,20 @@ const checkLiveQualification = async (req, res) => {
 
 /**
  * =====================================================
- * NEW ADMIN MODERATION FUNCTIONS (REQUIRED BY adminRoutes.js)
+ * ADMIN MODERATION FUNCTIONS (REQUIRED BY adminRoutes.js)
  * =====================================================
  */
 
-/**
- * --------------------------
- * ADMIN: GET ALL LIVE STREAMS FOR MODERATION
- * --------------------------
- */
 const getAdminLiveStreams = async (req, res) => {
   try {
     const { status, search, page = 1, limit = 20 } = req.query;
     
     let filter = { isDeleted: false };
     
-    // Filter by status
     if (status) {
       filter.status = status;
     }
     
-    // Search in title or description
     if (search) {
       filter.$or = [
         { title: { $regex: search, $options: 'i' } },
@@ -1015,11 +1283,6 @@ const getAdminLiveStreams = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * ADMIN: GET DETAILED LIVE STREAM INFO
- * --------------------------
- */
 const getAdminLiveStreamDetails = async (req, res) => {
   try {
     const live = await Live.findById(req.params.id)
@@ -1033,11 +1296,9 @@ const getAdminLiveStreamDetails = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Live stream not found' });
     }
 
-    // Get host's qualification status
     const hostQualification = await checkUserLiveQualification(live.host._id);
     
-    // Get reports for this live stream (if you have a Report model)
-    const reports = []; // You would fetch from Report model
+    const reports = [];
 
     res.json({
       success: true,
@@ -1057,11 +1318,6 @@ const getAdminLiveStreamDetails = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * ADMIN: FORCE END LIVE STREAM
- * --------------------------
- */
 const endLiveStreamAdmin = async (req, res) => {
   try {
     const live = await Live.findById(req.params.id);
@@ -1078,11 +1334,9 @@ const endLiveStreamAdmin = async (req, res) => {
       });
     }
 
-    // Calculate duration
     const endedAt = new Date();
     const duration = live.startedAt ? Math.floor((endedAt - live.startedAt) / 1000) : 0;
 
-    // Update stream status
     live.status = 'ended';
     live.endedAt = endedAt;
     live.duration = duration;
@@ -1092,7 +1346,31 @@ const endLiveStreamAdmin = async (req, res) => {
     
     await live.save();
 
-    // Add strike to user if reason indicates violation
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'END_LIVE_STREAM_ADMIN',
+      actionLabel: 'End Live Stream (Admin)',
+      targetType: 'LiveStream',
+      targetId: live._id,
+      targetName: live.title,
+      targetEmail: null,
+      description: `Admin ended live stream "${live.title}"`,
+      reason: live.adminEndedReason,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { liveTitle: live.title, liveId: live._id, addStrike: req.body.addStrike || false }
+    });
+
+    await NotificationService.createNotification({
+      userId: live.host,
+      type: 'admin',
+      title: 'Live Stream Ended by Admin',
+      message: `Your live stream "${live.title}" was ended by Admin. Reason: ${live.adminEndedReason}`,
+      priority: 'urgent',
+      triggeredBy: req.user._id,
+      data: { liveTitle: live.title, liveId: live._id, reason: live.adminEndedReason }
+    });
+
     if (req.body.addStrike) {
       const host = await User.findById(live.host);
       if (host) {
@@ -1100,6 +1378,16 @@ const endLiveStreamAdmin = async (req, res) => {
           `Stream terminated by admin: ${req.body.reason || 'Violation of terms'}`,
           req.user._id
         );
+        
+        await NotificationService.createNotification({
+          userId: live.host,
+          type: 'admin',
+          title: 'Live Streaming Strike Issued',
+          message: `You have received a strike for your live stream "${live.title}". Reason: ${req.body.reason || 'Violation of terms'}`,
+          priority: 'urgent',
+          triggeredBy: req.user._id,
+          data: { liveTitle: live.title, liveId: live._id, reason: req.body.reason }
+        });
       }
     }
 
@@ -1127,11 +1415,6 @@ const endLiveStreamAdmin = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * ADMIN: SEND WARNING/STRIKE TO STREAMER
- * --------------------------
- */
 const sendStreamWarning = async (req, res) => {
   try {
     const { warningType, reason, addStrike } = req.body;
@@ -1153,12 +1436,60 @@ const sendStreamWarning = async (req, res) => {
     if (addStrike) {
       await host.addLiveStrike(reason || 'Live stream violation', req.user._id);
       message = 'Strike added to user';
+      
+      await logAdminAction({
+        admin: req.user,
+        actionType: 'ADD_LIVE_STRIKE_WARNING',
+        actionLabel: 'Add Live Strike via Warning',
+        targetType: 'User',
+        targetId: host._id,
+        targetName: host.name || host.email,
+        targetEmail: host.email,
+        description: `Added live strike to ${host.name || host.email} via stream warning`,
+        reason: reason || 'Live stream violation',
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        metadata: { liveTitle: live.title, liveId: live._id }
+      });
+      
+      await NotificationService.createNotification({
+        userId: live.host,
+        type: 'admin',
+        title: 'Live Streaming Strike',
+        message: `You have received a strike for your live stream "${live.title}". Reason: ${reason || 'Violation of community guidelines'}`,
+        priority: 'urgent',
+        triggeredBy: req.user._id,
+        data: { liveTitle: live.title, liveId: live._id, reason: reason || 'Violation of community guidelines' }
+      });
     } else {
-      // Just send warning (no strike)
       message = 'Warning sent to user';
+      
+      await logAdminAction({
+        admin: req.user,
+        actionType: 'SEND_LIVE_WARNING',
+        actionLabel: 'Send Live Warning',
+        targetType: 'User',
+        targetId: host._id,
+        targetName: host.name || host.email,
+        targetEmail: host.email,
+        description: `Sent warning to ${host.name || host.email} for live stream "${live.title}"`,
+        reason: reason || 'Violation of community guidelines',
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        metadata: { liveTitle: live.title, liveId: live._id }
+      });
+      
+      await NotificationService.createNotification({
+        userId: live.host,
+        type: 'admin',
+        title: 'Live Stream Warning',
+        message: `Your live stream "${live.title}" has received a warning from Admin. Reason: ${reason || 'Violation of community guidelines'}. Please review our guidelines.`,
+        priority: 'high',
+        triggeredBy: req.user._id,
+        data: { liveTitle: live.title, liveId: live._id, reason: reason || 'Violation of community guidelines' }
+      });
     }
 
-    // Create warning record (you might want to save this in a separate collection)
     const warning = {
       type: warningType || 'general',
       reason: reason || 'Violation of community guidelines',
@@ -1168,10 +1499,6 @@ const sendStreamWarning = async (req, res) => {
       addStrike: Boolean(addStrike)
     };
 
-    // You might want to save this to a Warnings collection
-    // await Warning.create(warning);
-
-    // Check if user still qualifies for live streaming
     const qualification = await host.checkLiveQualification();
 
     res.json({
@@ -1197,30 +1524,9 @@ const sendStreamWarning = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * ADMIN: GET LIVE STREAM REPORTS
- * --------------------------
- */
 const getLiveStreamReports = async (req, res) => {
   try {
-    // This function depends on your Report model
-    // Assuming you have a Report model that references live streams
-    
-    const reports = []; // Placeholder - fetch from Report model
-    
-    // Example implementation:
-    /*
-    const reports = await Report.find({ 
-      targetType: 'live', 
-      targetId: req.params.id,
-      resolved: false 
-    })
-    .populate('reportedBy', 'name email')
-    .populate('resolvedBy', 'name email')
-    .sort({ createdAt: -1 })
-    .lean();
-    */
+    const reports = [];
 
     res.json({
       success: true,
@@ -1237,11 +1543,6 @@ const getLiveStreamReports = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * ADMIN: APPLY SHADOW BAN TO LIVE STREAM
- * --------------------------
- */
 const applyShadowBanToLive = async (req, res) => {
   try {
     const live = await Live.findById(req.params.id);
@@ -1256,6 +1557,31 @@ const applyShadowBanToLive = async (req, res) => {
     live.shadowBannedAt = new Date();
     
     await live.save();
+
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'APPLY_SHADOW_BAN_LIVE',
+      actionLabel: 'Apply Shadow Ban to Live',
+      targetType: 'LiveStream',
+      targetId: live._id,
+      targetName: live.title,
+      targetEmail: null,
+      description: `Applied shadow ban to live stream "${live.title}"`,
+      reason: live.shadowBanReason,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { liveTitle: live.title, liveId: live._id }
+    });
+
+    await NotificationService.createNotification({
+      userId: live.host,
+      type: 'admin',
+      title: 'Live Stream Shadow Banned',
+      message: `Your live stream "${live.title}" has been shadow banned by Admin. Reason: ${live.shadowBanReason}. The stream will not appear in public feeds.`,
+      priority: 'urgent',
+      triggeredBy: req.user._id,
+      data: { liveTitle: live.title, liveId: live._id, reason: live.shadowBanReason }
+    });
 
     res.json({
       success: true,
@@ -1278,11 +1604,6 @@ const applyShadowBanToLive = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * ADMIN: REMOVE SHADOW BAN FROM LIVE STREAM
- * --------------------------
- */
 const removeShadowBanFromLive = async (req, res) => {
   try {
     const live = await Live.findById(req.params.id);
@@ -1297,6 +1618,30 @@ const removeShadowBanFromLive = async (req, res) => {
     live.shadowBannedAt = null;
     
     await live.save();
+
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'REMOVE_SHADOW_BAN_LIVE',
+      actionLabel: 'Remove Shadow Ban from Live',
+      targetType: 'LiveStream',
+      targetId: live._id,
+      targetName: live.title,
+      targetEmail: null,
+      description: `Removed shadow ban from live stream "${live.title}"`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { liveTitle: live.title, liveId: live._id }
+    });
+
+    await NotificationService.createNotification({
+      userId: live.host,
+      type: 'admin',
+      title: 'Shadow Ban Removed',
+      message: `The shadow ban on your live stream "${live.title}" has been removed by Admin. Your stream is now visible in public feeds.`,
+      priority: 'high',
+      triggeredBy: req.user._id,
+      data: { liveTitle: live.title, liveId: live._id }
+    });
 
     res.json({
       success: true,
@@ -1317,66 +1662,6 @@ const removeShadowBanFromLive = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * ADMIN: REMOVE STRIKE FROM USER
- * --------------------------
- */
-const removeStrike = async (req, res) => {
-  try {
-    const { id: userId, strikeId } = req.params;
-    
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    // Find the strike
-    const strikeIndex = user.liveStrikes.findIndex(
-      strike => strike._id.toString() === strikeId
-    );
-
-    if (strikeIndex === -1) {
-      return res.status(404).json({ success: false, message: 'Strike not found' });
-    }
-
-    // Remove the strike
-    const removedStrike = user.liveStrikes[strikeIndex];
-    user.liveStrikes.splice(strikeIndex, 1);
-    
-    await user.save();
-
-    // Check if user now qualifies for live streaming
-    const qualification = await user.checkLiveQualification();
-
-    res.json({
-      success: true,
-      message: 'Strike removed successfully',
-      removedStrike,
-      user: {
-        _id: user._id,
-        name: user.name,
-        liveStrikes: user.liveStrikes.length,
-        canGoLive: user.canGoLive,
-        canGoLiveReason: user.canGoLiveReason,
-        qualification
-      }
-    });
-  } catch (err) {
-    console.error('Remove strike error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove strike',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
-  }
-};
-
-/**
- * --------------------------
- * ADMIN: BAN USER FROM STREAMING
- * --------------------------
- */
 const banUserFromStreaming = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -1384,13 +1669,36 @@ const banUserFromStreaming = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Revoke live privileges
     await user.revokeLivePrivilege(
       req.user._id, 
       req.body.reason || 'Banned from streaming by admin'
     );
 
-    // Add admin action log
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'BAN_USER_FROM_STREAMING',
+      actionLabel: 'Ban User from Streaming',
+      targetType: 'User',
+      targetId: user._id,
+      targetName: user.name || user.email,
+      targetEmail: user.email,
+      description: `Banned ${user.name || user.email} from live streaming`,
+      reason: req.body.reason || 'Banned from streaming',
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { bannedBy: req.user.email }
+    });
+
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Banned from Streaming',
+      message: `Admin has banned you from live streaming. Reason: ${req.body.reason || 'Violation of guidelines'}. You can no longer create live streams.`,
+      priority: 'urgent',
+      triggeredBy: req.user._id,
+      data: { reason: req.body.reason || 'Violation of guidelines', bannedBy: req.user.name }
+    });
+
     user.adminActions.push({
       actionType: 'BAN_FROM_STREAMING',
       targetId: user._id,
@@ -1402,7 +1710,6 @@ const banUserFromStreaming = async (req, res) => {
 
     await user.save();
 
-    // End any active streams by this user
     const activeStreams = await Live.find({ 
       host: user._id, 
       status: 'live' 
@@ -1440,32 +1747,25 @@ const banUserFromStreaming = async (req, res) => {
 
 /**
  * --------------------------
- * EXPORT - NOW INCLUDES ALL ADMIN MODERATION FUNCTIONS
+ * EXPORT
  * --------------------------
  */
 module.exports = {
-  // User functions
   createLive,
   getLiveFeed,
   checkLiveAccess,
   joinLive,
   purchaseLive,
   checkLiveQualification,
-  
-  // Stream control functions
   startStream,
   stopStream,
   getStreamStatus,
-  
-  // Admin moderation functions (existing)
   updateLiveStatus,
   shadowBanLive,
   deleteLive,
   setLivePrivilege,
   addLiveStrike,
   getUserLiveDetails,
-  
-  // NEW: Admin live moderation functions (required by adminRoutes.js)
   getAdminLiveStreams,
   getAdminLiveStreamDetails,
   endLiveStreamAdmin,

@@ -1,3 +1,4 @@
+// file: backend/middleware/adminMiddleware.js
 const User = require('../models/User');
 
 // Admin hierarchy levels

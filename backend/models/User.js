@@ -1,7 +1,8 @@
 /**
  * File: backend/models/User.js
  * Description: Comprehensive User schema for Narra with token versioning for force logout
- * FULLY UPDATED: Added restrictions field for upload/goLive/comment permissions
+ * FULLY UPDATED: Added missing adminActions enum values and fixed video query field
+ * FIXED: checkLiveQualification now uses 'creator' instead of 'user'
  */
 
 const mongoose = require('mongoose');
@@ -51,7 +52,14 @@ const AdminActionSchema = new mongoose.Schema(
         'DEACTIVATE_USER',
         'FORCE_LOGOUT',
         'GRANT_LIVE_PRIVILEGE',
-        'REVOKE_LIVE_PRIVILEGE'
+        'REVOKE_LIVE_PRIVILEGE',
+        'ADD_LIVE_STRIKE',
+        'REMOVE_LIVE_STRIKE',
+        'BAN_FROM_STREAMING',
+        'END_LIVE_STREAM',
+        'SEND_STREAM_WARNING',
+        'SHADOW_BAN_LIVE',
+        'REMOVE_SHADOW_BAN_LIVE'
       ],
     },
     targetId: {
@@ -136,14 +144,14 @@ const PrivacySettingsSchema = new mongoose.Schema(
 
 /*
 ========================================
-RESTRICTIONS SCHEMA - ADDED
+RESTRICTIONS SCHEMA
 ========================================
 */
 const RestrictionsSchema = new mongoose.Schema(
   {
-    upload: { type: Boolean, default: false },    // false = can upload, true = restricted
-    goLive: { type: Boolean, default: false },    // false = can go live, true = restricted
-    comment: { type: Boolean, default: false }    // false = can comment, true = restricted
+    upload: { type: Boolean, default: false },
+    goLive: { type: Boolean, default: false },
+    comment: { type: Boolean, default: false }
   },
   { _id: false }
 );
@@ -155,9 +163,6 @@ USER SCHEMA
 */
 const UserSchema = new mongoose.Schema(
   {
-    // ----------------------
-    // BASIC INFO - UPDATED with separate name fields
-    // ----------------------
     firstName: { 
       type: String, 
       required: [true, 'First name is required'],
@@ -197,16 +202,12 @@ const UserSchema = new mongoose.Schema(
     },
     password: { type: String, required: true, minlength: 6 },
     
-    // GENDER FIELD - Male and Female only
     gender: {
       type: String,
       enum: ['male', 'female', ''],
       default: ''
     },
     
-    // ----------------------
-    // PROFILE ENHANCEMENTS
-    // ----------------------
     avatar: { type: String, default: null },
     bio: { type: String, maxlength: 500, default: '' },
     dateOfBirth: { type: Date, required: true },
@@ -214,9 +215,6 @@ const UserSchema = new mongoose.Schema(
     location: { type: String, default: '' },
     website: { type: String, default: '' },
 
-    // ----------------------
-    // SOCIAL FEATURES
-    // ----------------------
     followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     twins: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
@@ -224,22 +222,13 @@ const UserSchema = new mongoose.Schema(
     followingCount: { type: Number, default: 0 },
     twinCount: { type: Number, default: 0 },
 
-    // ----------------------
-    // SETTINGS & PREFERENCES
-    // ----------------------
     notificationPreferences: { type: NotificationPreferencesSchema, default: () => ({}) },
     privacySettings: { type: PrivacySettingsSchema, default: () => ({}) },
     preferredLanguage: { type: String, default: 'en' },
     theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
 
-    // ----------------------
-    // RESTRICTIONS - ADDED
-    // ----------------------
     restrictions: { type: RestrictionsSchema, default: () => ({ upload: false, goLive: false, comment: false }) },
 
-    // ----------------------
-    // ROLES & PERMISSIONS
-    // ----------------------
     role: {
       type: String,
       enum: ['user', 'supportadmin', 'platformadmin', 'superadmin'],
@@ -250,15 +239,9 @@ const UserSchema = new mongoose.Schema(
     isCreator: { type: Boolean, default: false },
     isSupport: { type: Boolean, default: false },
 
-    // ----------------------
-    // ADMIN CREATION TRACKING
-    // ----------------------
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     adminCreatedAt: Date,
 
-    // ----------------------
-    // LIVE STREAMING PRIVILEGES
-    // ----------------------
     canGoLive: { type: Boolean, default: false, index: true },
     canGoLiveReason: { 
       type: String, 
@@ -272,9 +255,6 @@ const UserSchema = new mongoose.Schema(
     liveQualificationCheckedAt: Date,
     liveStrikes: { type: [LiveStrikeSchema], default: [] },
 
-    // ----------------------
-    // SECURITY & TOKENS
-    // ----------------------
     tokenVersion: { 
       type: Number, 
       default: 0,
@@ -292,9 +272,6 @@ const UserSchema = new mongoose.Schema(
       location: String
     }],
 
-    // ----------------------
-    // FINANCIAL
-    // ----------------------
     balance: { type: Number, default: 0 },
     lifetimeEarnings: { type: Number, default: 0 },
     payoutMethod: {
@@ -304,17 +281,11 @@ const UserSchema = new mongoose.Schema(
       isVerified: { type: Boolean, default: false }
     },
 
-    // ----------------------
-    // CONTENT RELATIONS
-    // ----------------------
     purchasedVideos: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Video' }],
     purchasedLives: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Live' }],
     uploadedVideos: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Video' }],
     uploadedLives: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Live' }],
 
-    // ----------------------
-    // MODERATION & RESTRICTIONS
-    // ----------------------
     isBanned: { type: Boolean, default: false },
     bannedAt: Date,
     bannedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -325,9 +296,6 @@ const UserSchema = new mongoose.Schema(
     shadowBanAppliedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     shadowBanAppliedAt: Date,
 
-    // ----------------------
-    // VERIFICATION
-    // ----------------------
     isVerified: { type: Boolean, default: false },
     verifiedAt: Date,
     verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -338,24 +306,15 @@ const UserSchema = new mongoose.Schema(
       status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' }
     }],
 
-    // ----------------------
-    // ACTIVITY TRACKING
-    // ----------------------
     lastLogin: { type: Date, index: true },
     lastActive: { type: Date, index: true },
     online: { type: Boolean, default: false },
     accountAge: { type: Number, default: 0 },
 
-    // ----------------------
-    // GEO / ANALYTICS
-    // ----------------------
     country: { type: String, index: true },
     continent: String,
     timezone: String,
 
-    // ----------------------
-    // NOTIFICATIONS
-    // ----------------------
     notifications: [
       {
         type: { type: String, enum: ['system', 'follow', 'comment', 'like', 'purchase', 'live'] },
@@ -367,9 +326,6 @@ const UserSchema = new mongoose.Schema(
       },
     ],
 
-    // ----------------------
-    // INTERACTIONS
-    // ----------------------
     comments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Comment' }],
     likedVideos: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Video' }],
     likedLives: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Live' }],
@@ -386,42 +342,24 @@ const UserSchema = new mongoose.Schema(
       },
     ],
 
-    // ----------------------
-    // ADMIN LOGS
-    // ----------------------
     adminActions: { type: [AdminActionSchema], default: [] },
 
-    // ----------------------
-    // ADMIN INACTIVITY
-    // ----------------------
     adminDeactivated: { type: Boolean, default: false },
     adminDeactivatedAt: Date,
     adminDeactivationReason: String,
 
-    // ----------------------
-    // USER DEACTIVATION
-    // ----------------------
     isDeactivated: { type: Boolean, default: false },
     deactivatedAt: Date,
     deactivationRequestedAt: Date,
     deactivationReason: String,
 
-    // ----------------------
-    // SOFT DELETE FIELDS
-    // ----------------------
     isDeleted: { type: Boolean, default: false, index: true },
     deletedAt: Date,
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     deleteReason: String,
 
-    // ----------------------
-    // FEATURED CONTENT
-    // ----------------------
     featuredVideos: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Video' }],
 
-    // ----------------------
-    // AUDIT CONTROL
-    // ----------------------
     auditLogs: [
       {
         type: { type: String },
@@ -541,7 +479,7 @@ function updateDerivedFields(user) {
 
 /*
 ========================================
-PRE-VALIDATE MIDDLEWARE - FIXED
+PRE-VALIDATE MIDDLEWARE
 ========================================
 */
 UserSchema.pre('validate', function(next) {
@@ -553,22 +491,19 @@ UserSchema.pre('validate', function(next) {
 
 /*
 ========================================
-PRE-SAVE MIDDLEWARE - FIXED
+PRE-SAVE MIDDLEWARE
 ========================================
 */
 UserSchema.pre('save', function(next) {
   updateDerivedFields(this);
   
-  // Hash password if modified and not already hashed
   if (this.isModified('password') && this.password) {
-    // Check if password is already hashed (bcrypt hashes start with $2)
     if (!this.password.startsWith('$2')) {
       const salt = bcrypt.genSaltSync(10);
       this.password = bcrypt.hashSync(this.password, salt);
     }
   }
   
-  // Ensure restrictions has defaults
   if (!this.restrictions) {
     this.restrictions = { upload: false, goLive: false, comment: false };
   }
@@ -580,7 +515,7 @@ UserSchema.pre('save', function(next) {
 
 /*
 ========================================
-PRE-FIND MIDDLEWARE - FIXED
+PRE-FIND MIDDLEWARE
 ========================================
 */
 UserSchema.pre('find', function(next) {
@@ -672,7 +607,7 @@ UserSchema.methods.follow = async function(userId) {
   }
   
   this.following.push(userId);
-  await this.save();
+  await this.save({ validateBeforeSave: false });
   
   const targetUser = await mongoose.model('User').findById(userId);
   if (targetUser) {
@@ -681,10 +616,10 @@ UserSchema.methods.follow = async function(userId) {
     if (targetUser.following.includes(this._id)) {
       this.twins.push(userId);
       targetUser.twins.push(this._id);
-      await targetUser.save();
-      await this.save();
+      await targetUser.save({ validateBeforeSave: false });
+      await this.save({ validateBeforeSave: false });
     } else {
-      await targetUser.save();
+      await targetUser.save({ validateBeforeSave: false });
     }
   }
   
@@ -698,13 +633,13 @@ UserSchema.methods.unfollow = async function(userId) {
   
   this.following = this.following.filter(id => id.toString() !== userId.toString());
   this.twins = this.twins.filter(id => id.toString() !== userId.toString());
-  await this.save();
+  await this.save({ validateBeforeSave: false });
   
   const targetUser = await mongoose.model('User').findById(userId);
   if (targetUser) {
     targetUser.followers = targetUser.followers.filter(id => id.toString() !== this._id.toString());
     targetUser.twins = targetUser.twins.filter(id => id.toString() !== this._id.toString());
-    await targetUser.save();
+    await targetUser.save({ validateBeforeSave: false });
   }
   
   return { success: true, message: 'Unfollowed successfully' };
@@ -729,6 +664,11 @@ UserSchema.methods.isTwin = function(userId) {
   return this.twins.some(id => id.toString() === userId.toString());
 };
 
+/*
+========================================
+CHECK LIVE QUALIFICATION - FIXED
+========================================
+*/
 UserSchema.methods.checkLiveQualification = async function () {
   const Video = mongoose.model('Video');
   const now = new Date();
@@ -763,8 +703,9 @@ UserSchema.methods.checkLiveQualification = async function () {
     return { qualified: false, reason: 'account_age', days: accountAge };
   }
 
+  // FIXED: Changed from 'user' to 'creator'
   const videos = await Video.find({
-    user: this._id,
+    creator: this._id,
     approved: true,
     isDeleted: false
   }).select('views');
@@ -831,7 +772,29 @@ UserSchema.methods.addLiveStrike = async function (reason, issuedBy = null) {
   return this;
 };
 
+UserSchema.methods.removeLiveStrike = async function (strikeId) {
+  const strikeIndex = this.liveStrikes.findIndex(
+    strike => strike._id.toString() === strikeId
+  );
+
+  if (strikeIndex === -1) {
+    throw new Error('Strike not found');
+  }
+
+  const removedStrike = this.liveStrikes[strikeIndex];
+  this.liveStrikes.splice(strikeIndex, 1);
+  
+  await this.save();
+  return removedStrike;
+};
+
 UserSchema.methods.getLiveStrikeCount = function () {
+  const now = new Date();
+  const nineMonthsAgo = new Date(now.getTime() - (9 * 30 * 24 * 60 * 60 * 1000));
+  return this.liveStrikes.filter(s => new Date(s.date) > nineMonthsAgo).length;
+};
+
+UserSchema.methods.getActiveStrikeCount = function () {
   const now = new Date();
   const nineMonthsAgo = new Date(now.getTime() - (9 * 30 * 24 * 60 * 60 * 1000));
   return this.liveStrikes.filter(s => new Date(s.date) > nineMonthsAgo).length;

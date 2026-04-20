@@ -1,38 +1,41 @@
-/**
- * File: backend/routes/followRoutes.js
- * Description: Routes for follow/unfollow functionality
- */
-
 const express = require('express');
 const router = express.Router();
-const {
-  followUser,
-  unfollowUser,
-  getFollowers,
-  getFollowing,
-  getTwins,
-  checkFollowStatus,
-  getFollowSuggestions
-} = require('../controllers/followController');
 const { protect } = require('../middleware/authMiddleware');
+const commentController = require('../controllers/commentController');
 
-// All routes are protected except viewing followers/following (which have privacy checks)
-router.use(protect);
+// --------------------------
+// GET COMMENTS FOR VIDEO
+// --------------------------
+router.get('/video/:videoId', commentController.getVideoComments);
 
-// Follow suggestions
-router.get('/suggestions', getFollowSuggestions);
+// --------------------------
+// ADD COMMENT TO VIDEO (requires auth)
+// --------------------------
+router.post('/:videoId', protect, commentController.addComment);
 
-// Check follow status with a specific user
-router.get('/:userId/follow-status', checkFollowStatus);
+// --------------------------
+// ADD REPLY TO A COMMENT (requires auth)
+// --------------------------
+router.post('/reply/:commentId', protect, commentController.addReply);
 
-// Follow/unfollow
-router.route('/:userId/follow')
-  .post(followUser)
-  .delete(unfollowUser);
+// --------------------------
+// GET REPLIES FOR A COMMENT
+// --------------------------
+router.get('/replies/:commentId', commentController.getReplies);
 
-// Get followers/following/twins
-router.get('/:userId/followers', getFollowers);
-router.get('/:userId/following', getFollowing);
-router.get('/:userId/twins', getTwins);
+// --------------------------
+// EDIT COMMENT (requires auth)
+// --------------------------
+router.put('/:commentId', protect, commentController.editComment);
+
+// --------------------------
+// DELETE COMMENT (requires auth)
+// --------------------------
+router.delete('/:commentId', protect, commentController.deleteComment);
+
+// --------------------------
+// LIKE OR UNLIKE COMMENT (requires auth)
+// --------------------------
+router.post('/:commentId/like', protect, commentController.likeComment);
 
 module.exports = router;

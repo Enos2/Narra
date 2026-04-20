@@ -2,13 +2,17 @@
  * File: backend/controllers/videoController.js
  * Description: Handles all video operations – upload, watch, purchase, edit,
  * admin moderation, shadow ban, RBAC enforcement, age restrictions, and paid access.
- * FULLY UPDATED: Fixed authentication checks for video access
+ * FULLY UPDATED: Added like/dislike, share tracking, and improved comment handling
+ * UPDATED: Added getRecommendedVideos function and ObjectId validation
+ * UPDATED: Added notification calls for upload, approval, rejection, removal, restore
  */
 
 const Video = require('../models/Video');
 const User = require('../models/User');
 const AdminActionLog = require('../models/AdminActionLog');
+const History = require('../models/History');
 const mongoose = require('mongoose');
+const NotificationService = require('../services/notificationService');
 
 /**
  * --------------------------
@@ -68,6 +72,15 @@ const uploadVideo = async (req, res) => {
       };
     } catch (parseErr) {
       console.error('Parse error:', parseErr);
+      
+      // Send upload failure notification for parsing error
+      await NotificationService.notifyUploadFailure(
+        req.user._id,
+        title || 'your video',
+        'invalid_format',
+        'Invalid JSON format in form fields'
+      );
+      
       return res.status(400).json({ 
         success: false, 
         message: 'Invalid JSON format in one or more fields' 
@@ -77,6 +90,14 @@ const uploadVideo = async (req, res) => {
     // Validate required fields
     if (!title || !ageRating) {
       console.log('ERROR: Missing required fields');
+      
+      await NotificationService.notifyUploadFailure(
+        req.user._id,
+        'your video',
+        'missing_fields',
+        'Title and age rating are required'
+      );
+      
       return res.status(400).json({ 
         success: false, 
         message: 'Title and age rating are required' 
@@ -86,6 +107,13 @@ const uploadVideo = async (req, res) => {
     // Validate series structure
     if (type === 'series') {
       if (!parsedSeasons || !Array.isArray(parsedSeasons) || parsedSeasons.length === 0) {
+        await NotificationService.notifyUploadFailure(
+          req.user._id,
+          title,
+          'missing_fields',
+          'Series must have at least one season'
+        );
+        
         return res.status(400).json({ 
           success: false, 
           message: 'Series must have at least one season' 
@@ -96,6 +124,14 @@ const uploadVideo = async (req, res) => {
     // Check for required files
     if (!req.files || !req.files.thumbnail) {
       console.log('ERROR: No thumbnail file');
+      
+      await NotificationService.notifyUploadFailure(
+        req.user._id,
+        title || 'your video',
+        'no_thumbnail',
+        'Thumbnail is required for video upload'
+      );
+      
       return res.status(400).json({ 
         success: false, 
         message: 'Thumbnail is required' 
@@ -104,6 +140,14 @@ const uploadVideo = async (req, res) => {
 
     if (type === 'movie' && (!req.files.video || !req.files.video[0])) {
       console.log('ERROR: No video file for movie');
+      
+      await NotificationService.notifyUploadFailure(
+        req.user._id,
+        title,
+        'missing_fields',
+        'Video file is required for movies'
+      );
+      
       return res.status(400).json({ 
         success: false, 
         message: 'Video file is required for movies' 
@@ -147,7 +191,6 @@ const uploadVideo = async (req, res) => {
       dislikes: [],
       ratings: [],
       averageRating: 0,
-      // CRITICAL FIX: Explicitly set status to pending
       status: 'pending',
       approved: false,
       rejected: false,
@@ -241,26 +284,52 @@ const uploadVideo = async (req, res) => {
 
     let video;
     try {
-      // Use the static createVideo method which sets status to pending
       video = await Video.createVideo(videoData);
       console.log('✅ Video created successfully:', video._id);
       console.log('   Video status:', video.status);
       console.log('   Creator ID:', video.creator);
+      
+      // ✅ Send upload success notification
+      await NotificationService.notifyUploadSuccess(
+        req.user._id,
+        video.title,
+        video._id
+      );
+      
     } catch (createErr) {
       console.error('❌ Error creating video:', createErr);
+      
+      let errorReason = 'unknown';
+      let errorMessage = createErr.message;
       
       if (createErr.name === 'ValidationError') {
         const errors = Object.values(createErr.errors).map(e => e.message);
         console.error('Validation errors:', errors);
+        errorReason = 'validation_failed';
+        errorMessage = errors.join(', ');
+      } else if (createErr.code === 11000) {
+        console.error('Duplicate key error');
+        errorReason = 'duplicate';
+        errorMessage = 'A video with this title already exists';
+      }
+      
+      // Send upload failure notification
+      await NotificationService.notifyUploadFailure(
+        req.user._id,
+        title || 'your video',
+        errorReason,
+        errorMessage
+      );
+      
+      if (createErr.name === 'ValidationError') {
         return res.status(400).json({
           success: false,
           message: 'Video validation failed',
-          errors: errors
+          errors: Object.values(createErr.errors).map(e => e.message)
         });
       }
       
       if (createErr.code === 11000) {
-        console.error('Duplicate key error');
         return res.status(400).json({ 
           success: false, 
           message: 'Duplicate video detected' 
@@ -288,6 +357,16 @@ const uploadVideo = async (req, res) => {
     console.error('Error name:', err.name);
     console.error('Error message:', err.message);
     console.error('Full error:', err);
+    
+    // Send upload failure notification for unexpected errors
+    if (req.user && req.user._id) {
+      await NotificationService.notifyUploadFailure(
+        req.user._id,
+        req.body.title || 'your video',
+        'server_error',
+        err.message
+      );
+    }
     
     if (err.name === 'ValidationError') {
       const messages = Object.values(err.errors).map(error => error.message);
@@ -336,11 +415,10 @@ const getVideoFeed = async (req, res) => {
 
     // CRITICAL FIX: For unauthenticated users, only show free, public videos
     if (!req.user) {
-      query.isPaid = false;      // Only free videos
-      query.isPrivate = false;    // Only public videos
+      query.isPaid = false;
+      query.isPrivate = false;
     }
 
-    // If userId is provided, filter by creator
     if (userId) {
       query.creator = userId;
     }
@@ -361,7 +439,6 @@ const getVideoFeed = async (req, res) => {
       ];
     }
 
-    // Handle scheduled release dates - only show if release date has passed
     query.$or = [
       { releaseOption: 'immediate' },
       { 
@@ -393,8 +470,8 @@ const getVideoFeed = async (req, res) => {
           total + (season.episodes?.reduce((epTotal, ep) => 
             epTotal + (ep.duration || 0), 0) || 0), 0) || 0 : 
         video.duration || 0,
-      isAccessible: true, // All videos in feed are accessible
-      requiresAuth: !req.user && video.isPaid, // Flag for frontend
+      isAccessible: true,
+      requiresAuth: !req.user && video.isPaid,
       isFree: !video.isPaid
     }));
 
@@ -420,13 +497,397 @@ const getVideoFeed = async (req, res) => {
 
 /**
  * --------------------------
- * GET VIDEOS BY STATUS (for user dashboard) - IMPROVED with userId filtering
+ * GET RECOMMENDED VIDEOS - NEW FUNCTION
+ * --------------------------
+ */
+const getRecommendedVideos = async (req, res) => {
+  try {
+    const { exclude, limit = 10 } = req.query;
+    
+    console.log('Getting recommended videos - exclude:', exclude, 'limit:', limit);
+    
+    const query = { 
+      status: 'released',
+      isDeleted: false,
+      isShadowBanned: false
+    };
+    
+    if (exclude && mongoose.Types.ObjectId.isValid(exclude)) {
+      query._id = { $ne: exclude };
+    }
+    
+    if (!req.user) {
+      query.isPaid = false;
+      query.isPrivate = false;
+    }
+    
+    const videos = await Video.find(query)
+      .populate('creator', 'name email avatar isVerified')
+      .sort({ views: -1, uploadedAt: -1 })
+      .limit(parseInt(limit))
+      .lean();
+    
+    const formattedVideos = videos.map(video => ({
+      _id: video._id,
+      title: video.title,
+      description: video.description,
+      thumbnailUrl: video.thumbnailUrl,
+      views: video.views,
+      uploadedAt: video.uploadedAt,
+      duration: video.duration,
+      creator: video.creator,
+      type: video.type,
+      isPaid: video.isPaid,
+      ageRating: video.ageRating
+    }));
+    
+    console.log(`Found ${formattedVideos.length} recommended videos`);
+    
+    res.json({
+      success: true,
+      videos: formattedVideos,
+      count: formattedVideos.length
+    });
+  } catch (err) {
+    console.error('Get recommended videos error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch recommended videos',
+      videos: []
+    });
+  }
+};
+
+/**
+ * ========================================
+ * LIKE / DISLIKE FUNCTIONS
+ * ========================================
+ */
+
+const likeVideo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid video ID format' });
+    }
+
+    const video = await Video.findById(id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    if (video.status !== 'released' || video.isDeleted) {
+      return res.status(403).json({ success: false, message: 'Video not available' });
+    }
+
+    const alreadyLiked = video.likes.some(id => id.toString() === userId.toString());
+    
+    if (alreadyLiked) {
+      video.likes = video.likes.filter(id => id.toString() !== userId.toString());
+      await video.save();
+      
+      await User.findByIdAndUpdate(userId, {
+        $pull: { likedVideos: id }
+      });
+
+      return res.json({
+        success: true,
+        action: 'unliked',
+        message: 'Removed like',
+        likes: video.likes.length,
+        dislikes: video.dislikes.length
+      });
+    }
+
+    const alreadyDisliked = video.dislikes.some(id => id.toString() === userId.toString());
+    if (alreadyDisliked) {
+      video.dislikes = video.dislikes.filter(id => id.toString() !== userId.toString());
+    }
+
+    video.likes.push(userId);
+    await video.save();
+
+    await User.findByIdAndUpdate(userId, {
+      $addToSet: { likedVideos: id }
+    });
+
+    res.json({
+      success: true,
+      action: 'liked',
+      message: 'Video liked',
+      likes: video.likes.length,
+      dislikes: video.dislikes.length
+    });
+  } catch (err) {
+    console.error('Like video error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to like video',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+};
+
+const dislikeVideo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid video ID format' });
+    }
+
+    const video = await Video.findById(id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    if (video.status !== 'released' || video.isDeleted) {
+      return res.status(403).json({ success: false, message: 'Video not available' });
+    }
+
+    const alreadyDisliked = video.dislikes.some(id => id.toString() === userId.toString());
+    
+    if (alreadyDisliked) {
+      video.dislikes = video.dislikes.filter(id => id.toString() !== userId.toString());
+      await video.save();
+
+      return res.json({
+        success: true,
+        action: 'undisliked',
+        message: 'Removed dislike',
+        likes: video.likes.length,
+        dislikes: video.dislikes.length
+      });
+    }
+
+    const alreadyLiked = video.likes.some(id => id.toString() === userId.toString());
+    if (alreadyLiked) {
+      video.likes = video.likes.filter(id => id.toString() !== userId.toString());
+      
+      await User.findByIdAndUpdate(userId, {
+        $pull: { likedVideos: id }
+      });
+    }
+
+    video.dislikes.push(userId);
+    await video.save();
+
+    res.json({
+      success: true,
+      action: 'disliked',
+      message: 'Video disliked',
+      likes: video.likes.length,
+      dislikes: video.dislikes.length
+    });
+  } catch (err) {
+    console.error('Dislike video error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to dislike video',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+};
+
+const getVideoInteractionStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid video ID format' });
+    }
+
+    const video = await Video.findById(id).select('likes dislikes');
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    const hasLiked = video.likes.some(uid => uid.toString() === userId.toString());
+    const hasDisliked = video.dislikes.some(uid => uid.toString() === userId.toString());
+
+    res.json({
+      success: true,
+      hasLiked,
+      hasDisliked,
+      likesCount: video.likes.length,
+      dislikesCount: video.dislikes.length
+    });
+  } catch (err) {
+    console.error('Get interaction status error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get interaction status'
+    });
+  }
+};
+
+/**
+ * ========================================
+ * SHARE TRACKING FUNCTION
+ * ========================================
+ */
+
+const trackShare = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { platform } = req.body;
+    const userId = req.user?._id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid video ID format' });
+    }
+
+    const video = await Video.findById(id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    try {
+      await AdminActionLog.create({
+        admin: userId || null,
+        action: 'SHARE_VIDEO',
+        targetType: 'Video',
+        targetId: video._id,
+        details: { 
+          title: video.title, 
+          platform: platform || 'unknown',
+          sharedBy: userId || 'anonymous'
+        }
+      });
+    } catch (logErr) {
+      console.error('Failed to log share:', logErr);
+    }
+
+    console.log(`📤 Video shared: ${video.title} on ${platform || 'unknown'} by ${userId || 'anonymous'}`);
+
+    res.json({
+      success: true,
+      message: 'Share tracked successfully'
+    });
+  } catch (err) {
+    console.error('Track share error:', err);
+    res.json({
+      success: true,
+      message: 'Share tracked'
+    });
+  }
+};
+
+/**
+ * ========================================
+ * WATCH HISTORY WITH RESUME
+ * ========================================
+ */
+
+const recordWatchProgress = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { progress, duration, seasonNumber, episodeNumber } = req.body;
+    const userId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid video ID format' });
+    }
+
+    const percentWatched = duration > 0 ? (progress / duration) * 100 : 0;
+    const completed = percentWatched >= 95;
+
+    let history = await History.findOne({
+      user: userId,
+      video: id,
+      seasonNumber: seasonNumber || null,
+      episodeNumber: episodeNumber || null,
+    });
+
+    if (history) {
+      history.progress = progress;
+      history.duration = duration;
+      history.percentWatched = percentWatched;
+      history.completed = completed;
+      history.lastWatchedAt = new Date();
+      history.watchCount += 1;
+    } else {
+      history = new History({
+        user: userId,
+        video: id,
+        seasonNumber: seasonNumber || null,
+        episodeNumber: episodeNumber || null,
+        progress,
+        duration,
+        percentWatched,
+        completed,
+        lastWatchedAt: new Date(),
+        watchCount: 1,
+      });
+    }
+
+    await history.save();
+
+    res.json({
+      success: true,
+      message: 'Progress recorded',
+      shouldResume: history.shouldResume(),
+      percentWatched: history.percentWatched
+    });
+  } catch (err) {
+    console.error('Record watch progress error:', err);
+    res.json({ success: true, message: 'Progress recorded' });
+  }
+};
+
+const getResumePosition = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { seasonNumber, episodeNumber } = req.query;
+    const userId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.json({ success: true, resumePosition: 0, shouldResume: false });
+    }
+
+    const history = await History.findOne({
+      user: userId,
+      video: id,
+      seasonNumber: seasonNumber || null,
+      episodeNumber: episodeNumber || null,
+    });
+
+    if (!history || history.completed || history.percentWatched < 5) {
+      return res.json({
+        success: true,
+        hasHistory: false,
+        resumePosition: 0,
+        shouldResume: false
+      });
+    }
+
+    res.json({
+      success: true,
+      hasHistory: true,
+      resumePosition: history.progress,
+      percentWatched: history.percentWatched,
+      shouldResume: history.shouldResume(),
+      lastWatchedAt: history.lastWatchedAt
+    });
+  } catch (err) {
+    console.error('Get resume position error:', err);
+    res.json({ success: true, resumePosition: 0, shouldResume: false });
+  }
+};
+
+/**
+ * --------------------------
+ * GET VIDEOS BY STATUS (for user dashboard)
  * --------------------------
  */
 const getVideosByStatus = async (req, res) => {
   try {
     const { status } = req.params;
-    const { userId } = req.query; // Get userId from query params
+    const { userId } = req.query;
     
     console.log('========================================');
     console.log('📹 getVideosByStatus CALLED');
@@ -435,7 +896,6 @@ const getVideosByStatus = async (req, res) => {
     console.log('   Auth user ID:', req.user?._id);
     console.log('========================================');
 
-    // Validate status parameter
     if (!['pending', 'approved', 'released', 'rejected'].includes(status)) {
       return res.status(400).json({ 
         success: false, 
@@ -444,7 +904,6 @@ const getVideosByStatus = async (req, res) => {
       });
     }
 
-    // Determine which userId to use (query param takes precedence, fallback to auth user)
     const targetUserId = userId || (req.user?._id?.toString());
     
     if (!targetUserId) {
@@ -458,12 +917,10 @@ const getVideosByStatus = async (req, res) => {
 
     console.log(`   Target User ID: ${targetUserId}`);
 
-    // Try multiple approaches to find videos
     let videos = [];
     let approach = '';
 
     try {
-      // Approach 1: Direct ObjectId comparison (works if stored as ObjectId)
       approach = 'ObjectId comparison';
       videos = await Video.find({ 
         creator: targetUserId, 
@@ -475,9 +932,7 @@ const getVideosByStatus = async (req, res) => {
       
       console.log(`✅ Approach 1 (${approach}) found ${videos.length} ${status} videos`);
       
-      // If no videos found, try string comparison
       if (videos.length === 0) {
-        // Approach 2: String comparison using $expr
         approach = 'String comparison with $expr';
         videos = await Video.find({ 
           $expr: { $eq: [{ $toString: "$creator" }, targetUserId] },
@@ -490,12 +945,10 @@ const getVideosByStatus = async (req, res) => {
         console.log(`✅ Approach 2 (${approach}) found ${videos.length} ${status} videos`);
       }
       
-      // If still no videos, try a more flexible approach
       if (videos.length === 0) {
         approach = 'Manual filtering';
         console.log(`⚠️ No videos found with direct queries, trying manual check...`);
         
-        // Approach 3: Get all videos with this status and manually filter
         const allVideosWithStatus = await Video.find({ 
           status: status,
           isDeleted: false 
@@ -503,9 +956,7 @@ const getVideosByStatus = async (req, res) => {
         .populate('creator', 'name email avatar')
         .sort({ createdAt: -1, uploadedAt: -1 });
         
-        // Manually filter by creator ID
         videos = allVideosWithStatus.filter(video => {
-          // Check various possible formats of creator field
           const videoCreatorId = 
             video.creator?._id?.toString() || 
             video.creator?.toString() || 
@@ -523,14 +974,12 @@ const getVideosByStatus = async (req, res) => {
         console.log(`✅ Approach 3 (${approach}) found ${videos.length} ${status} videos`);
       }
       
-      // Log results
       if (videos.length > 0) {
         console.log(`   First video: "${videos[0].title}" (ID: ${videos[0]._id})`);
         console.log(`   Creator: ${videos[0].creator?.name || 'Unknown'}`);
       } else {
         console.log(`   No ${status} videos found for user ${targetUserId}`);
         
-        // Debug: Check if user has any videos at all
         const anyVideos = await Video.find({ 
           isDeleted: false 
         }).limit(5).lean();
@@ -583,12 +1032,12 @@ const getVideosByStatus = async (req, res) => {
 
 /**
  * --------------------------
- * GET APPROVED VIDEOS FOR RELEASE - IMPROVED with userId filtering
+ * GET APPROVED VIDEOS FOR RELEASE
  * --------------------------
  */
 const getApprovedForRelease = async (req, res) => {
   try {
-    const { userId } = req.query; // Get userId from query params
+    const { userId } = req.query;
     
     console.log('========================================');
     console.log('📹 getApprovedForRelease CALLED');
@@ -596,7 +1045,6 @@ const getApprovedForRelease = async (req, res) => {
     console.log('   Auth user ID:', req.user?._id);
     console.log('========================================');
 
-    // Determine which userId to use (query param takes precedence, fallback to auth user)
     const targetUserId = userId || (req.user?._id?.toString());
     
     if (!targetUserId) {
@@ -610,10 +1058,8 @@ const getApprovedForRelease = async (req, res) => {
 
     console.log(`   Target User ID: ${targetUserId}`);
 
-    // Try multiple approaches
     let videos = [];
 
-    // Approach 1: ObjectId comparison
     videos = await Video.find({
       creator: targetUserId,
       status: 'approved',
@@ -623,7 +1069,6 @@ const getApprovedForRelease = async (req, res) => {
     .sort({ approvedAt: -1 })
     .lean();
 
-    // If no videos, try string comparison
     if (videos.length === 0) {
       videos = await Video.find({
         $expr: { $eq: [{ $toString: "$creator" }, targetUserId] },
@@ -637,7 +1082,6 @@ const getApprovedForRelease = async (req, res) => {
 
     console.log(`Found ${videos.length} approved videos for release for user ${targetUserId}`);
     
-    // Log first video to debug
     if (videos.length > 0) {
       console.log('Sample approved video creator:', videos[0].creator);
     }
@@ -666,7 +1110,7 @@ const getApprovedForRelease = async (req, res) => {
 
 /**
  * --------------------------
- * FIXED: RELEASE VIDEO - Now properly sets status to 'released'
+ * RELEASE VIDEO
  * --------------------------
  */
 const releaseVideo = async (req, res) => {
@@ -678,12 +1122,10 @@ const releaseVideo = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
-    // Check if user is the creator
     if (video.creator.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: 'Not authorized to release this video' });
     }
 
-    // Check if video is approved
     if (!video.approved || video.status !== 'approved') {
       return res.status(400).json({
         success: false,
@@ -691,7 +1133,6 @@ const releaseVideo = async (req, res) => {
       });
     }
 
-    // Check if already released
     if (video.status === 'released') {
       return res.status(400).json({
         success: false,
@@ -706,10 +1147,9 @@ const releaseVideo = async (req, res) => {
     console.log('Before release - released:', video.released);
     console.log('Before release - approved:', video.approved);
 
-    // CRITICAL FIX: Set ALL status fields consistently
     video.status = 'released';
     video.released = true;
-    video.approved = true; // Keep approved true
+    video.approved = true;
     video.rejected = false;
     video.releasedBy = req.user._id;
     video.releasedAt = new Date();
@@ -718,7 +1158,6 @@ const releaseVideo = async (req, res) => {
     console.log('After setting fields - status:', video.status);
     console.log('After setting fields - released:', video.released);
 
-    // Update price if provided
     if (price !== undefined) {
       video.price = parseFloat(price);
       video.releasePrice = parseFloat(price);
@@ -726,7 +1165,6 @@ const releaseVideo = async (req, res) => {
       video.releaseCurrency = currency;
     }
 
-    // Handle series episodes
     if (video.type === 'series') {
       if (releaseAllEpisodes) {
         video.seasons.forEach(season => {
@@ -740,13 +1178,10 @@ const releaseVideo = async (req, res) => {
           }
         });
       }
-      // If not releasing all episodes, keep them unpublished
     }
 
-    // Save with validation to ensure all fields are updated
     await video.save({ validateBeforeSave: true });
 
-    // Fetch the updated video to verify
     const afterSave = await Video.findById(video._id);
     console.log('After save from DB - status:', afterSave.status);
     console.log('After save from DB - released:', afterSave.released);
@@ -875,7 +1310,7 @@ const releaseSeriesEpisode = async (req, res) => {
 
 /**
  * --------------------------
- * CHECK VIDEO ACCESS - FIXED: Better authentication handling
+ * CHECK VIDEO ACCESS
  * --------------------------
  */
 const checkVideoAccess = async (req, res) => {
@@ -884,7 +1319,6 @@ const checkVideoAccess = async (req, res) => {
     if (!video || video.isDeleted || video.status !== 'released' || video.isShadowBanned)
       return res.status(404).json({ success: false, message: 'Video unavailable' });
 
-    // If no user, check if video is free and public
     if (!req.user) {
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
@@ -956,7 +1390,7 @@ const checkVideoAccess = async (req, res) => {
 
 /**
  * --------------------------
- * WATCH VIDEO - FIXED: Better authentication handling
+ * WATCH VIDEO
  * --------------------------
  */
 const watchVideo = async (req, res) => {
@@ -967,14 +1401,11 @@ const watchVideo = async (req, res) => {
     if (!video || video.isDeleted || video.status !== 'released' || video.isShadowBanned)
       return res.status(404).json({ success: false, message: 'Video unavailable' });
 
-    // Check if user is authenticated
     if (!req.user) {
-      // Allow watching only if video is free and public
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
       
       if (isFreeAndPublic) {
-        // Increment view count
         video.views += 1;
         await video.save();
         
@@ -1308,6 +1739,23 @@ const updateVideoStatus = async (req, res) => {
 
     await video.save();
     
+    // Send notification based on status
+    if (status === 'approved') {
+      await NotificationService.notifyVideoApproved(
+        video.creator,
+        video.title,
+        video._id,
+        req.user._id
+      );
+    } else if (status === 'rejected') {
+      await NotificationService.notifyVideoRejected(
+        video.creator,
+        video.title,
+        video._id,
+        rejectionReason || 'No reason provided'
+      );
+    }
+    
     res.json({ 
       success: true, 
       message: `Video ${status}. Creator can now release it.`,
@@ -1387,12 +1835,21 @@ const deleteVideo = async (req, res) => {
 
 /**
  * --------------------------
- * GET VIDEO BY ID - FIXED: Proper authentication checks
+ * GET VIDEO BY ID
  * --------------------------
  */
 const getVideoById = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id)
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid video ID format' 
+      });
+    }
+    
+    const video = await Video.findById(id)
       .populate('creator', 'name email avatar isVerified')
       .populate('likes', 'name email')
       .populate('dislikes', 'name email')
@@ -1405,7 +1862,6 @@ const getVideoById = async (req, res) => {
     const isAdmin = req.user && ['superadmin','platformadmin','supportadmin'].includes(req.user.role);
     const isCreator = req.user && video.creator._id.toString() === req.user._id.toString();
 
-    // CRITICAL FIX: If video is not released, only admin/creator can see it
     if (video.status !== 'released') {
       if (!isAdmin && !isCreator) {
         return res.status(403).json({ 
@@ -1417,17 +1873,14 @@ const getVideoById = async (req, res) => {
       }
     }
 
-    // If video is private, only creator can see it
     if (video.isPrivate && !isCreator && !isAdmin) {
       return res.status(403).json({ success: false, message: 'Video is private' });
     }
 
-    // If video is shadow banned, only admin can see it
     if (video.isShadowBanned && !isAdmin) {
       return res.status(403).json({ success: false, message: 'Video unavailable' });
     }
 
-    // Check scheduled release date for unauthenticated users
     if (!req.user && video.releaseOption === 'schedule' && video.scheduledReleaseDate) {
       if (new Date() < video.scheduledReleaseDate) {
         return res.status(403).json({ 
@@ -1437,9 +1890,7 @@ const getVideoById = async (req, res) => {
       }
     }
 
-    // For unauthenticated users, only show free public videos
     if (!req.user) {
-      // Allow viewing details only if video is free and public
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
       
@@ -1489,7 +1940,7 @@ const getVideoById = async (req, res) => {
 
 /**
  * --------------------------
- * GET SERIES EPISODE - FIXED: Proper authentication checks
+ * GET SERIES EPISODE
  * --------------------------
  */
 const getSeriesEpisode = async (req, res) => {
@@ -1517,9 +1968,7 @@ const getSeriesEpisode = async (req, res) => {
     const isAdmin = req.user && ['superadmin','platformadmin','supportadmin'].includes(req.user.role);
     const isCreator = req.user && video.creator._id.toString() === req.user._id.toString();
 
-    // CRITICAL FIX: Check access for unauthenticated users
     if (!req.user) {
-      // Allow viewing only if video is released, season/episode published, and free/public
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         video.status === 'released' && season.isPublished && episode.published &&
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
@@ -1532,7 +1981,6 @@ const getSeriesEpisode = async (req, res) => {
         });
       }
     } else {
-      // Check for authenticated users
       if (!isAdmin && !isCreator) {
         if (video.status !== 'released' || !season.isPublished || !episode.published) {
           return res.status(403).json({ 
@@ -1611,7 +2059,7 @@ const getPendingVideosForAdmin = async (req, res) => {
       tags: video.tags || [],
       language: video.language,
       creator: video.creator,
-      uploadedBy: video.creator, // ADDED: Map creator to uploadedBy for frontend compatibility
+      uploadedBy: video.creator,
       uploadedAt: video.uploadedAt,
       status: video.status,
       approved: video.approved,
@@ -1647,7 +2095,7 @@ const getPendingVideosForAdmin = async (req, res) => {
 
 /**
  * --------------------------
- * GET VIDEOS FOR ADMIN MODERATION WITH SEARCH & FILTERS - FIXED with uploadedBy field
+ * GET VIDEOS FOR ADMIN MODERATION WITH SEARCH & FILTERS
  * --------------------------
  */
 const getVideosForAdminModeration = async (req, res) => {
@@ -1679,7 +2127,6 @@ const getVideosForAdminModeration = async (req, res) => {
 
     const query = { isDeleted: false };
 
-    // FIXED: If status is 'all', show ALL videos regardless of status
     if (status !== 'all') {
       query.status = status;
     }
@@ -1712,8 +2159,9 @@ const getVideosForAdminModeration = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // FIXED: Populate creator with firstName and lastName
     const videos = await Video.find(query)
-      .populate('creator', 'name email avatar isVerified')
+      .populate('creator', 'firstName lastName name email username avatar isVerified')
       .populate('approvedBy', 'name email')
       .populate('releasedBy', 'name email')
       .sort(sortOptions)
@@ -1725,6 +2173,7 @@ const getVideosForAdminModeration = async (req, res) => {
 
     const total = await Video.countDocuments(query);
 
+    // FIXED: Format uploadedBy properly with firstName and lastName
     const formattedVideos = videos.map(video => ({
       _id: video._id,
       title: video.title,
@@ -1738,7 +2187,16 @@ const getVideosForAdminModeration = async (req, res) => {
       tags: video.tags || [],
       language: video.language,
       creator: video.creator,
-      uploadedBy: video.creator, // CRITICAL FIX: Map creator to uploadedBy for frontend compatibility
+      uploadedBy: video.creator ? {
+        _id: video.creator._id,
+        firstName: video.creator.firstName,
+        lastName: video.creator.lastName,
+        name: video.creator.name,
+        email: video.creator.email,
+        username: video.creator.username,
+        avatar: video.creator.avatar,
+        isVerified: video.creator.isVerified
+      } : null,
       uploadedAt: video.uploadedAt,
       status: video.status,
       approved: video.approved,
@@ -1927,6 +2385,14 @@ const adminApproveVideo = async (req, res) => {
       console.error('Failed to log admin action:', logErr);
     }
 
+    // ✅ Send notification to creator
+    await NotificationService.notifyVideoApproved(
+      video.creator,
+      video.title,
+      video._id,
+      req.user._id
+    );
+
     console.log(`✅ Video approved: ${video._id} - Status now: ${video.status}`);
 
     res.json({
@@ -2018,6 +2484,14 @@ const adminRejectVideo = async (req, res) => {
       console.error('Failed to log admin action:', logErr);
     }
 
+    // ✅ Send notification to creator
+    await NotificationService.notifyVideoRejected(
+      video.creator,
+      video.title,
+      video._id,
+      rejectionReason
+    );
+
     res.json({
       success: true,
       message: 'Video rejected successfully',
@@ -2089,6 +2563,14 @@ const adminRemoveVideo = async (req, res) => {
       console.error('Failed to log admin action:', logErr);
     }
 
+    // ✅ Send notification to creator
+    await NotificationService.notifyVideoRemoved(
+      video.creator,
+      video.title,
+      video._id,
+      req.body.reason || 'Removed by admin'
+    );
+
     res.json({
       success: true,
       message: 'Video removed successfully',
@@ -2140,7 +2622,7 @@ const adminRestoreVideo = async (req, res) => {
 
     // Restore
     video.isDeleted = false;
-    video.status = 'pending'; // Reset to pending for review
+    video.status = 'pending';
     video.removedAt = null;
     video.removedBy = null;
 
@@ -2159,6 +2641,13 @@ const adminRestoreVideo = async (req, res) => {
     } catch (logErr) {
       console.error('Failed to log admin action:', logErr);
     }
+
+    // ✅ Send notification to creator
+    await NotificationService.notifyVideoRestored(
+      video.creator,
+      video.title,
+      video._id
+    );
 
     res.json({
       success: true,
@@ -2202,10 +2691,8 @@ const adminPermanentDeleteVideo = async (req, res) => {
       });
     }
 
-    // Permanently delete from database
     await Video.findByIdAndDelete(req.params.id);
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2279,7 +2766,6 @@ const adminRestrictVideo = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2350,7 +2836,6 @@ const adminRemoveRestriction = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2429,7 +2914,6 @@ const adminFlagVideo = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2500,7 +2984,6 @@ const adminRemoveFlag = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2581,7 +3064,6 @@ const adminShadowBanVideo = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2655,7 +3137,6 @@ const adminRemoveShadowBan = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2691,15 +3172,10 @@ const adminRemoveShadowBan = async (req, res) => {
 
 /**
  * ================================
- * USER DELETE FUNCTIONS - NEW
+ * USER DELETE FUNCTIONS
  * ================================
  */
 
-/**
- * --------------------------
- * USER SOFT DELETE VIDEO - Regular users can soft delete their own videos
- * --------------------------
- */
 const userSoftDeleteVideo = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -2711,7 +3187,6 @@ const userSoftDeleteVideo = async (req, res) => {
       });
     }
 
-    // Check if user is the creator
     if (video.creator.toString() !== req.user._id.toString()) {
       return res.status(403).json({ 
         success: false, 
@@ -2719,7 +3194,6 @@ const userSoftDeleteVideo = async (req, res) => {
       });
     }
 
-    // Check if already deleted
     if (video.isDeleted) {
       return res.status(400).json({ 
         success: false, 
@@ -2727,10 +3201,8 @@ const userSoftDeleteVideo = async (req, res) => {
       });
     }
 
-    // Soft delete - set isDeleted flag and removedAt timestamp
     video.isDeleted = true;
     video.removedAt = new Date();
-    // Keep the original status for restoration reference
     video.previousStatus = video.status;
     video.status = 'removed';
 
@@ -2759,11 +3231,6 @@ const userSoftDeleteVideo = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * USER RESTORE VIDEO - Regular users can restore their own deleted videos
- * --------------------------
- */
 const userRestoreVideo = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -2775,7 +3242,6 @@ const userRestoreVideo = async (req, res) => {
       });
     }
 
-    // Check if user is the creator
     if (video.creator.toString() !== req.user._id.toString()) {
       return res.status(403).json({ 
         success: false, 
@@ -2783,7 +3249,6 @@ const userRestoreVideo = async (req, res) => {
       });
     }
 
-    // Check if video is actually deleted
     if (!video.isDeleted) {
       return res.status(400).json({ 
         success: false, 
@@ -2791,10 +3256,8 @@ const userRestoreVideo = async (req, res) => {
       });
     }
 
-    // Restore video
     video.isDeleted = false;
     video.removedAt = null;
-    // Restore previous status or set to pending
     video.status = video.previousStatus || 'pending';
     video.previousStatus = undefined;
 
@@ -2822,11 +3285,6 @@ const userRestoreVideo = async (req, res) => {
   }
 };
 
-/**
- * --------------------------
- * USER PERMANENT DELETE VIDEO - Users can permanently delete their own videos that are in trash
- * --------------------------
- */
 const userPermanentDeleteVideo = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -2838,7 +3296,6 @@ const userPermanentDeleteVideo = async (req, res) => {
       });
     }
 
-    // Check if user is the creator
     if (video.creator.toString() !== req.user._id.toString()) {
       return res.status(403).json({ 
         success: false, 
@@ -2846,7 +3303,6 @@ const userPermanentDeleteVideo = async (req, res) => {
       });
     }
 
-    // Check if video is in trash (soft deleted first)
     if (!video.isDeleted) {
       return res.status(400).json({ 
         success: false, 
@@ -2854,7 +3310,6 @@ const userPermanentDeleteVideo = async (req, res) => {
       });
     }
 
-    // Permanently delete from database
     await Video.findByIdAndDelete(req.params.id);
 
     console.log(`✅ User permanently deleted video: ${req.params.id} by user: ${req.user._id}`);
@@ -2875,12 +3330,14 @@ const userPermanentDeleteVideo = async (req, res) => {
 
 /**
  * --------------------------
- * EXPORT
+ * EXPORT - UPDATED with all functions
  * --------------------------
  */
 module.exports = {
+  // Core CRUD
   uploadVideo,
   getVideoFeed,
+  getRecommendedVideos,
   getVideosByStatus,
   getApprovedForRelease,
   releaseVideo,
@@ -2892,6 +3349,20 @@ module.exports = {
   purchaseVideo,
   rateVideo,
   editVideo,
+  
+  // Like/Dislike functions
+  likeVideo,
+  dislikeVideo,
+  getVideoInteractionStatus,
+  
+  // Share tracking
+  trackShare,
+  
+  // Watch history with resume
+  recordWatchProgress,
+  getResumePosition,
+  
+  // Admin moderation
   adminUpdateVideoFlags,
   updateVideoStatus,
   shadowBanVideo,
@@ -2910,7 +3381,8 @@ module.exports = {
   adminRemoveFlag,
   adminShadowBanVideo,
   adminRemoveShadowBan,
-  // NEW USER DELETE FUNCTIONS
+  
+  // User delete functions
   userSoftDeleteVideo,
   userRestoreVideo,
   userPermanentDeleteVideo

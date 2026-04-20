@@ -2,12 +2,14 @@
  * File: backend/controllers/userController.js
  * Description: User controller with all CRUD operations, follow functionality, and admin actions
  * FIXED: updateProfile returns proper user data with all fields
+ * UPDATED: Added notification calls for follow, ban, verify, deactivate, etc.
  */
 
 const User = require('../models/User');
 const Video = require('../models/Video');
 const Live = require('../models/Live');
 const mongoose = require('mongoose');
+const NotificationService = require('../services/notificationService');
 
 // ================================
 // PUBLIC ROUTES
@@ -75,7 +77,6 @@ exports.searchUsers = async (req, res) => {
       .skip(skip)
       .sort({ followerCount: -1 });
     
-    // Filter out private profiles for public search
     const filteredUsers = users.filter(user => 
       user.privacySettings?.profileVisibility !== 'private'
     );
@@ -147,7 +148,6 @@ exports.updateProfile = async (req, res) => {
       }
     });
     
-    // Check username uniqueness if being updated
     if (req.body.username && req.body.username !== req.user.username) {
       const existingUser = await User.findOne({ username: req.body.username.toLowerCase() });
       if (existingUser) {
@@ -156,7 +156,6 @@ exports.updateProfile = async (req, res) => {
       updates.username = req.body.username.toLowerCase();
     }
     
-    // Check email uniqueness if being updated
     if (req.body.email && req.body.email !== req.user.email) {
       const existingUser = await User.findOne({ email: req.body.email.toLowerCase() });
       if (existingUser) {
@@ -165,7 +164,6 @@ exports.updateProfile = async (req, res) => {
       updates.email = req.body.email.toLowerCase();
     }
     
-    // Handle password change if provided
     if (req.body.password) {
       if (!req.body.currentPassword) {
         return res.status(400).json({ success: false, message: 'Current password is required to change password' });
@@ -193,7 +191,6 @@ exports.updateProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
     
-    // Return complete user data
     res.status(200).json({ 
       success: true, 
       message: 'Profile updated successfully',
@@ -274,7 +271,7 @@ exports.getUploadStatus = async (req, res) => {
       { $group: { _id: null, total: { $sum: '$fileSize' } } }
     ]);
     
-    const quotaLimit = 10 * 1024 * 1024 * 1024; // 10GB
+    const quotaLimit = 10 * 1024 * 1024 * 1024;
     const used = totalStorageUsed[0]?.total || 0;
     
     res.status(200).json({
@@ -317,6 +314,15 @@ exports.followUser = async (req, res) => {
     
     const currentUser = await User.findById(req.user.id);
     const result = await currentUser.follow(userId);
+    
+    // ✅ Send notification to target user that someone followed them
+    if (result.success) {
+      await NotificationService.notifyNewFollower(
+        userId,
+        currentUser._id,
+        currentUser.name || currentUser.username
+      );
+    }
     
     res.status(200).json(result);
   } catch (error) {
@@ -637,7 +643,6 @@ exports.getUserById = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
     
-    // Check privacy settings
     if (user.privacySettings?.profileVisibility === 'private') {
       const isFollower = user.followers.some(f => f._id.toString() === req.user.id);
       if (!isFollower && req.user.id !== id) {
@@ -727,6 +732,13 @@ exports.banUser = async (req, res) => {
     await user.invalidateTokens();
     await user.save();
     
+    // ✅ Send notification to banned user
+    await NotificationService.notifyUserBanned(
+      user._id,
+      user.banReason,
+      req.user.email
+    );
+    
     res.status(200).json({ success: true, message: 'User banned successfully' });
   } catch (error) {
     console.error('Ban user error:', error);
@@ -755,6 +767,12 @@ exports.unbanUser = async (req, res) => {
     
     await user.save();
     
+    // ✅ Send notification to unbanned user
+    await NotificationService.notifyUserUnbanned(
+      user._id,
+      req.body.reason || 'Account reinstated'
+    );
+    
     res.status(200).json({ success: true, message: 'User unbanned successfully' });
   } catch (error) {
     console.error('Unban user error:', error);
@@ -782,6 +800,12 @@ exports.verifyUser = async (req, res) => {
     
     await user.save();
     
+    // ✅ Send notification to verified user
+    await NotificationService.notifyUserVerified(
+      user._id,
+      req.user.email
+    );
+    
     res.status(200).json({ success: true, message: 'User verified successfully' });
   } catch (error) {
     console.error('Verify user error:', error);
@@ -808,6 +832,16 @@ exports.unverifyUser = async (req, res) => {
     user.verifiedBy = null;
     
     await user.save();
+    
+    // ✅ Send notification to unverified user
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Verification Removed',
+      message: 'Your account verification has been removed. Please contact support if you believe this is an error.',
+      priority: 'high',
+      data: { unverifiedBy: req.user.email }
+    });
     
     res.status(200).json({ success: true, message: 'User unverified successfully' });
   } catch (error) {
@@ -841,6 +875,12 @@ exports.deactivateUser = async (req, res) => {
     await user.invalidateTokens();
     await user.save();
     
+    // ✅ Send notification to deactivated user
+    await NotificationService.notifyUserDeactivated(
+      user._id,
+      user.deactivationReason
+    );
+    
     res.status(200).json({ success: true, message: 'User deactivated successfully' });
   } catch (error) {
     console.error('Deactivate user error:', error);
@@ -870,6 +910,9 @@ exports.activateUser = async (req, res) => {
     user.adminDeactivationReason = null;
     
     await user.save();
+    
+    // ✅ Send notification to activated user
+    await NotificationService.notifyUserReactivated(user._id);
     
     res.status(200).json({ success: true, message: 'User activated successfully' });
   } catch (error) {

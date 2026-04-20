@@ -3,10 +3,14 @@
  * COMPLETE UPDATED VERSION - ALL FUNCTIONS INCLUDED
  * FIXED: Removed duplicate VIEW_MODERATION logging
  * ADDED: Login/Logout audit logging support
+ * ADDED: Notifications for video moderation actions
+ * ADDED: Audit logging for all video moderation actions
+ * FIXED: getAllUsers now includes approvedVideoCount, totalVideoViews, accountAgeDays, activeStrikes
  */
 
 const User = require('../models/User');
 const Video = require('../models/Video');
+const NotificationService = require('../services/notificationService');
 const Live = require('../models/Live');
 const Comment = require('../models/Comment');
 const AdminAuditLog = require('../models/AdminAuditLog');
@@ -70,7 +74,6 @@ const logAdminAction = async ({
     await logEntry.save();
     console.log(`[AUDIT] ${actionLabel} by ${admin.email} - ${description}`);
 
-    // Also keep in user's adminActions array for backward compatibility
     if (admin.adminActions) {
       admin.adminActions.push({
         actionType,
@@ -86,6 +89,46 @@ const logAdminAction = async ({
     
   } catch (err) {
     console.error('ADMIN ACTION LOG ERROR:', err);
+  }
+};
+
+/**
+ * Calculate active strikes (strikes within last 9 months)
+ */
+const calculateActiveStrikes = (liveStrikes) => {
+  if (!liveStrikes || !Array.isArray(liveStrikes)) return 0;
+  const nineMonthsAgo = new Date(Date.now() - (9 * 30 * 24 * 60 * 60 * 1000));
+  return liveStrikes.filter(strike => new Date(strike.date) > nineMonthsAgo).length;
+};
+
+/**
+ * Calculate account age in days
+ */
+const calculateAccountAgeDays = (createdAt) => {
+  if (!createdAt) return 0;
+  const now = new Date();
+  const created = new Date(createdAt);
+  return Math.floor((now - created) / (1000 * 60 * 60 * 24));
+};
+
+/**
+ * Get user's video stats (approved videos and total views)
+ */
+const getUserVideoStats = async (userId) => {
+  try {
+    const videos = await Video.find({
+      creator: userId,
+      approved: true,
+      isDeleted: { $ne: true }
+    }).select('views');
+    
+    return {
+      approvedVideoCount: videos.length,
+      totalVideoViews: videos.reduce((sum, video) => sum + (video.views || 0), 0)
+    };
+  } catch (error) {
+    console.error('Error getting user video stats:', error);
+    return { approvedVideoCount: 0, totalVideoViews: 0 };
   }
 };
 
@@ -110,7 +153,6 @@ const getAuditLogs = async (queryParams) => {
 
     const query = {};
     
-    // Text search across multiple fields
     if (search && search.trim()) {
       query.$or = [
         { adminName: { $regex: search, $options: 'i' } },
@@ -122,13 +164,11 @@ const getAuditLogs = async (queryParams) => {
       ];
     }
 
-    // Individual field filters
     if (adminName) query.adminName = { $regex: adminName, $options: 'i' };
     if (actionType) query.actionType = actionType;
     if (targetType) query.targetType = targetType;
     if (targetId) query.targetId = targetId;
 
-    // Date range filter
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -143,11 +183,7 @@ const getAuditLogs = async (queryParams) => {
     const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
     
     const [logs, total] = await Promise.all([
-      AdminAuditLog.find(query)
-        .sort(sort)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .lean(),
+      AdminAuditLog.find(query).sort(sort).skip(skip).limit(parseInt(limit)).lean(),
       AdminAuditLog.countDocuments(query)
     ]);
 
@@ -176,10 +212,7 @@ const getAuditLogs = async (queryParams) => {
  */
 const getRecentAuditLogs = async (limit = 10) => {
   try {
-    const logs = await AdminAuditLog.find()
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .lean();
+    const logs = await AdminAuditLog.find().sort({ createdAt: -1 }).limit(parseInt(limit)).lean();
     return logs;
   } catch (error) {
     console.error('Failed to fetch recent logs:', error);
@@ -293,34 +326,22 @@ exports.getAuditFilterOptions = async (req, res) => {
 exports.createAdmin = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can create admins' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can create admins' });
     }
 
     const { name, email, password, role, dateOfBirth } = req.body;
 
     if (!name || !email || !password || !role || !dateOfBirth) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'All fields (name, email, password, role, dateOfBirth) are required' 
-      });
+      return res.status(400).json({ success: false, message: 'All fields are required' });
     }
 
     if (!ADMIN_ROLES.includes(role)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid admin role. Must be: superadmin, platformadmin, or supportadmin' 
-      });
+      return res.status(400).json({ success: false, message: 'Invalid admin role' });
     }
 
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email already in use' 
-      });
+      return res.status(400).json({ success: false, message: 'Email already in use' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
@@ -353,35 +374,24 @@ exports.createAdmin = async (req, res) => {
       description: `Created new admin ${newAdmin.email} with role ${role}`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        newRole: role,
-        newAdminName: newAdmin.name,
-        newAdminEmail: newAdmin.email,
-        createdBy: req.user.email 
-      }
+      metadata: { newRole: role, newAdminName: newAdmin.name, newAdminEmail: newAdmin.email, createdBy: req.user.email }
     });
-
-    const adminToReturn = {
-      _id: newAdmin._id,
-      name: newAdmin.name,
-      email: newAdmin.email,
-      role: newAdmin.role,
-      isActive: !newAdmin.adminDeactivated,
-      createdAt: newAdmin.createdAt
-    };
 
     res.status(201).json({ 
       success: true, 
       message: 'Admin created successfully',
-      admin: adminToReturn 
+      admin: {
+        _id: newAdmin._id,
+        name: newAdmin.name,
+        email: newAdmin.email,
+        role: newAdmin.role,
+        isActive: !newAdmin.adminDeactivated,
+        createdAt: newAdmin.createdAt
+      }
     });
-
   } catch (err) {
     console.error('CREATE ADMIN ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to create admin: ' + err.message 
-    });
+    res.status(500).json({ success: false, message: 'Failed to create admin: ' + err.message });
   }
 };
 
@@ -391,52 +401,19 @@ exports.createAdmin = async (req, res) => {
 exports.promoteAdmin = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can promote admins' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can promote admins' });
     }
 
     const targetAdmin = await User.findById(req.params.id);
-    if (!targetAdmin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
-      });
-    }
-
-    if (isFounder(targetAdmin)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Founder admin cannot be modified' 
-      });
-    }
-
-    if (targetAdmin._id.toString() === req.user._id.toString()) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot promote yourself' 
-      });
-    }
-
-    if (targetAdmin.role === 'superadmin') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Admin is already at highest role' 
-      });
-    }
+    if (!targetAdmin) return res.status(404).json({ success: false, message: 'Admin not found' });
+    if (isFounder(targetAdmin)) return res.status(403).json({ success: false, message: 'Founder admin cannot be modified' });
+    if (targetAdmin._id.toString() === req.user._id.toString()) return res.status(400).json({ success: false, message: 'Cannot promote yourself' });
+    if (targetAdmin.role === 'superadmin') return res.status(400).json({ success: false, message: 'Admin is already at highest role' });
 
     let nextRole;
-    if (targetAdmin.role === 'supportadmin') {
-      nextRole = 'platformadmin';
-    } else if (targetAdmin.role === 'platformadmin') {
-      nextRole = 'superadmin';
-    } else {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Cannot promote ${targetAdmin.role}` 
-      });
-    }
+    if (targetAdmin.role === 'supportadmin') nextRole = 'platformadmin';
+    else if (targetAdmin.role === 'platformadmin') nextRole = 'superadmin';
+    else return res.status(400).json({ success: false, message: `Cannot promote ${targetAdmin.role}` });
 
     const previousRole = targetAdmin.role;
     targetAdmin.role = nextRole;
@@ -454,30 +431,13 @@ exports.promoteAdmin = async (req, res) => {
       reason: req.body.reason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        previousRole, 
-        newRole: nextRole,
-        promotedBy: req.user.email 
-      }
+      metadata: { previousRole, newRole: nextRole, promotedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: `Admin promoted from ${previousRole} to ${nextRole}`,
-      admin: {
-        _id: targetAdmin._id,
-        email: targetAdmin.email,
-        previousRole,
-        newRole: nextRole
-      }
-    });
-
+    res.json({ success: true, message: `Admin promoted from ${previousRole} to ${nextRole}` });
   } catch (err) {
     console.error('PROMOTE ADMIN ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to promote admin' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to promote admin' });
   }
 };
 
@@ -487,52 +447,19 @@ exports.promoteAdmin = async (req, res) => {
 exports.demoteAdmin = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can demote admins' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can demote admins' });
     }
 
     const targetAdmin = await User.findById(req.params.id);
-    if (!targetAdmin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
-      });
-    }
-
-    if (isFounder(targetAdmin)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Founder admin cannot be modified' 
-      });
-    }
-
-    if (targetAdmin._id.toString() === req.user._id.toString()) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot demote yourself' 
-      });
-    }
-
-    if (targetAdmin.role === 'supportadmin') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot demote support admin further. Use deactivate instead.' 
-      });
-    }
+    if (!targetAdmin) return res.status(404).json({ success: false, message: 'Admin not found' });
+    if (isFounder(targetAdmin)) return res.status(403).json({ success: false, message: 'Founder admin cannot be modified' });
+    if (targetAdmin._id.toString() === req.user._id.toString()) return res.status(400).json({ success: false, message: 'Cannot demote yourself' });
+    if (targetAdmin.role === 'supportadmin') return res.status(400).json({ success: false, message: 'Cannot demote support admin further' });
 
     let newRole;
-    if (targetAdmin.role === 'superadmin') {
-      newRole = 'platformadmin';
-    } else if (targetAdmin.role === 'platformadmin') {
-      newRole = 'supportadmin';
-    } else {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Cannot demote ${targetAdmin.role}` 
-      });
-    }
+    if (targetAdmin.role === 'superadmin') newRole = 'platformadmin';
+    else if (targetAdmin.role === 'platformadmin') newRole = 'supportadmin';
+    else return res.status(400).json({ success: false, message: `Cannot demote ${targetAdmin.role}` });
 
     const previousRole = targetAdmin.role;
     targetAdmin.role = newRole;
@@ -550,30 +477,13 @@ exports.demoteAdmin = async (req, res) => {
       reason: req.body.reason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        previousRole, 
-        newRole,
-        demotedBy: req.user.email 
-      }
+      metadata: { previousRole, newRole, demotedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: `Admin demoted from ${previousRole} to ${newRole}`,
-      admin: {
-        _id: targetAdmin._id,
-        email: targetAdmin.email,
-        previousRole,
-        newRole
-      }
-    });
-
+    res.json({ success: true, message: `Admin demoted from ${previousRole} to ${newRole}` });
   } catch (err) {
     console.error('DEMOTE ADMIN ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to demote admin' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to demote admin' });
   }
 };
 
@@ -583,40 +493,14 @@ exports.demoteAdmin = async (req, res) => {
 exports.deactivateAdmin = async (req, res) => {
   try {
     if (!['superadmin', 'platformadmin'].includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins or platform admins can deactivate admins' 
-      });
+      return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
     const targetAdmin = await User.findById(req.params.id);
-    if (!targetAdmin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
-      });
-    }
-
-    if (isFounder(targetAdmin)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Founder admin cannot be deactivated' 
-      });
-    }
-
-    if (targetAdmin._id.toString() === req.user._id.toString()) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot deactivate yourself' 
-      });
-    }
-
-    if (targetAdmin.adminDeactivated) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Admin is already deactivated' 
-      });
-    }
+    if (!targetAdmin) return res.status(404).json({ success: false, message: 'Admin not found' });
+    if (isFounder(targetAdmin)) return res.status(403).json({ success: false, message: 'Founder admin cannot be deactivated' });
+    if (targetAdmin._id.toString() === req.user._id.toString()) return res.status(400).json({ success: false, message: 'Cannot deactivate yourself' });
+    if (targetAdmin.adminDeactivated) return res.status(400).json({ success: false, message: 'Admin is already deactivated' });
 
     targetAdmin.adminDeactivated = true;
     targetAdmin.adminDeactivatedAt = new Date();
@@ -637,29 +521,13 @@ exports.deactivateAdmin = async (req, res) => {
       reason: targetAdmin.adminDeactivationReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        deactivatedBy: req.user.email 
-      }
+      metadata: { deactivatedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Admin deactivated and force logged out',
-      admin: {
-        _id: targetAdmin._id,
-        email: targetAdmin.email,
-        role: targetAdmin.role,
-        isActive: false,
-        deactivatedAt: targetAdmin.adminDeactivatedAt
-      }
-    });
-
+    res.json({ success: true, message: 'Admin deactivated and force logged out' });
   } catch (err) {
     console.error('DEACTIVATE ADMIN ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to deactivate admin' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to deactivate admin' });
   }
 };
 
@@ -669,26 +537,12 @@ exports.deactivateAdmin = async (req, res) => {
 exports.reactivateAdmin = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can reactivate admins' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can reactivate admins' });
     }
 
     const targetAdmin = await User.findById(req.params.id);
-    if (!targetAdmin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
-      });
-    }
-
-    if (!targetAdmin.adminDeactivated) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Admin is already active' 
-      });
-    }
+    if (!targetAdmin) return res.status(404).json({ success: false, message: 'Admin not found' });
+    if (!targetAdmin.adminDeactivated) return res.status(400).json({ success: false, message: 'Admin is already active' });
 
     targetAdmin.adminDeactivated = false;
     targetAdmin.adminDeactivatedAt = null;
@@ -707,28 +561,13 @@ exports.reactivateAdmin = async (req, res) => {
       reason: req.body.reason || 'Reactivated by superadmin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        reactivatedBy: req.user.email 
-      }
+      metadata: { reactivatedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Admin reactivated successfully',
-      admin: {
-        _id: targetAdmin._id,
-        email: targetAdmin.email,
-        role: targetAdmin.role,
-        isActive: true
-      }
-    });
-
+    res.json({ success: true, message: 'Admin reactivated successfully' });
   } catch (err) {
     console.error('REACTIVATE ADMIN ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to reactivate admin' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to reactivate admin' });
   }
 };
 
@@ -738,40 +577,14 @@ exports.reactivateAdmin = async (req, res) => {
 exports.deleteAdmin = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can delete admins' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can delete admins' });
     }
 
     const targetAdmin = await User.findById(req.params.id);
-    if (!targetAdmin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
-      });
-    }
-
-    if (isFounder(targetAdmin)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Founder admin cannot be deleted' 
-      });
-    }
-
-    if (targetAdmin._id.toString() === req.user._id.toString()) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot delete yourself' 
-      });
-    }
-
-    if (targetAdmin.isDeleted) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Admin is already deleted' 
-      });
-    }
+    if (!targetAdmin) return res.status(404).json({ success: false, message: 'Admin not found' });
+    if (isFounder(targetAdmin)) return res.status(403).json({ success: false, message: 'Founder admin cannot be deleted' });
+    if (targetAdmin._id.toString() === req.user._id.toString()) return res.status(400).json({ success: false, message: 'Cannot delete yourself' });
+    if (targetAdmin.isDeleted) return res.status(400).json({ success: false, message: 'Admin is already deleted' });
 
     targetAdmin.isDeleted = true;
     targetAdmin.deletedAt = new Date();
@@ -795,30 +608,13 @@ exports.deleteAdmin = async (req, res) => {
       reason: targetAdmin.deleteReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        deleteReason: targetAdmin.deleteReason,
-        deletedBy: req.user.email 
-      }
+      metadata: { deleteReason: targetAdmin.deleteReason, deletedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Admin soft deleted successfully',
-      admin: {
-        _id: targetAdmin._id,
-        email: targetAdmin.email,
-        role: targetAdmin.role,
-        isDeleted: true,
-        deletedAt: targetAdmin.deletedAt
-      }
-    });
-
+    res.json({ success: true, message: 'Admin soft deleted successfully' });
   } catch (err) {
     console.error('DELETE ADMIN ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to delete admin' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to delete admin' });
   }
 };
 
@@ -828,41 +624,17 @@ exports.deleteAdmin = async (req, res) => {
 exports.permanentlyDeleteAccount = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can permanently delete accounts' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can permanently delete accounts' });
     }
 
     const account = await User.findById(req.params.id);
-    if (!account) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Account not found' 
-      });
-    }
-
-    if (isFounder(account)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Founder account cannot be deleted' 
-      });
-    }
-
+    if (!account) return res.status(404).json({ success: false, message: 'Account not found' });
+    if (isFounder(account)) return res.status(403).json({ success: false, message: 'Founder account cannot be deleted' });
     if (!req.body.confirm || req.body.confirm !== 'PERMANENTLY_DELETE') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Confirmation required. Send { confirm: "PERMANENTLY_DELETE" } in request body.' 
-      });
+      return res.status(400).json({ success: false, message: 'Confirmation required. Send { confirm: "PERMANENTLY_DELETE" }' });
     }
 
-    const accountInfo = {
-      email: account.email,
-      name: account.name,
-      role: account.role,
-      deletedAt: new Date()
-    };
-
+    const accountInfo = { email: account.email, name: account.name, role: account.role, deletedAt: new Date() };
     const actionType = ADMIN_ROLES.includes(account.role) ? 'PERMANENT_DELETE_ADMIN' : 'PERMANENT_DELETE_ACCOUNT';
     const actionLabel = ADMIN_ROLES.includes(account.role) ? 'Permanently Delete Admin' : 'Permanently Delete Account';
     const targetType = ADMIN_ROLES.includes(account.role) ? 'Admin' : 'User';
@@ -879,26 +651,14 @@ exports.permanentlyDeleteAccount = async (req, res) => {
       reason: req.body.reason || 'Permanently deleted by superadmin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        ...accountInfo,
-        permanentlyDeletedBy: req.user.email 
-      }
+      metadata: { ...accountInfo, permanentlyDeletedBy: req.user.email }
     });
 
     await account.deleteOne();
-
-    res.json({ 
-      success: true, 
-      message: 'Account permanently deleted',
-      deletedAccount: accountInfo
-    });
-
+    res.json({ success: true, message: 'Account permanently deleted', deletedAccount: accountInfo });
   } catch (err) {
     console.error('PERMANENT DELETE ACCOUNT ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to permanently delete account: ' + err.message 
-    });
+    res.status(500).json({ success: false, message: 'Failed to permanently delete account: ' + err.message });
   }
 };
 
@@ -908,33 +668,15 @@ exports.permanentlyDeleteAccount = async (req, res) => {
 exports.deleteUser = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can delete users' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can delete users' });
     }
 
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     if (ADMIN_ROLES.includes(user.role)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot delete admin users with this route. Use admin deletion routes instead.' 
-      });
+      return res.status(400).json({ success: false, message: 'Cannot delete admin users with this route' });
     }
-
-    if (user.isDeleted) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User is already deleted' 
-      });
-    }
+    if (user.isDeleted) return res.status(400).json({ success: false, message: 'User is already deleted' });
 
     user.isDeleted = true;
     user.deletedAt = new Date();
@@ -958,29 +700,13 @@ exports.deleteUser = async (req, res) => {
       reason: user.deleteReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: { 
-        deleteReason: user.deleteReason,
-        deletedBy: req.user.email 
-      }
+      metadata: { deleteReason: user.deleteReason, deletedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'User soft deleted successfully',
-      user: {
-        _id: user._id,
-        email: user.email,
-        isDeleted: true,
-        deletedAt: user.deletedAt
-      }
-    });
-
+    res.json({ success: true, message: 'User soft deleted successfully' });
   } catch (err) {
     console.error('DELETE USER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to delete user: ' + err.message 
-    });
+    res.status(500).json({ success: false, message: 'Failed to delete user: ' + err.message });
   }
 };
 
@@ -990,13 +716,8 @@ exports.deleteUser = async (req, res) => {
 exports.banUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (user.isBanned) {
-      return res.status(400).json({ success: false, message: 'User is already banned' });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (user.isBanned) return res.status(400).json({ success: false, message: 'User is already banned' });
 
     user.isBanned = true;
     user.bannedAt = new Date();
@@ -1018,9 +739,7 @@ exports.banUser = async (req, res) => {
       reason: user.banReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        bannedBy: req.user.email
-      }
+      metadata: { bannedBy: req.user.email }
     });
 
     res.json({ success: true, message: 'User banned and logged out successfully' });
@@ -1036,13 +755,8 @@ exports.banUser = async (req, res) => {
 exports.unbanUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (!user.isBanned) {
-      return res.status(400).json({ success: false, message: 'User is not banned' });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!user.isBanned) return res.status(400).json({ success: false, message: 'User is not banned' });
 
     user.isBanned = false;
     user.bannedAt = null;
@@ -1062,9 +776,7 @@ exports.unbanUser = async (req, res) => {
       reason: req.body.reason || 'Unbanned by admin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        unbannedBy: req.user.email
-      }
+      metadata: { unbannedBy: req.user.email }
     });
 
     res.json({ success: true, message: 'User unbanned successfully' });
@@ -1079,13 +791,8 @@ exports.unbanUser = async (req, res) => {
 ======================== */
 exports.approveVideo = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
+    const video = await Video.findById(req.params.id).populate('creator', 'name email');
+    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
 
     video.status = 'approved';
     video.approved = true;
@@ -1107,27 +814,23 @@ exports.approveVideo = async (req, res) => {
       description: `Approved video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        approvedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, approvedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video approved successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
+    await NotificationService.createNotification({
+      userId: video.creator._id,
+      type: 'admin',
+      title: 'Video Approved',
+      message: `Your video "${video.title}" has been approved by Admin and is now live. Thank you for your cooperation and continue enjoying Narra.`,
+      priority: 'high',
+      link: { url: `/release/${video._id}`, text: 'Release Now' },
+      data: { videoTitle: video.title, videoId: video._id }
     });
+
+    res.json({ success: true, message: 'Video approved successfully' });
   } catch (err) {
     console.error('APPROVE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to approve video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to approve video' });
   }
 };
 
@@ -1136,20 +839,12 @@ exports.approveVideo = async (req, res) => {
 ======================== */
 exports.rejectVideo = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
+    const video = await Video.findById(req.params.id).populate('creator', 'name email');
+    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
 
     const { reason } = req.body;
     if (!reason || !reason.trim()) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Rejection reason is required' 
-      });
+      return res.status(400).json({ success: false, message: 'Rejection reason is required' });
     }
 
     video.status = 'rejected';
@@ -1171,29 +866,22 @@ exports.rejectVideo = async (req, res) => {
       reason: reason.trim(),
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        rejectedBy: req.user.email,
-        rejectionReason: reason.trim()
-      }
+      metadata: { videoTitle: video.title, rejectedBy: req.user.email, rejectionReason: reason.trim() }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video rejected successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status,
-        rejectionReason: video.rejectionReason
-      }
+    await NotificationService.createNotification({
+      userId: video.creator._id,
+      type: 'admin',
+      title: 'Video Not Approved',
+      message: `Your video "${video.title}" was not approved by Admin. Reason: ${reason.trim()}.`,
+      priority: 'high',
+      data: { videoTitle: video.title, videoId: video._id, reason: reason.trim() }
     });
+
+    res.json({ success: true, message: 'Video rejected successfully' });
   } catch (err) {
     console.error('REJECT VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to reject video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to reject video' });
   }
 };
 
@@ -1202,14 +890,10 @@ exports.rejectVideo = async (req, res) => {
 ======================== */
 exports.removeVideo = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
+    const video = await Video.findById(req.params.id).populate('creator', 'name email');
+    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
 
+    video.status = 'removed';
     video.isDeleted = true;
     video.deletedAt = new Date();
     video.deletedBy = req.user._id;
@@ -1226,22 +910,22 @@ exports.removeVideo = async (req, res) => {
       reason: req.body.reason || 'Removed by admin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        removedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, removedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video removed successfully' 
+    await NotificationService.createNotification({
+      userId: video.creator._id,
+      type: 'admin',
+      title: 'Video Removed',
+      message: `Your video "${video.title}" has been removed from the platform by Admin. Reason: ${req.body.reason || 'Violation of community guidelines'}.`,
+      priority: 'urgent',
+      data: { videoTitle: video.title, videoId: video._id, reason: req.body.reason || 'Violation of community guidelines' }
     });
+
+    res.json({ success: true, message: 'Video removed successfully' });
   } catch (err) {
     console.error('REMOVE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to remove video' });
   }
 };
 
@@ -1250,14 +934,10 @@ exports.removeVideo = async (req, res) => {
 ======================== */
 exports.restoreVideo = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
+    const video = await Video.findById(req.params.id).populate('creator', 'name email');
+    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
 
+    video.status = 'approved';
     video.isDeleted = false;
     video.deletedAt = null;
     video.deletedBy = null;
@@ -1273,22 +953,23 @@ exports.restoreVideo = async (req, res) => {
       description: `Restored video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        restoredBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, restoredBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video restored successfully' 
+    await NotificationService.createNotification({
+      userId: video.creator._id,
+      type: 'admin',
+      title: 'Video Restored',
+      message: `Your video "${video.title}" has been restored by Admin and is now visible again. Thank you for your cooperation and continue enjoying Narra.`,
+      priority: 'normal',
+      link: { url: `/video/${video._id}`, text: 'View Video' },
+      data: { videoTitle: video.title, videoId: video._id }
     });
+
+    res.json({ success: true, message: 'Video restored successfully' });
   } catch (err) {
     console.error('RESTORE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to restore video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to restore video' });
   }
 };
 
@@ -1298,12 +979,7 @@ exports.restoreVideo = async (req, res) => {
 exports.featureVideo = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
+    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
 
     video.isFeatured = true;
     await video.save();
@@ -1318,22 +994,13 @@ exports.featureVideo = async (req, res) => {
       description: `Featured video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        featuredBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, featuredBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video featured successfully' 
-    });
+    res.json({ success: true, message: 'Video featured successfully' });
   } catch (err) {
     console.error('FEATURE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to feature video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to feature video' });
   }
 };
 
@@ -1343,12 +1010,7 @@ exports.featureVideo = async (req, res) => {
 exports.unfeatureVideo = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
+    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
 
     video.isFeatured = false;
     await video.save();
@@ -1363,22 +1025,13 @@ exports.unfeatureVideo = async (req, res) => {
       description: `Unfeatured video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        unfeaturedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, unfeaturedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video unfeatured successfully' 
-    });
+    res.json({ success: true, message: 'Video unfeatured successfully' });
   } catch (err) {
     console.error('UNFEATURE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to unfeature video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to unfeature video' });
   }
 };
 
@@ -1388,12 +1041,7 @@ exports.unfeatureVideo = async (req, res) => {
 exports.approveFundraiser = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Fundraiser video not found' 
-      });
-    }
+    if (!video) return res.status(404).json({ success: false, message: 'Fundraiser video not found' });
 
     video.approved = true;
     video.rejected = false;
@@ -1412,22 +1060,13 @@ exports.approveFundraiser = async (req, res) => {
       description: `Approved fundraiser "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        approvedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, approvedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Fundraiser approved successfully' 
-    });
+    res.json({ success: true, message: 'Fundraiser approved successfully' });
   } catch (err) {
     console.error('APPROVE FUNDRAISER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to approve fundraiser' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to approve fundraiser' });
   }
 };
 
@@ -1437,12 +1076,7 @@ exports.approveFundraiser = async (req, res) => {
 exports.rejectFundraiser = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Fundraiser video not found' 
-      });
-    }
+    if (!video) return res.status(404).json({ success: false, message: 'Fundraiser video not found' });
 
     const { reason } = req.body;
     video.approved = false;
@@ -1461,22 +1095,13 @@ exports.rejectFundraiser = async (req, res) => {
       reason: video.rejectionReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        rejectedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, rejectedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Fundraiser rejected successfully' 
-    });
+    res.json({ success: true, message: 'Fundraiser rejected successfully' });
   } catch (err) {
     console.error('REJECT FUNDRAISER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to reject fundraiser' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to reject fundraiser' });
   }
 };
 
@@ -1486,19 +1111,8 @@ exports.rejectFundraiser = async (req, res) => {
 exports.verifyUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    if (user.isVerified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User is already verified' 
-      });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (user.isVerified) return res.status(400).json({ success: false, message: 'User is already verified' });
 
     user.isVerified = true;
     user.verifiedAt = new Date();
@@ -1516,21 +1130,22 @@ exports.verifyUser = async (req, res) => {
       description: `Verified user ${user.email}`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        verifiedBy: req.user.email
-      }
+      metadata: { verifiedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'User verified successfully' 
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Account Verified',
+      message: `Your account has been verified by Admin. Thank you for your cooperation and continue enjoying Narra.`,
+      priority: 'high',
+      link: { url: `/profile/${user._id}`, text: 'View Profile' }
     });
+
+    res.json({ success: true, message: 'User verified successfully' });
   } catch (err) {
     console.error('VERIFY USER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to verify user' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to verify user' });
   }
 };
 
@@ -1540,19 +1155,8 @@ exports.verifyUser = async (req, res) => {
 exports.unverifyUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    if (!user.isVerified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User is not verified' 
-      });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!user.isVerified) return res.status(400).json({ success: false, message: 'User is not verified' });
 
     user.isVerified = false;
     user.verifiedAt = null;
@@ -1571,21 +1175,21 @@ exports.unverifyUser = async (req, res) => {
       reason: req.body.reason || 'Unverified by admin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        unverifiedBy: req.user.email
-      }
+      metadata: { unverifiedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'User unverified successfully' 
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Verification Removed',
+      message: `Your account verification has been removed by Admin.`,
+      priority: 'high'
     });
+
+    res.json({ success: true, message: 'User unverified successfully' });
   } catch (err) {
     console.error('UNVERIFY USER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to unverify user' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to unverify user' });
   }
 };
 
@@ -1604,16 +1208,10 @@ exports.getAllAdmins = async (req, res) => {
       isActive: !admin.adminDeactivated
     }));
 
-    res.json({ 
-      success: true, 
-      admins: adminsWithStatus 
-    });
+    res.json({ success: true, admins: adminsWithStatus });
   } catch (err) {
     console.error('GET ALL ADMINS ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch admins' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch admins' });
   }
 };
 
@@ -1628,38 +1226,57 @@ exports.getInactiveAdmins = async (req, res) => {
       isDeleted: { $ne: true }
     }).select('-password');
     
-    res.json({ 
-      success: true, 
-      admins: inactiveAdmins 
-    });
+    res.json({ success: true, admins: inactiveAdmins });
   } catch (err) {
     console.error('GET INACTIVE ADMINS ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch inactive admins' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch inactive admins' });
   }
 };
 
 /* ========================
-   23️⃣ GET ALL USERS
+   23️⃣ GET ALL USERS - FIXED with stats and account age
 ======================== */
 exports.getAllUsers = async (req, res) => {
   try {
     const users = await User.find({
       role: { $nin: ADMIN_ROLES },
       isDeleted: { $ne: true }
-    }).select('-password').sort({ createdAt: -1 });
+    }).select('-password').sort({ createdAt: -1 }).lean();
+    
+    // Process each user to add calculated fields
+    const usersWithStats = await Promise.all(users.map(async (user) => {
+      // Calculate account age days
+      const accountAgeDays = calculateAccountAgeDays(user.createdAt);
+      
+      // Calculate active strikes
+      const activeStrikes = calculateActiveStrikes(user.liveStrikes);
+      
+      // Get video stats (approved videos and total views)
+      const videoStats = await getUserVideoStats(user._id);
+      
+      return {
+        ...user,
+        accountAgeDays,
+        activeStrikes,
+        approvedVideoCount: videoStats.approvedVideoCount,
+        totalVideoViews: videoStats.totalVideoViews,
+        // Keep existing fields
+        canGoLive: user.canGoLive || false,
+        canGoLiveReason: user.canGoLiveReason || null,
+        liveStrikes: user.liveStrikes || []
+      };
+    }));
     
     res.json({ 
       success: true, 
-      users 
+      users: usersWithStats 
     });
   } catch (err) {
     console.error('GET ALL USERS ERROR:', err);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to fetch users' 
+      message: 'Failed to fetch users',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
@@ -1669,23 +1286,27 @@ exports.getAllUsers = async (req, res) => {
 ======================== */
 exports.getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-password');
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
+    const user = await User.findById(req.params.id).select('-password').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    
+    // Add calculated fields
+    const accountAgeDays = calculateAccountAgeDays(user.createdAt);
+    const activeStrikes = calculateActiveStrikes(user.liveStrikes);
+    const videoStats = await getUserVideoStats(user._id);
+    
     res.json({ 
       success: true, 
-      user 
+      user: {
+        ...user,
+        accountAgeDays,
+        activeStrikes,
+        approvedVideoCount: videoStats.approvedVideoCount,
+        totalVideoViews: videoStats.totalVideoViews
+      }
     });
   } catch (err) {
     console.error('GET USER BY ID ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch user' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch user' });
   }
 };
 
@@ -1695,26 +1316,12 @@ exports.getUserById = async (req, res) => {
 exports.deactivateUser = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can deactivate users' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can deactivate users' });
     }
 
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    if (user.isDeactivated) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User is already deactivated' 
-      });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (user.isDeactivated) return res.status(400).json({ success: false, message: 'User is already deactivated' });
 
     user.isDeactivated = true;
     user.deactivatedAt = new Date();
@@ -1736,21 +1343,21 @@ exports.deactivateUser = async (req, res) => {
       reason: user.deactivationReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        deactivatedBy: req.user.email
-      }
+      metadata: { deactivatedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'User deactivated and logged out successfully' 
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Account Deactivated',
+      message: `Your account has been deactivated by Admin. Reason: ${user.deactivationReason}. You will not be able to access your account until reactivated.`,
+      priority: 'urgent'
     });
+
+    res.json({ success: true, message: 'User deactivated and logged out successfully' });
   } catch (err) {
     console.error('DEACTIVATE USER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to deactivate user' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to deactivate user' });
   }
 };
 
@@ -1760,26 +1367,12 @@ exports.deactivateUser = async (req, res) => {
 exports.activateUser = async (req, res) => {
   try {
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can activate users' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can activate users' });
     }
 
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    if (!user.isDeactivated) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'User is already active' 
-      });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!user.isDeactivated) return res.status(400).json({ success: false, message: 'User is already active' });
 
     user.isDeactivated = false;
     user.deactivatedAt = null;
@@ -1799,22 +1392,21 @@ exports.activateUser = async (req, res) => {
       reason: req.body.reason || 'Activated by superadmin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        activatedBy: req.user.email
-      }
+      metadata: { activatedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'User activated successfully' 
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Account Reactivated',
+      message: `Your account has been reactivated by Admin. Welcome back! Thank you for your cooperation and continue enjoying Narra.`,
+      priority: 'high'
     });
-    
+
+    res.json({ success: true, message: 'User activated successfully' });
   } catch (err) {
     console.error('ACTIVATE USER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to activate user' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to activate user' });
   }
 };
 
@@ -1824,25 +1416,13 @@ exports.activateUser = async (req, res) => {
 exports.toggleSupportAdmin = async (req, res) => {
   try {
     if (req.user.role !== 'platformadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only platform admins can toggle support role' 
-      });
+      return res.status(403).json({ success: false, message: 'Only platform admins can toggle support role' });
     }
 
     const admin = await User.findById(req.params.id);
-    if (!admin) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
-      });
-    }
-
+    if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
     if (admin.role !== 'platformadmin') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only platform admins can toggle support role',
-      });
+      return res.status(400).json({ success: false, message: 'Only platform admins can toggle support role' });
     }
 
     admin.isSupport = !admin.isSupport;
@@ -1859,23 +1439,13 @@ exports.toggleSupportAdmin = async (req, res) => {
       description: `${admin.isSupport ? 'Assigned' : 'Revoked'} support role for ${admin.email}`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        isSupport: admin.isSupport,
-        updatedBy: req.user.email
-      }
+      metadata: { isSupport: admin.isSupport, updatedBy: req.user.email }
     });
 
-    res.json({
-      success: true,
-      message: 'Support role updated',
-      isSupport: admin.isSupport,
-    });
+    res.json({ success: true, message: 'Support role updated', isSupport: admin.isSupport });
   } catch (err) {
     console.error('TOGGLE SUPPORT ADMIN ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update support role' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to update support role' });
   }
 };
 
@@ -1885,12 +1455,7 @@ exports.toggleSupportAdmin = async (req, res) => {
 exports.removeComment = async (req, res) => {
   try {
     const comment = await Comment.findById(req.params.id);
-    if (!comment) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Comment not found' 
-      });
-    }
+    if (!comment) return res.status(404).json({ success: false, message: 'Comment not found' });
 
     await comment.deleteOne();
 
@@ -1904,21 +1469,13 @@ exports.removeComment = async (req, res) => {
       reason: req.body.reason || 'Removed by admin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        removedBy: req.user.email
-      }
+      metadata: { removedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Comment removed successfully' 
-    });
+    res.json({ success: true, message: 'Comment removed successfully' });
   } catch (err) {
     console.error('REMOVE COMMENT ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove comment' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to remove comment' });
   }
 };
 
@@ -1928,12 +1485,7 @@ exports.removeComment = async (req, res) => {
 exports.removeLiveStream = async (req, res) => {
   try {
     const live = await Live.findById(req.params.id);
-    if (!live) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Live stream not found' 
-      });
-    }
+    if (!live) return res.status(404).json({ success: false, message: 'Live stream not found' });
 
     live.isDeleted = true;
     live.deletedAt = new Date();
@@ -1951,22 +1503,13 @@ exports.removeLiveStream = async (req, res) => {
       reason: req.body.reason || 'Removed by admin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        liveTitle: live.title,
-        removedBy: req.user.email
-      }
+      metadata: { liveTitle: live.title, removedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Live stream removed successfully' 
-    });
+    res.json({ success: true, message: 'Live stream removed successfully' });
   } catch (err) {
     console.error('REMOVE LIVE STREAM ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove live stream' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to remove live stream' });
   }
 };
 
@@ -1976,12 +1519,7 @@ exports.removeLiveStream = async (req, res) => {
 exports.applyShadowBanUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
     const { countries = [], continents = [], reason } = req.body;
 
@@ -2005,27 +1543,21 @@ exports.applyShadowBanUser = async (req, res) => {
       reason: user.shadowBanReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        countries,
-        continents,
-        shadowBannedBy: req.user.email
-      }
+      metadata: { countries, continents, shadowBannedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'User shadow banned successfully',
-      user: {
-        _id: user._id,
-        isShadowBanned: true
-      }
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Account Shadow Banned',
+      message: `Your account has been shadow banned by Admin. Your content will have limited visibility. Reason: ${user.shadowBanReason}.`,
+      priority: 'urgent'
     });
+
+    res.json({ success: true, message: 'User shadow banned successfully' });
   } catch (err) {
     console.error('APPLY SHADOW BAN USER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to apply shadow ban' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to apply shadow ban' });
   }
 };
 
@@ -2035,12 +1567,7 @@ exports.applyShadowBanUser = async (req, res) => {
 exports.removeShadowBanUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
     user.isShadowBanned = false;
     user.shadowBannedCountries = [];
@@ -2061,25 +1588,21 @@ exports.removeShadowBanUser = async (req, res) => {
       description: `Removed shadow ban for user ${user.email}`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        shadowBanRemovedBy: req.user.email
-      }
+      metadata: { shadowBanRemovedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Shadow ban removed successfully',
-      user: {
-        _id: user._id,
-        isShadowBanned: false
-      }
+    await NotificationService.createNotification({
+      userId: user._id,
+      type: 'admin',
+      title: 'Shadow Ban Removed',
+      message: `The shadow ban on your account has been removed by Admin. Thank you for your cooperation and continue enjoying Narra.`,
+      priority: 'high'
     });
+
+    res.json({ success: true, message: 'Shadow ban removed successfully' });
   } catch (err) {
     console.error('REMOVE SHADOW BAN USER ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove shadow ban' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to remove shadow ban' });
   }
 };
 
@@ -2092,31 +1615,17 @@ exports.applyShadowBanContent = async (req, res) => {
     const { targetType, countries = [], continents = [], reason } = req.body;
 
     if (!targetType || !['Video', 'LiveStream', 'Comment'].includes(targetType)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'targetType must be Video, LiveStream, or Comment' 
-      });
+      return res.status(400).json({ success: false, message: 'targetType must be Video, LiveStream, or Comment' });
     }
 
     let content;
     switch (targetType) {
-      case 'Video':
-        content = await Video.findById(id);
-        break;
-      case 'LiveStream':
-        content = await Live.findById(id);
-        break;
-      case 'Comment':
-        content = await Comment.findById(id);
-        break;
+      case 'Video': content = await Video.findById(id); break;
+      case 'LiveStream': content = await Live.findById(id); break;
+      case 'Comment': content = await Comment.findById(id); break;
     }
 
-    if (!content) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `${targetType} not found` 
-      });
-    }
+    if (!content) return res.status(404).json({ success: false, message: `${targetType} not found` });
 
     content.isShadowBanned = true;
     content.shadowBannedCountries = countries;
@@ -2137,28 +1646,13 @@ exports.applyShadowBanContent = async (req, res) => {
       reason: content.shadowBanReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        targetType,
-        countries,
-        continents,
-        shadowBannedBy: req.user.email
-      }
+      metadata: { targetType, countries, continents, shadowBannedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: `${targetType} shadow banned successfully`,
-      content: {
-        _id: content._id,
-        isShadowBanned: true
-      }
-    });
+    res.json({ success: true, message: `${targetType} shadow banned successfully` });
   } catch (err) {
     console.error('APPLY SHADOW BAN CONTENT ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to apply shadow ban to content' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to apply shadow ban to content' });
   }
 };
 
@@ -2171,31 +1665,17 @@ exports.removeShadowBanContent = async (req, res) => {
     const { targetType } = req.body;
 
     if (!targetType || !['Video', 'LiveStream', 'Comment'].includes(targetType)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'targetType must be Video, LiveStream, or Comment' 
-      });
+      return res.status(400).json({ success: false, message: 'targetType must be Video, LiveStream, or Comment' });
     }
 
     let content;
     switch (targetType) {
-      case 'Video':
-        content = await Video.findById(id);
-        break;
-      case 'LiveStream':
-        content = await Live.findById(id);
-        break;
-      case 'Comment':
-        content = await Comment.findById(id);
-        break;
+      case 'Video': content = await Video.findById(id); break;
+      case 'LiveStream': content = await Live.findById(id); break;
+      case 'Comment': content = await Comment.findById(id); break;
     }
 
-    if (!content) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `${targetType} not found` 
-      });
-    }
+    if (!content) return res.status(404).json({ success: false, message: `${targetType} not found` });
 
     content.isShadowBanned = false;
     content.shadowBannedCountries = [];
@@ -2215,26 +1695,13 @@ exports.removeShadowBanContent = async (req, res) => {
       description: `Removed shadow ban from ${targetType.toLowerCase()}`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        targetType,
-        shadowBanRemovedBy: req.user.email
-      }
+      metadata: { targetType, shadowBanRemovedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: `Shadow ban removed from ${targetType}`,
-      content: {
-        _id: content._id,
-        isShadowBanned: false
-      }
-    });
+    res.json({ success: true, message: `Shadow ban removed from ${targetType}` });
   } catch (err) {
     console.error('REMOVE SHADOW BAN CONTENT ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove shadow ban from content' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to remove shadow ban from content' });
   }
 };
 
@@ -2244,12 +1711,7 @@ exports.removeShadowBanContent = async (req, res) => {
 exports.forceAdminLogout = async (req, res) => {
   try {
     const target = await User.findById(req.params.id);
-    if (!target) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Admin not found' 
-      });
-    }
+    if (!target) return res.status(404).json({ success: false, message: 'Admin not found' });
 
     target.tokenVersion = (target.tokenVersion || 0) + 1;
     target.online = false;
@@ -2266,21 +1728,13 @@ exports.forceAdminLogout = async (req, res) => {
       description: `Forced logout for admin ${target.email}`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        forcedLogoutBy: req.user.email
-      }
+      metadata: { forcedLogoutBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Admin force logged out successfully' 
-    });
+    res.json({ success: true, message: 'Admin force logged out successfully' });
   } catch (err) {
     console.error('FORCE ADMIN LOGOUT ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to force logout admin' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to force logout admin' });
   }
 };
 
@@ -2290,36 +1744,22 @@ exports.forceAdminLogout = async (req, res) => {
 exports.getAdminAuditLogs = async (req, res) => {
   try {
     const logs = await User.findById(req.user._id).select('adminActions');
-    res.json({ 
-      success: true, 
-      logs: logs?.adminActions || [] 
-    });
+    res.json({ success: true, logs: logs?.adminActions || [] });
   } catch (err) {
     console.error('GET ADMIN AUDIT LOGS ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch audit logs' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch audit logs' });
   }
 };
 
 /* ========================
    36️⃣ GET VIDEOS FOR ADMIN MODERATION
-   FIXED: Removed duplicate VIEW_MODERATION audit logging
 ======================== */
 const getVideosForAdminModeration = async (req, res) => {
   try {
     console.log('========== GET VIDEOS FOR MODERATION ==========');
-    console.log('User:', req.user?.email);
-    console.log('Role:', req.user?.role);
-    console.log('Query params:', req.query);
     
     if (!req.user || !['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
-      console.log('❌ Admin access denied for role:', req.user?.role);
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Admin access required' 
-      });
+      return res.status(403).json({ success: false, message: 'Admin access required' });
     }
 
     const {
@@ -2332,11 +1772,8 @@ const getVideosForAdminModeration = async (req, res) => {
       sortOrder = 'desc'
     } = req.query;
 
-    console.log('Filters - status:', status, 'type:', type, 'search:', search);
-
     const query = { isDeleted: false };
 
-    // If status is 'all', show ALL videos regardless of status
     if (status !== 'all') {
       query.status = status;
     }
@@ -2353,8 +1790,6 @@ const getVideosForAdminModeration = async (req, res) => {
         { tags: searchRegex }
       ];
     }
-
-    console.log('MongoDB Query:', JSON.stringify(query));
 
     const sortOptions = {};
     if (sortBy === 'title') {
@@ -2377,8 +1812,6 @@ const getVideosForAdminModeration = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit))
       .lean();
-
-    console.log(`Found ${videos.length} videos`);
 
     const total = await Video.countDocuments(query);
 
@@ -2428,13 +1861,6 @@ const getVideosForAdminModeration = async (req, res) => {
       })) : []
     }));
 
-    // FIXED: REMOVED AUDIT LOGGING FOR VIEW_MODERATION
-    // This was causing duplicate logs every time the moderation page loads
-    // Audit logs should only be created for actual actions (approve, reject, delete, etc.)
-    // NOT for simply viewing the moderation queue
-
-    console.log('========== END ==========');
-
     res.json({
       success: true,
       videos: formattedVideos,
@@ -2460,22 +1886,16 @@ exports.getAdminsCreatedByAdmin = async (req, res) => {
   try {
     const { adminId } = req.params;
     
-    // Only super admins can view this
     if (req.user.role !== 'superadmin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Only super admins can view admin creation history' 
-      });
+      return res.status(403).json({ success: false, message: 'Only super admins can view admin creation history' });
     }
     
-    // Find all admins created by this admin from User model
     const adminsCreated = await User.find({
       createdBy: adminId,
       role: { $in: ADMIN_ROLES },
       isDeleted: { $ne: true }
     }).select('firstName lastName username email role createdAt avatar isVerified adminDeactivated');
     
-    // Get creation logs from audit as backup
     let creationLogs = [];
     try {
       creationLogs = await AdminAuditLog.find({
@@ -2486,10 +1906,8 @@ exports.getAdminsCreatedByAdmin = async (req, res) => {
       console.warn('Could not fetch audit logs:', e.message);
     }
     
-    // Combine and deduplicate by email
     const adminsMap = new Map();
     
-    // Add from User model first
     adminsCreated.forEach(admin => {
       const name = admin.name || `${admin.firstName || ''} ${admin.lastName || ''}`.trim() || admin.username;
       adminsMap.set(admin.email, {
@@ -2504,7 +1922,6 @@ exports.getAdminsCreatedByAdmin = async (req, res) => {
       });
     });
     
-    // Add from audit logs if not already present
     creationLogs.forEach(log => {
       const email = log.targetEmail || log.metadata?.newAdminEmail;
       if (email && !adminsMap.has(email)) {
@@ -2525,18 +1942,48 @@ exports.getAdminsCreatedByAdmin = async (req, res) => {
       new Date(b.createdAt) - new Date(a.createdAt)
     );
     
-    res.json({ 
-      success: true, 
-      admins,
-      total: admins.length
-    });
+    res.json({ success: true, admins, total: admins.length });
   } catch (err) {
     console.error('GET ADMINS CREATED ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch admins created',
-      error: err.message 
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch admins created', error: err.message });
+  }
+};
+
+/* ========================
+   GET VIDEO MODERATION STATISTICS
+======================== */
+exports.getVideoModerationStats = async (req, res) => {
+  try {
+    const [
+      approved,
+      flagged,
+      restricted,
+      shadowBanned,
+      removed,
+      total
+    ] = await Promise.all([
+      Video.countDocuments({ status: 'approved', isDeleted: { $ne: true } }),
+      Video.countDocuments({ status: 'flagged', isDeleted: { $ne: true } }),
+      Video.countDocuments({ status: 'restricted', isDeleted: { $ne: true } }),
+      Video.countDocuments({ status: 'shadowBanned', isDeleted: { $ne: true } }),
+      Video.countDocuments({ status: 'removed', isDeleted: { $ne: true } }),
+      Video.countDocuments({ isDeleted: { $ne: true } })
+    ]);
+
+    const statistics = {
+      approved,
+      flagged,
+      restricted,
+      shadowBanned,
+      removed,
+      total,
+      byStatus: { approved, flagged, restricted, shadowBanned, removed, total }
+    };
+
+    res.json({ success: true, statistics });
+  } catch (error) {
+    console.error('Error fetching video statistics:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch video statistics' });
   }
 };
 
@@ -2599,6 +2046,9 @@ module.exports = {
   // AUDIT & ADMIN TOOLS
   forceAdminLogout: exports.forceAdminLogout,
   
-  // MODERATION VIEW (without audit logging)
-  getVideosForAdminModeration
+  // MODERATION VIEW
+  getVideosForAdminModeration,
+  
+  // STATISTICS
+  getVideoModerationStats: exports.getVideoModerationStats
 };

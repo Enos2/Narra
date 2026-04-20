@@ -29,6 +29,27 @@ const NotificationSchema = new mongoose.Schema(
         'comment',
         'flag',
         'minor_alert',
+        // Video moderation types
+        'video_approved',
+        'video_rejected',
+        'video_restricted',
+        'video_restriction_removed',
+        'video_flagged',
+        'video_flag_removed',
+        'video_shadow_banned',
+        'video_shadow_ban_removed',
+        'video_deleted',
+        'video_restored',
+        // Follow & Twin types
+        'follow',
+        'twin',
+        // Live privilege types
+        'live_privilege_granted',
+        'live_privilege_revoked',
+        'live_requirements_reminder',
+        // Account milestone types
+        'account_milestone',
+        'video_release_reminder'
       ],
       required: true,
       index: true,
@@ -74,6 +95,11 @@ const NotificationSchema = new mongoose.Schema(
       ref: 'User',
     },
 
+    // Admin name for admin actions
+    adminName: {
+      type: String,
+    },
+
     // Read status
     read: {
       type: Boolean,
@@ -102,7 +128,7 @@ const NotificationSchema = new mongoose.Schema(
     expiresAt: {
       type: Date,
       default: () => new Date(+new Date() + 30 * 24 * 60 * 60 * 1000),
-      index: { expires: 0 }, // TTL index
+      index: { expires: 0 },
     },
   },
   {

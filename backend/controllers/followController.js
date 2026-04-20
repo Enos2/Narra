@@ -1,9 +1,22 @@
 /**
  * File: backend/controllers/followController.js
  * Description: Handles follow/unfollow functionality and twin relationships
+ * UPDATED: Added proper notification service integration for new followers
+ * UPDATED: Fixed follow notification type from 'system' to 'follow'
+ * UPDATED: Added twin notification when mutual follow occurs
  */
 
+const NotificationService = require('../services/notificationService');
 const User = require('../models/User');
+
+// Helper function to get display name
+const getDisplayName = (user) => {
+  if (user.name) return user.name;
+  if (user.firstName && user.lastName) return `${user.firstName} ${user.lastName}`;
+  if (user.firstName) return user.firstName;
+  if (user.username) return user.username;
+  return user.email ? user.email.split('@')[0] : 'Someone';
+};
 
 // @desc    Follow a user
 // @route   POST /api/users/:userId/follow
@@ -40,8 +53,6 @@ exports.followUser = async (req, res) => {
 
     // Check privacy settings
     if (targetUser.privacySettings?.profileVisibility === 'private') {
-      // Send follow request instead of direct follow
-      // This would need a follow requests collection - for now, just block
       return res.status(403).json({
         success: false,
         message: 'This user has a private profile'
@@ -60,13 +71,18 @@ exports.followUser = async (req, res) => {
 
     // Add to following
     currentUser.following.push(userId);
-    await currentUser.save();
+    await currentUser.save({ validateBeforeSave: false });
 
     // Add to target user's followers
     targetUser.followers.push(currentUserId);
     
+    let isTwin = false;
+    const currentUserName = getDisplayName(currentUser);
+    const targetUserName = getDisplayName(targetUser);
+    
     // Check if it's a twin (mutual follow)
     if (targetUser.following.includes(currentUserId)) {
+      isTwin = true;
       // Add to twins for both users
       if (!currentUser.twins.includes(userId)) {
         currentUser.twins.push(userId);
@@ -75,25 +91,35 @@ exports.followUser = async (req, res) => {
         targetUser.twins.push(currentUserId);
       }
       
-      // Create notification for twin
-      targetUser.notifications.push({
+      // Create notification for twin - using 'follow' type
+      await NotificationService.createNotification({
+        userId: targetUser._id,
         type: 'follow',
-        message: `${currentUser.name} started following you back! You are now twins!`,
-        relatedId: currentUserId,
-        relatedModel: 'User'
+        title: 'New Twin',
+        message: `${currentUserName} started following you back! You are now twins!`,
+        priority: 'high',
+        link: { url: `/profile/${currentUserId}`, text: 'View Profile' },
+        reference: { model: 'User', id: currentUserId },
+        triggeredBy: currentUserId,
+        data: { isTwin: true, followerName: currentUserName, followerId: currentUserId }
       });
     } else {
-      // Create notification for regular follow
-      targetUser.notifications.push({
+      // Send new follower notification - using 'follow' type (not 'system')
+      await NotificationService.createNotification({
+        userId: targetUser._id,
         type: 'follow',
-        message: `${currentUser.name} started following you`,
-        relatedId: currentUserId,
-        relatedModel: 'User'
+        title: 'New Follower',
+        message: `${currentUserName} started following you!`,
+        priority: 'normal',
+        link: { url: `/profile/${currentUserId}`, text: 'View Profile' },
+        reference: { model: 'User', id: currentUserId },
+        triggeredBy: currentUserId,
+        data: { followerName: currentUserName, followerId: currentUserId, isTwin: false }
       });
     }
 
-    await targetUser.save();
-    await currentUser.save();
+    await targetUser.save({ validateBeforeSave: false });
+    await currentUser.save({ validateBeforeSave: false });
 
     // Populate user data for response
     await currentUser.populate('following', 'name avatar isVerified');
@@ -101,10 +127,10 @@ exports.followUser = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: targetUser.following.includes(currentUserId) 
-        ? `You and ${targetUser.name} are now twins! 🎉` 
-        : `You are now following ${targetUser.name}`,
-      isTwin: targetUser.following.includes(currentUserId),
+      message: isTwin 
+        ? `You and ${targetUserName} are now twins!` 
+        : `You are now following ${targetUserName}`,
+      isTwin: isTwin,
       following: currentUser.following,
       twins: currentUser.twins,
       stats: {
@@ -149,6 +175,9 @@ exports.unfollowUser = async (req, res) => {
       });
     }
 
+    const currentUserName = getDisplayName(currentUser);
+    const targetUserName = getDisplayName(targetUser);
+
     // Remove from following
     currentUser.following = currentUser.following.filter(
       id => id.toString() !== userId
@@ -161,7 +190,7 @@ exports.unfollowUser = async (req, res) => {
       );
     }
 
-    await currentUser.save();
+    await currentUser.save({ validateBeforeSave: false });
 
     // Remove from target user's followers
     targetUser.followers = targetUser.followers.filter(
@@ -175,19 +204,24 @@ exports.unfollowUser = async (req, res) => {
       );
     }
 
-    // Create notification for unfollow
-    targetUser.notifications.push({
+    // Create notification for unfollow - using 'follow' type
+    await NotificationService.createNotification({
+      userId: targetUser._id,
       type: 'follow',
-      message: `${currentUser.name} unfollowed you`,
-      relatedId: currentUserId,
-      relatedModel: 'User'
+      title: 'Unfollowed',
+      message: `${currentUserName} unfollowed you`,
+      priority: 'low',
+      link: { url: `/profile/${currentUserId}`, text: 'View Profile' },
+      reference: { model: 'User', id: currentUserId },
+      triggeredBy: currentUserId,
+      data: { unfollowerName: currentUserName, unfollowerId: currentUserId }
     });
 
-    await targetUser.save();
+    await targetUser.save({ validateBeforeSave: false });
 
     res.status(200).json({
       success: true,
-      message: `You have unfollowed ${targetUser.name}`,
+      message: `You have unfollowed ${targetUserName}`,
       following: currentUser.following,
       twins: currentUser.twins,
       stats: {
@@ -237,7 +271,7 @@ exports.getFollowers = async (req, res) => {
     const followers = await User.find({
       _id: { $in: user.followers }
     })
-    .select('name avatar bio isVerified followerCount')
+    .select('firstName lastName username name avatar bio isVerified followerCount')
     .skip(skip)
     .limit(parseInt(limit))
     .sort({ createdAt: -1 });
@@ -248,6 +282,7 @@ exports.getFollowers = async (req, res) => {
       const currentUser = await User.findById(req.user._id);
       followersWithStatus = followers.map(f => ({
         ...f.toObject(),
+        displayName: getDisplayName(f),
         isFollowing: currentUser.following.includes(f._id),
         isTwin: currentUser.twins.includes(f._id)
       }));
@@ -304,7 +339,7 @@ exports.getFollowing = async (req, res) => {
     const following = await User.find({
       _id: { $in: user.following }
     })
-    .select('name avatar bio isVerified followerCount')
+    .select('firstName lastName username name avatar bio isVerified followerCount')
     .skip(skip)
     .limit(parseInt(limit))
     .sort({ createdAt: -1 });
@@ -315,7 +350,8 @@ exports.getFollowing = async (req, res) => {
       const currentUser = await User.findById(req.user._id);
       followingWithStatus = following.map(f => ({
         ...f.toObject(),
-        isFollowing: true, // They are in following list
+        displayName: getDisplayName(f),
+        isFollowing: true,
         isTwin: currentUser.twins.includes(f._id)
       }));
     }
@@ -371,14 +407,19 @@ exports.getTwins = async (req, res) => {
     const twins = await User.find({
       _id: { $in: user.twins }
     })
-    .select('name avatar bio isVerified followerCount')
+    .select('firstName lastName username name avatar bio isVerified followerCount')
     .skip(skip)
     .limit(parseInt(limit))
     .sort({ createdAt: -1 });
 
+    const twinsWithDisplayName = twins.map(t => ({
+      ...t.toObject(),
+      displayName: getDisplayName(t)
+    }));
+
     res.status(200).json({
       success: true,
-      twins,
+      twins: twinsWithDisplayName,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -457,11 +498,12 @@ exports.getFollowSuggestions = async (req, res) => {
     })
     .sort({ followerCount: -1 })
     .limit(parseInt(limit))
-    .select('name avatar bio isVerified followerCount');
+    .select('firstName lastName username name avatar bio isVerified followerCount');
 
     // Mark if they follow the current user
     const suggestionsWithStatus = suggestions.map(s => ({
       ...s.toObject(),
+      displayName: getDisplayName(s),
       followsYou: s.followers.includes(currentUserId)
     }));
 

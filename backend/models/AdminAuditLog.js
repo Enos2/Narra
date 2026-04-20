@@ -1,6 +1,6 @@
 /**
  * File: backend/models/AdminAuditLog.js
- * ADDED: ADMIN_LOGIN and ADMIN_LOGOUT to enum lists
+ * FULLY UPDATED: Added all live privilege, strike, and stream moderation actions
  */
 
 const mongoose = require("mongoose");
@@ -28,7 +28,7 @@ const AdminAuditLogSchema = new mongoose.Schema(
       index: true,
     },
 
-    // WHAT was done - ADDED ADMIN_LOGIN and ADMIN_LOGOUT
+    // WHAT was done
     actionType: {
       type: String,
       required: true,
@@ -44,6 +44,9 @@ const AdminAuditLogSchema = new mongoose.Schema(
         'APPROVE_VIDEO', 'REJECT_VIDEO', 'REMOVE_VIDEO', 'RESTORE_VIDEO',
         'FEATURE_VIDEO', 'UNFEATURE_VIDEO', 'REMOVE_VIDEO_PERMANENT',
         
+        // ===== FLAG ACTIONS =====
+        'ADD_FLAG', 'REMOVE_FLAG', 'FLAG_VIDEO', 'REMOVE_FLAG_VIDEO',
+        
         // ===== USER ACTIONS =====
         'BAN_USER', 'UNBAN_USER', 'VERIFY_USER', 'UNVERIFY_USER',
         'DEACTIVATE_USER', 'ACTIVATE_USER', 'SHADOW_BAN_USER', 
@@ -58,6 +61,13 @@ const AdminAuditLogSchema = new mongoose.Schema(
         'APPROVE_LIVE', 'REJECT_LIVE', 'END_LIVE_STREAM', 'SEND_STREAM_WARNING',
         'SHADOW_BAN_LIVE', 'REMOVE_SHADOW_BAN_LIVE',
         
+        // ===== LIVE PRIVILEGE ACTIONS =====
+        'GRANT_LIVE_PRIVILEGE', 'REVOKE_LIVE_PRIVILEGE',
+        'ADD_LIVE_STRIKE', 'REMOVE_LIVE_STRIKE',
+        'END_LIVE_STREAM_ADMIN', 'SEND_LIVE_WARNING',
+        'APPLY_SHADOW_BAN_LIVE', 'REMOVE_SHADOW_BAN_LIVE',
+        'BAN_USER_FROM_STREAMING', 'LIVE_APPROVED', 'LIVE_REJECTED',
+        
         // ===== CONTENT ACTIONS =====
         'REMOVE_COMMENT', 'SHADOW_BAN_CONTENT', 'REMOVE_SHADOW_BAN_CONTENT',
         
@@ -69,7 +79,7 @@ const AdminAuditLogSchema = new mongoose.Schema(
       ]
     },
     
-    // Human-readable labels - ADDED Admin Login and Admin Logout
+    // Human-readable labels
     actionLabel: {
       type: String,
       required: true,
@@ -84,6 +94,9 @@ const AdminAuditLogSchema = new mongoose.Schema(
         'Approve Video', 'Reject Video', 'Remove Video', 'Restore Video',
         'Feature Video', 'Unfeature Video', 'Permanently Remove Video',
         
+        // Flag Actions
+        'Add Flag', 'Remove Flag', 'Flag Video', 'Remove Flag Video',
+        
         // User
         'Ban User', 'Unban User', 'Verify User', 'Unverify User',
         'Deactivate User', 'Activate User', 'Shadow Ban User', 
@@ -97,6 +110,13 @@ const AdminAuditLogSchema = new mongoose.Schema(
         // Live Stream
         'Approve Live Stream', 'Reject Live Stream', 'End Live Stream', 
         'Send Stream Warning', 'Shadow Ban Live Stream', 'Remove Shadow Ban Live Stream',
+        
+        // Live Privilege Actions
+        'Grant Live Privilege', 'Revoke Live Privilege',
+        'Add Live Strike', 'Remove Live Strike',
+        'End Live Stream (Admin)', 'Send Live Warning',
+        'Apply Shadow Ban to Live', 'Remove Shadow Ban from Live',
+        'Ban User from Streaming', 'Approve Live Stream', 'Reject Live Stream',
         
         // Content
         'Remove Comment', 'Shadow Ban Content', 'Remove Shadow Ban Content',
@@ -113,7 +133,7 @@ const AdminAuditLogSchema = new mongoose.Schema(
     targetType: {
       type: String,
       required: true,
-      enum: ['User', 'Video', 'Admin', 'LiveStream', 'Comment', 'Fundraiser', 'System', 'Moderation']
+      enum: ['User', 'Video', 'Admin', 'LiveStream', 'Comment', 'Fundraiser', 'System', 'Moderation', 'Flag']
     },
     targetId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -186,7 +206,3 @@ AdminAuditLogSchema.index({
 });
 
 module.exports = mongoose.model("AdminAuditLog", AdminAuditLogSchema);
-
-/**
- * File: backend/models/AdminAuditLog.js (END)
- */

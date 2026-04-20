@@ -15,13 +15,12 @@ const adminRoutes = require('./routes/adminRoutes');
 const liveQualificationRoutes = require('./routes/liveQualificationRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
-// ========== ADD AD ROUTES ==========
 const adRoutes = require('./routes/adRoutes');
-// ===================================
-
-// ========== ADD SEARCH ROUTES ==========
 const searchRoutes = require('./routes/searchRoutes');
-// =======================================
+const historyRoutes = require('./routes/historyRoutes');
+const playlistRoutes = require('./routes/playlistRoutes');
+const commentRoutes = require('./routes/commentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Middleware
 const errorHandler = require('./middleware/errorMiddleware');
@@ -69,7 +68,6 @@ io.use(async (socket, next) => {
       return next(new Error('User not found'));
     }
 
-    // Check token version
     if ((user.tokenVersion || 0) !== (decoded.tokenVersion || 0)) {
       return next(new Error('Token expired'));
     }
@@ -84,10 +82,8 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
   console.log(`🔌 Socket connected: ${socket.user.email} (${socket.user._id})`);
 
-  // Join user's personal room
   socket.join(`user:${socket.user._id}`);
 
-  // Handle joining conversation rooms
   socket.on('join-conversations', async (conversationIds) => {
     try {
       const Conversation = require('./models/Conversation');
@@ -104,7 +100,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle typing indicators
   socket.on('typing', (data) => {
     socket.to(`conversation:${data.conversationId}`).emit('user-typing', {
       userId: socket.user._id,
@@ -114,7 +109,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle read receipts
   socket.on('mark-read', async (data) => {
     try {
       const Message = require('./models/Message');
@@ -149,7 +143,6 @@ io.on('connection', (socket) => {
 NOW CONNECT MESSAGE CONTROLLER TO SOCKET.IO
 ========================================
 */
-// Pass io instance to message controller
 const messageController = require('./controllers/messageController');
 if (messageController && typeof messageController.setSocketIO === 'function') {
   messageController.setSocketIO(io);
@@ -254,9 +247,14 @@ app.get('/', (req, res) => {
             <p>✅ Message controller connected to Socket.IO</p>
             <p>✅ Ad management API active</p>
             <p>✅ Unified search API active</p>
+            <p>🆕 Watch history API active (resume playback)</p>
+            <p>🆕 Playlist API active (save videos)</p>
+            <p>🆕 Like/Dislike API active</p>
+            <p>🆕 Comments API active</p>
+            <p>🔔 Notifications API active</p>
           </div>
         </div>
-      </body>
+      </html>
     </html>
   `);
 });
@@ -280,7 +278,12 @@ app.get('/api/health', (req, res) => {
       follow_system: true,
       twin_detection: true,
       ad_management: true,
-      unified_search: true  // Added
+      unified_search: true,
+      watch_history: true,
+      playlists: true,
+      like_dislike: true,
+      comments: true,
+      notifications: true
     }
   });
 });
@@ -298,13 +301,12 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/live-qualification', liveQualificationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/uploads', uploadRoutes);
-// ========== ADD AD ROUTES ==========
 app.use('/api/ads', adRoutes);
-// ===================================
-
-// ========== ADD SEARCH ROUTES ==========
 app.use('/api/search', searchRoutes);
-// =======================================
+app.use('/api/history', historyRoutes);
+app.use('/api/playlists', playlistRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 /*
 ========================================
@@ -345,5 +347,10 @@ server.listen(PORT, () => {
   console.log(`✅ Message controller: CONNECTED`);
   console.log(`📢 Ad management: ACTIVE`);
   console.log(`🔍 Unified search: ACTIVE`);
+  console.log(`🆕 Watch history: ACTIVE (resume playback)`);
+  console.log(`🆕 Playlists: ACTIVE (save videos)`);
+  console.log(`🆕 Like/Dislike: ACTIVE`);
+  console.log(`🆕 Comments: ACTIVE`);
+  console.log(`🔔 Notifications: ACTIVE`);
   console.log('============================================\n');
 });

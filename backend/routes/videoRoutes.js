@@ -1,7 +1,8 @@
 /**
  * File: backend/routes/videoRoutes.js
  * Description: Handles video-related endpoints with proper Express router
- * FULLY UPDATED: Added authentication middleware to protect video endpoints
+ * FULLY UPDATED: Added like/dislike, share tracking, and watch history routes
+ * UPDATED: Added /recommended route before /:id to fix CastError
  */
 
 const express = require('express');
@@ -76,6 +77,9 @@ const getSeriesFields = () => {
 // GET ALL VIDEOS (Public - Only RELEASED videos that are free/public)
 router.get('/', videoController.getVideoFeed);
 
+// GET RECOMMENDED VIDEOS - MUST be BEFORE the /:id route to avoid CastError
+router.get('/recommended', videoController.getRecommendedVideos);
+
 // GET VIDEO BY ID (Public - But with access checks)
 router.get('/:id', videoController.getVideoById);
 
@@ -100,6 +104,36 @@ router.post('/:id/rate', protect, videoController.rateVideo);
 
 // EDIT VIDEO (Creator only)
 router.put('/:id/edit', protect, videoController.editVideo);
+
+/* ================================
+   🆕 NEW: LIKE / DISLIKE ROUTES
+================================ */
+
+// LIKE VIDEO (toggle like/unlike)
+router.post('/:id/like', protect, videoController.likeVideo);
+
+// DISLIKE VIDEO (toggle dislike/undislike)
+router.post('/:id/dislike', protect, videoController.dislikeVideo);
+
+// GET USER'S LIKE/DISLIKE STATUS
+router.get('/:id/interaction-status', protect, videoController.getVideoInteractionStatus);
+
+/* ================================
+   🆕 NEW: SHARE TRACKING ROUTE
+================================ */
+
+// TRACK VIDEO SHARE
+router.post('/:id/share', protect, videoController.trackShare);
+
+/* ================================
+   🆕 NEW: WATCH HISTORY WITH RESUME
+================================ */
+
+// RECORD WATCH PROGRESS (call periodically while watching)
+router.post('/:id/progress', protect, videoController.recordWatchProgress);
+
+// GET RESUME POSITION (call when loading video)
+router.get('/:id/resume', protect, videoController.getResumePosition);
 
 /* ================================
    USER DASHBOARD ROUTES (Require Authentication)

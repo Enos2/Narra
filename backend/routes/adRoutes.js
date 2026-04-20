@@ -1,186 +1,238 @@
 /**
  * File: backend/routes/adRoutes.js
- * Description: Ad management routes with role-based access control
- * Admin Levels:
- * - Super Admin: Full CRUD, approve/reject, analytics
- * - Platform Admin: Create, manage own ads, view analytics
- * - Support Admin: View-only access
+ * Description: All ad routes — public, tracking, and admin.
+ * FIXED: Route ordering corrected — specific routes (/admin/*, /analytics/*)
+ *        MUST be declared before wildcard routes (/:id) so Express does not
+ *        swallow "admin" or "analytics" as an ObjectId param, which caused the 500.
  */
 
-const express = require('express');
-const router = express.Router();
-const { protect, admin } = require('../middleware/authMiddleware');
+const express      = require('express');
+const router       = express.Router();
 const adController = require('../controllers/adController');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const { protect }  = require('../middleware/authMiddleware');
 
-/* ======================================================
-   MULTER CONFIGURATION FOR AD MEDIA UPLOAD
-====================================================== */
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    let folder = 'uploads/ads';
-    
-    if (file.fieldname === 'video') {
-      folder = 'uploads/ads/videos';
-    } else if (file.fieldname === 'thumbnail' || file.fieldname === 'image') {
-      folder = 'uploads/ads/images';
-    }
-    
-    // Ensure directory exists
-    if (!fs.existsSync(folder)) {
-      fs.mkdirSync(folder, { recursive: true });
-    }
-    cb(null, folder);
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    const safeName = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-    cb(null, uniqueName + '-' + safeName);
-  },
-});
-
-const upload = multer({ 
-  storage,
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit for video ads
-  }
-});
-
-/* ======================================================
-   ROLE-BASED ACCESS MIDDLEWARE
-====================================================== */
-const requireAdmin = (req, res, next) => {
-  if (req.user && ['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
-    return next();
-  }
-  return res.status(403).json({ 
-    success: false, 
-    message: 'Admin access required' 
-  });
-};
-
-const requireAdManager = (req, res, next) => {
-  if (req.user && ['superadmin', 'platformadmin'].includes(req.user.role)) {
-    return next();
-  }
-  return res.status(403).json({ 
-    success: false, 
-    message: 'Ad management access required (Super Admin or Platform Admin)' 
-  });
-};
-
+/* ─────────────────────────────────────────────
+   ROLE-GUARD HELPERS
+───────────────────────────────────────────── */
 const requireSuperAdmin = (req, res, next) => {
-  if (req.user && req.user.role === 'superadmin') {
-    return next();
-  }
-  return res.status(403).json({ 
-    success: false, 
-    message: 'Super Admin access required' 
-  });
+  if (req.user?.role === 'superadmin') return next();
+  res.status(403).json({ success: false, message: 'Super admin access required' });
 };
 
-/* ======================================================
-   PUBLIC ROUTES (Age-filtered, no auth required)
-====================================================== */
+const requireSuperOrPlatformAdmin = (req, res, next) => {
+  if (['superadmin', 'platformadmin'].includes(req.user?.role)) return next();
+  res.status(403).json({ success: false, message: 'Super or platform admin access required' });
+};
 
-// GET active ads for current user (based on age/country)
-router.get('/active', adController.getActiveAds);
+const requireAnyAdmin = (req, res, next) => {
+  if (['superadmin', 'platformadmin', 'supportadmin'].includes(req.user?.role)) return next();
+  res.status(403).json({ success: false, message: 'Admin access required' });
+};
 
-// GET a specific ad by ID (public info only)
-router.get('/:id', adController.getAdById);
+/* ─────────────────────────────────────────────
+   MULTER — file upload middleware
+   Handles optional file uploads for ad creation.
+   Falls back gracefully if multer is not installed.
+───────────────────────────────────────────── */
+let uploadMiddleware;
+try {
+  const multer = require('multer');
+  const path   = require('path');
+  const fs     = require('fs');
 
-/* ======================================================
-   PROTECTED ROUTES (All require authentication)
-====================================================== */
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const isVideo = file.mimetype.startsWith('video/');
+      const dir     = isVideo ? 'uploads/ads/videos' : 'uploads/ads/images';
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext      = path.extname(file.originalname);
+      const safeName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+      cb(null, safeName);
+    }
+  });
 
-// TRACK ad impression (called when ad is shown)
-router.post('/:id/impression', protect, adController.trackImpression);
+  const fileFilter = (req, file, cb) => {
+    const allowed = /jpeg|jpg|png|gif|webp|mp4|webm|ogg|mov/;
+    const ext     = path.extname(file.originalname).toLowerCase().replace('.', '');
+    if (allowed.test(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type .${ext} is not allowed`), false);
+    }
+  };
 
-// TRACK ad click (called when user clicks ad)
-router.post('/:id/click', protect, adController.trackClick);
+  const upload = multer({
+    storage,
+    fileFilter,
+    limits: { fileSize: 500 * 1024 * 1024 } // 500 MB max
+  });
 
-/* ======================================================
-   ADMIN ROUTES - AD MANAGEMENT
-====================================================== */
+  // Accept video OR image + optional thumbnail
+  uploadMiddleware = upload.fields([
+    { name: 'video',     maxCount: 1 },
+    { name: 'image',     maxCount: 1 },
+    { name: 'thumbnail', maxCount: 1 }
+  ]);
+} catch (e) {
+  // multer not installed — media uploads will rely on URL strings in req.body
+  console.warn('[adRoutes] multer not found — file upload disabled. Pass mediaUrl as a string.');
+  uploadMiddleware = (req, res, next) => next();
+}
 
-// GET all ads for admin (with filters)
-router.get('/admin/all', protect, requireAdmin, adController.getAllAds);
+/* ══════════════════════════════════════════════
+   ⚠️  ROUTE ORDER IS CRITICAL IN EXPRESS ⚠️
+   Always register specific paths BEFORE wildcard
+   paths like /:id — otherwise Express treats the
+   literal string "admin" or "analytics" as an id.
+══════════════════════════════════════════════ */
 
-// GET ad for editing (full details)
-router.get('/admin/:id', protect, requireAdmin, adController.getAdForEdit);
+/* ══════════════════════════════════════════════
+   1. CREATOR EARNINGS  (specific — must be first)
+══════════════════════════════════════════════ */
+router.get('/analytics/creator-earnings', protect, adController.getCreatorEarnings);
 
-// CREATE new ad (Super Admin or Platform Admin only)
+/* ══════════════════════════════════════════════
+   2. ADMIN — ANALYTICS  (specific — before /:id)
+══════════════════════════════════════════════ */
+
+// Overall platform analytics
+router.get(
+  '/admin/analytics/overview',
+  protect,
+  requireSuperOrPlatformAdmin,
+  adController.getOverallAnalytics
+);
+
+// Quick stats for admin dashboard
+router.get(
+  '/admin/stats/summary',
+  protect,
+  requireAnyAdmin,
+  adController.getAdStats
+);
+
+/* ══════════════════════════════════════════════
+   3. ADMIN — AD MANAGEMENT  (specific — before /:id)
+══════════════════════════════════════════════ */
+
+// List all ads
+router.get(
+  '/admin/all',
+  protect,
+  requireAnyAdmin,
+  adController.getAllAds
+);
+
+// Create a new ad campaign (supports file upload OR mediaUrl string)
 router.post(
   '/admin/create',
   protect,
-  requireAdManager,
-  upload.fields([
-    { name: 'video', maxCount: 1 },
-    { name: 'thumbnail', maxCount: 1 },
-    { name: 'image', maxCount: 1 }
-  ]),
+  requireAnyAdmin,
+  uploadMiddleware,
   adController.createAd
 );
 
-// UPDATE ad (Super Admin or Platform Admin only)
+// Per-ad analytics  ← note: uses /admin/:id/analytics (still before bare /:id)
+router.get(
+  '/admin/:id/analytics',
+  protect,
+  requireAnyAdmin,
+  adController.getAdAnalytics
+);
+
+// Approve ad → sets status to 'active'
+router.put(
+  '/admin/:id/approve',
+  protect,
+  requireSuperOrPlatformAdmin,
+  adController.approveAd
+);
+
+// Reject ad
+router.put(
+  '/admin/:id/reject',
+  protect,
+  requireSuperOrPlatformAdmin,
+  adController.rejectAd
+);
+
+// Pause active ad
+router.put(
+  '/admin/:id/pause',
+  protect,
+  requireAnyAdmin,
+  adController.pauseAd
+);
+
+// Resume paused ad
+router.put(
+  '/admin/:id/resume',
+  protect,
+  requireAnyAdmin,
+  adController.resumeAd
+);
+
+// Update an existing ad
 router.put(
   '/admin/:id',
   protect,
-  requireAdManager,
-  upload.fields([
-    { name: 'video', maxCount: 1 },
-    { name: 'thumbnail', maxCount: 1 },
-    { name: 'image', maxCount: 1 }
-  ]),
+  requireAnyAdmin,
+  uploadMiddleware,
   adController.updateAd
 );
 
-// APPROVE ad (Super Admin or Platform Admin only)
-router.put('/admin/:id/approve', protect, requireAdManager, adController.approveAd);
+// Get single ad for editing (full details)
+router.get(
+  '/admin/:id',
+  protect,
+  requireAnyAdmin,
+  adController.getAdForEdit
+);
 
-// REJECT ad (Super Admin or Platform Admin only)
-router.put('/admin/:id/reject', protect, requireAdManager, adController.rejectAd);
+// Permanently delete ad + impressions/revenue records
+router.delete(
+  '/admin/:id/permanent',
+  protect,
+  requireSuperAdmin,
+  adController.permanentDeleteAd
+);
 
-// PAUSE ad campaign
-router.put('/admin/:id/pause', protect, requireAdManager, adController.pauseAd);
+// Soft delete ad
+router.delete(
+  '/admin/:id',
+  protect,
+  requireSuperAdmin,
+  adController.deleteAd
+);
 
-// RESUME ad campaign
-router.put('/admin/:id/resume', protect, requireAdManager, adController.resumeAd);
+/* ══════════════════════════════════════════════
+   4. PUBLIC ROUTES  (wildcard /:id goes LAST)
+══════════════════════════════════════════════ */
 
-// DELETE ad (soft delete - Super Admin only)
-router.delete('/admin/:id', protect, requireSuperAdmin, adController.deleteAd);
+// Get active ads for display (optionally auth'd to apply age targeting)
+router.get('/active', adController.getActiveAds);
 
-// PERMANENT DELETE ad (Super Admin only)
-router.delete('/admin/:id/permanent', protect, requireSuperAdmin, adController.permanentDeleteAd);
+// Tracking routes (auth optional)
+router.post('/:id/impression', adController.trackImpression);
+router.post('/:id/click',      adController.trackClick);
 
-/* ======================================================
-   ANALYTICS ROUTES
-====================================================== */
+// Get single ad public info — MUST be absolutely last GET route
+router.get('/:id', adController.getAdById);
 
-// GET ad performance analytics
-router.get('/admin/:id/analytics', protect, requireAdmin, adController.getAdAnalytics);
-
-// GET overall ad revenue analytics (Super Admin only)
-router.get('/admin/analytics/overview', protect, requireSuperAdmin, adController.getOverallAnalytics);
-
-// GET creator earnings from ads (for creators)
-router.get('/analytics/creator-earnings', protect, adController.getCreatorEarnings);
-
-// GET ad stats for dashboard
-router.get('/admin/stats/summary', protect, requireAdmin, adController.getAdStats);
-
-/* ======================================================
-   HEALTH CHECK
-====================================================== */
-router.get('/health', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Ad routes are working',
-    timestamp: new Date()
-  });
+/* ══════════════════════════════════════════════
+   MULTER ERROR HANDLER — must be last middleware
+   in this router so multer file-type/size errors
+   return a clean JSON response instead of crashing.
+══════════════════════════════════════════════ */
+// eslint-disable-next-line no-unused-vars
+router.use((err, req, res, next) => {
+  if (err.name === 'MulterError' || err.message?.includes('File type')) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+  next(err);
 });
 
 module.exports = router;

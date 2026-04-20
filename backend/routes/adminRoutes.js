@@ -1,9 +1,8 @@
 /**
  * File: backend/routes/adminRoutes.js
- * COMPLETE FIXED VERSION - ALL ROUTES INCLUDED
- * FIXED: Removed VIEW_MODERATION audit logging from videos/moderation route
- * ADDED: Admin Profile routes for self-management
- * ADDED: Get admins created by admin route for Super Admin profile
+ * COMPLETE FIXED VERSION - ALL ROUTES INCLUDED WITH NOTIFICATIONS
+ * UPDATED: Added remove strike route and fixed all audit logging
+ * FIXED: Remove strike route now uses DELETE method (was POST)
  */
 
 const express = require('express');
@@ -12,13 +11,13 @@ const adminController = require('../controllers/adminController');
 const liveController = require('../controllers/liveController');
 const Video = require('../models/Video');
 const User = require('../models/User');
+const NotificationService = require('../services/notificationService');
 
 /* ========================
    MIDDLEWARE
 ======================== */
 const { protect } = require('../middleware/authMiddleware');
 
-// Helper middleware for role checks
 const requireSuperAdmin = (req, res, next) => {
   if (req.user.role === 'superadmin') return next();
   res.status(403).json({ success: false, message: 'Super admin access required' });
@@ -78,11 +77,9 @@ const logAdminAction = async ({ admin, actionType, actionLabel, targetType, targ
 };
 
 /* =====================================================
-   VIDEO MODERATION ROUTES - COMPLETE WITH ALL ACTIONS
+   VIDEO MODERATION ROUTES
 ===================================================== */
 
-// GET VIDEOS FOR MODERATION
-// FIXED: Removed VIEW_MODERATION audit logging to prevent duplicate logs
 router.get('/videos/moderation', protect, requireAnyAdmin, async (req, res) => {
   try {
     const { status = 'pending' } = req.query;
@@ -108,10 +105,6 @@ router.get('/videos/moderation', protect, requireAnyAdmin, async (req, res) => {
       .populate('creator', 'name email username avatar')
       .sort({ uploadedAt: -1 });
 
-    // FIXED: REMOVED AUDIT LOGGING - This was causing duplicate logs
-    // Audit logs should only be created for actual actions (approve, reject, delete, etc.)
-    // NOT for simply viewing the moderation queue
-
     return res.status(200).json({
       success: true,
       count: videos.length,
@@ -122,24 +115,28 @@ router.get('/videos/moderation', protect, requireAnyAdmin, async (req, res) => {
     console.error('Error fetching videos for moderation:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to fetch videos for moderation',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Failed to fetch videos for moderation'
     });
   }
 });
 
-// GET VIDEO STATISTICS
+// GET VIDEO STATISTICS - Count 'released' as approved
 router.get('/videos/statistics', protect, requireAnyAdmin, async (req, res) => {
   try {
-    const [pending, approved, rejected, total, flagged, restricted, shadowBanned, removed] = await Promise.all([
-      Video.countDocuments({ status: 'pending', isDeleted: { $ne: true } }),
-      Video.countDocuments({ status: 'approved', isDeleted: { $ne: true } }),
-      Video.countDocuments({ status: 'rejected', isDeleted: { $ne: true } }),
-      Video.countDocuments({ isDeleted: { $ne: true } }),
+    const [
+      approved,
+      flagged,
+      restricted,
+      shadowBanned,
+      removed,
+      total
+    ] = await Promise.all([
+      Video.countDocuments({ status: 'released', isDeleted: { $ne: true } }),
       Video.countDocuments({ status: 'flagged', isDeleted: { $ne: true } }),
       Video.countDocuments({ status: 'restricted', isDeleted: { $ne: true } }),
       Video.countDocuments({ status: 'shadowBanned', isDeleted: { $ne: true } }),
-      Video.countDocuments({ status: 'removed', isDeleted: { $ne: true } })
+      Video.countDocuments({ status: 'removed', isDeleted: { $ne: true } }),
+      Video.countDocuments({ isDeleted: { $ne: true } })
     ]);
 
     const movies = await Video.countDocuments({ 
@@ -155,9 +152,7 @@ router.get('/videos/statistics', protect, requireAnyAdmin, async (req, res) => {
     return res.status(200).json({
       success: true,
       statistics: {
-        pending,
         approved,
-        rejected,
         flagged,
         restricted,
         shadowBanned,
@@ -166,9 +161,7 @@ router.get('/videos/statistics', protect, requireAnyAdmin, async (req, res) => {
         movies,
         series,
         byStatus: {
-          pending,
           approved,
-          rejected,
           flagged,
           restricted,
           shadowBanned,
@@ -192,13 +185,10 @@ router.put('/videos/:id/approve', protect, requireAnyAdmin, async (req, res) => 
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
-    video.status = 'approved';
+    video.status = 'released';
     video.approved = true;
     video.rejected = false;
     video.rejectionReason = null;
@@ -207,6 +197,16 @@ router.put('/videos/:id/approve', protect, requireAnyAdmin, async (req, res) => 
     video.approvedAt = new Date();
     
     await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_approved',
+        title: 'Your video has been approved',
+        message: `Your video "${video.title}" has been approved and is now live.`,
+        data: { videoId: video._id, videoTitle: video.title }
+      });
+    }
 
     await logAdminAction({
       admin: req.user,
@@ -218,27 +218,13 @@ router.put('/videos/:id/approve', protect, requireAnyAdmin, async (req, res) => 
       description: `Approved video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        approvedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, approvedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video approved successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
-    });
+    res.json({ success: true, message: 'Video approved successfully' });
   } catch (err) {
     console.error('APPROVE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to approve video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to approve video' });
   }
 });
 
@@ -247,18 +233,12 @@ router.put('/videos/:id/reject', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
     const { reason } = req.body;
     if (!reason || !reason.trim()) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Rejection reason is required' 
-      });
+      return res.status(400).json({ success: false, message: 'Rejection reason is required' });
     }
 
     video.status = 'rejected';
@@ -268,6 +248,16 @@ router.put('/videos/:id/reject', protect, requireAnyAdmin, async (req, res) => {
     video.rejectionDetails = reason.trim();
     
     await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_rejected',
+        title: 'Your video has been rejected',
+        message: `Your video "${video.title}" has been rejected. Reason: ${reason.trim()}`,
+        data: { videoId: video._id, videoTitle: video.title, reason: reason.trim() }
+      });
+    }
 
     await logAdminAction({
       admin: req.user,
@@ -280,132 +270,13 @@ router.put('/videos/:id/reject', protect, requireAnyAdmin, async (req, res) => {
       reason: reason.trim(),
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        rejectedBy: req.user.email,
-        rejectionReason: reason.trim()
-      }
+      metadata: { videoTitle: video.title, rejectedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video rejected successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status,
-        rejectionReason: video.rejectionReason
-      }
-    });
+    res.json({ success: true, message: 'Video rejected successfully' });
   } catch (err) {
     console.error('REJECT VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to reject video' 
-    });
-  }
-});
-
-// REMOVE VIDEO (Soft Delete)
-router.delete('/videos/:id/remove', protect, requireAnyAdmin, async (req, res) => {
-  try {
-    const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
-
-    video.status = 'removed';
-    video.isDeleted = true;
-    video.deletedAt = new Date();
-    video.deletedBy = req.user._id;
-    await video.save();
-
-    await logAdminAction({
-      admin: req.user,
-      actionType: 'REMOVE_VIDEO',
-      actionLabel: 'Remove Video',
-      targetType: 'Video',
-      targetId: video._id,
-      targetName: video.title,
-      description: `Removed video "${video.title}"`,
-      reason: req.body.reason || 'Removed by admin',
-      ipAddress: req.ip,
-      userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        removedBy: req.user.email
-      }
-    });
-
-    res.json({ 
-      success: true, 
-      message: 'Video removed successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
-    });
-  } catch (err) {
-    console.error('REMOVE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove video' 
-    });
-  }
-});
-
-// RESTORE VIDEO
-router.put('/videos/:id/restore', protect, requireAnyAdmin, async (req, res) => {
-  try {
-    const video = await Video.findById(req.params.id);
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
-    }
-
-    video.status = 'approved';
-    video.isDeleted = false;
-    video.deletedAt = null;
-    video.deletedBy = null;
-    await video.save();
-
-    await logAdminAction({
-      admin: req.user,
-      actionType: 'RESTORE_VIDEO',
-      actionLabel: 'Restore Video',
-      targetType: 'Video',
-      targetId: video._id,
-      targetName: video.title,
-      description: `Restored video "${video.title}"`,
-      ipAddress: req.ip,
-      userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        restoredBy: req.user.email
-      }
-    });
-
-    res.json({ 
-      success: true, 
-      message: 'Video restored successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
-    });
-  } catch (err) {
-    console.error('RESTORE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to restore video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to reject video' });
   }
 });
 
@@ -414,10 +285,7 @@ router.put('/videos/:id/restrict', protect, requireAnyAdmin, async (req, res) =>
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
     const { reason } = req.body;
@@ -427,6 +295,16 @@ router.put('/videos/:id/restrict', protect, requireAnyAdmin, async (req, res) =>
     video.restrictedBy = req.user._id;
     video.restrictionReason = reason || 'Restricted by admin';
     await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_restricted',
+        title: 'Your video has been restricted',
+        message: `Your video "${video.title}" has been restricted. Reason: ${video.restrictionReason}`,
+        data: { videoId: video._id, videoTitle: video.title, reason: video.restrictionReason }
+      });
+    }
 
     await logAdminAction({
       admin: req.user,
@@ -439,27 +317,13 @@ router.put('/videos/:id/restrict', protect, requireAnyAdmin, async (req, res) =>
       reason: video.restrictionReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        restrictedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, restrictedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video restricted successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
-    });
+    res.json({ success: true, message: 'Video restricted successfully' });
   } catch (err) {
     console.error('RESTRICT VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to restrict video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to restrict video' });
   }
 });
 
@@ -468,18 +332,25 @@ router.put('/videos/:id/remove-restriction', protect, requireAnyAdmin, async (re
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
-    video.status = 'approved';
+    video.status = 'released';
     video.restricted = false;
     video.restrictedAt = null;
     video.restrictedBy = null;
     video.restrictionReason = null;
     await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_restriction_removed',
+        title: 'Restriction removed from your video',
+        message: `The restriction on your video "${video.title}" has been removed.`,
+        data: { videoId: video._id, videoTitle: video.title }
+      });
+    }
 
     await logAdminAction({
       admin: req.user,
@@ -491,27 +362,13 @@ router.put('/videos/:id/remove-restriction', protect, requireAnyAdmin, async (re
       description: `Removed restriction from video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        restrictionRemovedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, restrictionRemovedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video restriction removed successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
-    });
+    res.json({ success: true, message: 'Video restriction removed successfully' });
   } catch (err) {
     console.error('REMOVE RESTRICTION ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove video restriction' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to remove video restriction' });
   }
 });
 
@@ -520,10 +377,7 @@ router.put('/videos/:id/flag', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
     const { reason } = req.body;
@@ -533,6 +387,16 @@ router.put('/videos/:id/flag', protect, requireAnyAdmin, async (req, res) => {
     video.flaggedBy = req.user._id;
     video.flagReason = reason || 'Flagged by admin';
     await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_flagged',
+        title: 'Your video has been flagged',
+        message: `Your video "${video.title}" has been flagged for review. Reason: ${video.flagReason}`,
+        data: { videoId: video._id, videoTitle: video.title, reason: video.flagReason }
+      });
+    }
 
     await logAdminAction({
       admin: req.user,
@@ -545,27 +409,13 @@ router.put('/videos/:id/flag', protect, requireAnyAdmin, async (req, res) => {
       reason: video.flagReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        flaggedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, flaggedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video flagged successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
-    });
+    res.json({ success: true, message: 'Video flagged successfully' });
   } catch (err) {
     console.error('FLAG VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to flag video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to flag video' });
   }
 });
 
@@ -574,18 +424,25 @@ router.put('/videos/:id/remove-flag', protect, requireAnyAdmin, async (req, res)
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
-    video.status = 'approved';
+    video.status = 'released';
     video.flagged = false;
     video.flaggedAt = null;
     video.flaggedBy = null;
     video.flagReason = null;
     await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_flag_removed',
+        title: 'Flag removed from your video',
+        message: `The flag on your video "${video.title}" has been removed.`,
+        data: { videoId: video._id, videoTitle: video.title }
+      });
+    }
 
     await logAdminAction({
       admin: req.user,
@@ -597,27 +454,13 @@ router.put('/videos/:id/remove-flag', protect, requireAnyAdmin, async (req, res)
       description: `Removed flag from video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        flagRemovedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, flagRemovedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video flag removed successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status
-      }
-    });
+    res.json({ success: true, message: 'Video flag removed successfully' });
   } catch (err) {
     console.error('REMOVE FLAG ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove video flag' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to remove video flag' });
   }
 });
 
@@ -626,10 +469,7 @@ router.put('/videos/:id/shadow-ban', protect, requireSuperOrPlatformAdmin, async
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
     const { reason, countries = [], continents = [] } = req.body;
@@ -642,6 +482,16 @@ router.put('/videos/:id/shadow-ban', protect, requireSuperOrPlatformAdmin, async
     video.shadowBanReason = reason || 'Shadow banned by admin';
     await video.save();
 
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_shadow_banned',
+        title: 'Your video has been shadow banned',
+        message: `Your video "${video.title}" has been shadow banned. It will have limited visibility. Reason: ${video.shadowBanReason}`,
+        data: { videoId: video._id, videoTitle: video.title, reason: video.shadowBanReason }
+      });
+    }
+
     await logAdminAction({
       admin: req.user,
       actionType: 'SHADOW_BAN_VIDEO',
@@ -653,30 +503,13 @@ router.put('/videos/:id/shadow-ban', protect, requireSuperOrPlatformAdmin, async
       reason: video.shadowBanReason,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        countries,
-        continents,
-        shadowBannedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, countries, continents, shadowBannedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Video shadow banned successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status,
-        isShadowBanned: true
-      }
-    });
+    res.json({ success: true, message: 'Video shadow banned successfully' });
   } catch (err) {
     console.error('SHADOW BAN VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to shadow ban video' 
-    });
+    res.status(500).json({ success: false, message: 'Failed to shadow ban video' });
   }
 });
 
@@ -685,13 +518,10 @@ router.put('/videos/:id/remove-shadow-ban', protect, requireSuperOrPlatformAdmin
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
-    video.status = 'approved';
+    video.status = 'released';
     video.isShadowBanned = false;
     video.shadowBannedCountries = [];
     video.shadowBannedContinents = [];
@@ -699,6 +529,16 @@ router.put('/videos/:id/remove-shadow-ban', protect, requireSuperOrPlatformAdmin
     video.shadowBanAppliedAt = null;
     video.shadowBanReason = null;
     await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_shadow_ban_removed',
+        title: 'Shadow ban removed from your video',
+        message: `The shadow ban on your video "${video.title}" has been removed.`,
+        data: { videoId: video._id, videoTitle: video.title }
+      });
+    }
 
     await logAdminAction({
       admin: req.user,
@@ -710,28 +550,102 @@ router.put('/videos/:id/remove-shadow-ban', protect, requireSuperOrPlatformAdmin
       description: `Removed shadow ban from video "${video.title}"`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        shadowBanRemovedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, shadowBanRemovedBy: req.user.email }
     });
 
-    res.json({ 
-      success: true, 
-      message: 'Shadow ban removed successfully',
-      video: {
-        _id: video._id,
-        title: video.title,
-        status: video.status,
-        isShadowBanned: false
-      }
-    });
+    res.json({ success: true, message: 'Shadow ban removed successfully' });
   } catch (err) {
     console.error('REMOVE SHADOW BAN VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to remove shadow ban from video' 
+    res.status(500).json({ success: false, message: 'Failed to remove shadow ban from video' });
+  }
+});
+
+// REMOVE VIDEO (Soft Delete)
+router.delete('/videos/:id/remove', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const video = await Video.findById(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    video.status = 'removed';
+    video.isDeleted = true;
+    video.deletedAt = new Date();
+    video.deletedBy = req.user._id;
+    await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_deleted',
+        title: 'Your video has been removed',
+        message: `Your video "${video.title}" has been removed from the platform. Reason: ${req.body.reason || 'Violation of guidelines'}`,
+        data: { videoId: video._id, videoTitle: video.title, reason: req.body.reason || 'Violation of guidelines' }
+      });
+    }
+
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'REMOVE_VIDEO',
+      actionLabel: 'Remove Video',
+      targetType: 'Video',
+      targetId: video._id,
+      targetName: video.title,
+      description: `Removed video "${video.title}"`,
+      reason: req.body.reason || 'Removed by admin',
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { videoTitle: video.title, removedBy: req.user.email }
     });
+
+    res.json({ success: true, message: 'Video removed successfully' });
+  } catch (err) {
+    console.error('REMOVE VIDEO ERROR:', err);
+    res.status(500).json({ success: false, message: 'Failed to remove video' });
+  }
+});
+
+// RESTORE VIDEO
+router.put('/videos/:id/restore', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const video = await Video.findById(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    video.status = 'released';
+    video.isDeleted = false;
+    video.deletedAt = null;
+    video.deletedBy = null;
+    await video.save();
+
+    if (video.creator) {
+      await NotificationService.createNotification({
+        userId: video.creator,
+        type: 'video_restored',
+        title: 'Your video has been restored',
+        message: `Your video "${video.title}" has been restored and is now visible again.`,
+        data: { videoId: video._id, videoTitle: video.title }
+      });
+    }
+
+    await logAdminAction({
+      admin: req.user,
+      actionType: 'RESTORE_VIDEO',
+      actionLabel: 'Restore Video',
+      targetType: 'Video',
+      targetId: video._id,
+      targetName: video.title,
+      description: `Restored video "${video.title}"`,
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent'),
+      metadata: { videoTitle: video.title, restoredBy: req.user.email }
+    });
+
+    res.json({ success: true, message: 'Video restored successfully' });
+  } catch (err) {
+    console.error('RESTORE VIDEO ERROR:', err);
+    res.status(500).json({ success: false, message: 'Failed to restore video' });
   }
 });
 
@@ -740,10 +654,7 @@ router.delete('/videos/:id/permanent', protect, requireSuperAdmin, async (req, r
   try {
     const video = await Video.findById(req.params.id);
     if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
     await logAdminAction({
@@ -757,43 +668,25 @@ router.delete('/videos/:id/permanent', protect, requireSuperAdmin, async (req, r
       reason: req.body.reason || 'Permanently deleted by superadmin',
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        videoTitle: video.title,
-        videoUrl: video.videoUrl,
-        thumbnailUrl: video.thumbnailUrl,
-        permanentlyDeletedBy: req.user.email
-      }
+      metadata: { videoTitle: video.title, permanentlyDeletedBy: req.user.email }
     });
 
     await video.deleteOne();
 
-    res.json({ 
-      success: true, 
-      message: 'Video permanently deleted successfully',
-      deletedVideo: {
-        _id: video._id,
-        title: video.title
-      }
-    });
+    res.json({ success: true, message: 'Video permanently deleted successfully' });
   } catch (err) {
     console.error('PERMANENT DELETE VIDEO ERROR:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to permanently delete video: ' + err.message 
-    });
+    res.status(500).json({ success: false, message: 'Failed to permanently delete video' });
   }
 });
 
 // FEATURE VIDEO
 router.put('/videos/:id/feature', protect, requireAnyAdmin, adminController.featureVideo);
-
-// UNFEATURE VIDEO
 router.put('/videos/:id/unfeature', protect, requireAnyAdmin, adminController.unfeatureVideo);
 
 /* =====================================================
    LIVE STREAM MODERATION ROUTES
 ===================================================== */
-
 router.get('/live-streams', protect, requireAnyAdmin, liveController.getAdminLiveStreams);
 router.get('/live-streams/:id', protect, requireAnyAdmin, liveController.getAdminLiveStreamDetails);
 router.post('/live-streams/:id/end', protect, requireSuperOrPlatformAdmin, liveController.endLiveStreamAdmin);
@@ -801,13 +694,17 @@ router.post('/live-streams/:id/warning', protect, requireSuperOrPlatformAdmin, l
 router.get('/live-streams/:id/reports', protect, requireAnyAdmin, liveController.getLiveStreamReports);
 router.post('/live-streams/:id/shadow-ban', protect, requireSuperOrPlatformAdmin, liveController.applyShadowBanToLive);
 router.post('/live-streams/:id/remove-shadow-ban', protect, requireSuperOrPlatformAdmin, liveController.removeShadowBanFromLive);
-router.post('/users/:id/strikes/:strikeId/remove', protect, requireSuperOrPlatformAdmin, liveController.removeStrike);
 router.post('/users/:id/ban-streaming', protect, requireSuperAdmin, liveController.banUserFromStreaming);
+
+/* =====================================================
+   LIVE STRIKE ROUTES - FIXED: Using DELETE method
+===================================================== */
+// REMOVE STRIKE FROM USER - DELETE method (not POST)
+router.delete('/users/:userId/strikes/:strikeId', protect, requireSuperOrPlatformAdmin, liveController.removeStrike);
 
 /* =====================================================
    ADMIN MANAGEMENT (SUPER ADMIN ONLY)
 ===================================================== */
-
 router.post('/admins', protect, requireSuperAdmin, adminController.createAdmin);
 router.get('/admins', protect, requireSuperOrPlatformAdmin, adminController.getAllAdmins);
 router.get('/admins/inactive', protect, requireSuperOrPlatformAdmin, adminController.getInactiveAdmins);
@@ -819,39 +716,21 @@ router.delete('/admins/:id', protect, requireSuperAdmin, adminController.deleteA
 router.delete('/admins/:id/permanent', protect, requireSuperAdmin, adminController.permanentlyDeleteAccount);
 router.put('/admins/:id/toggle-support', protect, requirePlatformAdmin, adminController.toggleSupportAdmin);
 router.post('/admins/:id/force-logout', protect, requireAnyAdmin, adminController.forceAdminLogout);
-
-/* =====================================================
-   NEW ROUTE: GET ADMINS CREATED BY A SPECIFIC ADMIN
-   (Super Admin only - for profile page)
-===================================================== */
 router.get('/admins/created-by/:adminId', protect, requireSuperAdmin, adminController.getAdminsCreatedByAdmin);
 
 /* =====================================================
    USER MANAGEMENT
 ===================================================== */
-
-// GET ALL REGULAR USERS (NON-ADMINS)
 router.get('/users', protect, requireAnyAdmin, adminController.getAllUsers);
-
-// GET SINGLE USER
 router.get('/users/:id', protect, requireAnyAdmin, adminController.getUserById);
-
-// DEACTIVATE USER
 router.put('/users/:id/deactivate', protect, requireSuperAdmin, adminController.deactivateUser);
-
-// ACTIVATE USER
 router.put('/users/:id/activate', protect, requireSuperAdmin, adminController.activateUser);
-
-// DELETE USER (SOFT)
 router.delete('/users/:id', protect, requireSuperAdmin, adminController.deleteUser);
-
-// PERMANENT DELETE USER
 router.delete('/users/:id/permanent', protect, requireSuperAdmin, adminController.permanentlyDeleteAccount);
 
 /* =====================================================
    USER MODERATION
 ===================================================== */
-
 router.post('/users/:id/ban', protect, requireAnyAdmin, adminController.banUser);
 router.post('/users/:id/unban', protect, requireAnyAdmin, adminController.unbanUser);
 router.post('/users/:id/verify', protect, requireAnyAdmin, adminController.verifyUser);
@@ -862,7 +741,6 @@ router.post('/users/:id/remove-shadow-ban', protect, requireAnyAdmin, adminContr
 /* =====================================================
    CONTENT MODERATION
 ===================================================== */
-
 router.put('/fundraisers/:id/approve', protect, requireAnyAdmin, adminController.approveFundraiser);
 router.put('/fundraisers/:id/reject', protect, requireAnyAdmin, adminController.rejectFundraiser);
 router.delete('/comments/:id', protect, requireAnyAdmin, adminController.removeComment);
@@ -873,17 +751,14 @@ router.post('/content/:id/remove-shadow-ban', protect, requireAnyAdmin, adminCon
 /* =====================================================
    AUDIT & ADMIN TOOLS
 ===================================================== */
-
 router.get('/audit/logs', protect, requireAnyAdmin, adminController.getAuditLogs);
 router.get('/audit/logs/recent', protect, requireAnyAdmin, adminController.getRecentAuditLogs);
 router.get('/audit/filters', protect, requireAnyAdmin, adminController.getAuditFilterOptions);
 router.get('/audit-logs', protect, requireAnyAdmin, adminController.getRecentAuditLogs);
 
 /* =====================================================
-   ADMIN PROFILE ROUTES (SELF-MANAGEMENT)
+   ADMIN PROFILE ROUTES
 ===================================================== */
-
-// GET current admin profile
 router.get('/profile/me', protect, requireAnyAdmin, async (req, res) => {
   try {
     const admin = await User.findById(req.user._id)
@@ -896,7 +771,6 @@ router.get('/profile/me', protect, requireAnyAdmin, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Admin not found' });
     }
     
-    // Add admin-specific fields
     const adminData = {
       ...admin.toObject(),
       isAdminActive: !admin.adminDeactivated,
@@ -913,7 +787,6 @@ router.get('/profile/me', protect, requireAnyAdmin, async (req, res) => {
   }
 });
 
-// UPDATE admin profile
 router.put('/profile/me', protect, requireAnyAdmin, async (req, res) => {
   try {
     const admin = await User.findById(req.user._id);
@@ -921,10 +794,7 @@ router.put('/profile/me', protect, requireAnyAdmin, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Admin not found' });
     }
 
-    const allowedUpdates = [
-      'firstName', 'lastName', 'middleName', 'username', 'email', 
-      'bio', 'location', 'website', 'phoneNumber', 'avatar'
-    ];
+    const allowedUpdates = ['firstName', 'lastName', 'middleName', 'username', 'email', 'bio', 'location', 'website', 'phoneNumber', 'avatar'];
     
     allowedUpdates.forEach(field => {
       if (req.body[field] !== undefined) {
@@ -932,7 +802,6 @@ router.put('/profile/me', protect, requireAnyAdmin, async (req, res) => {
       }
     });
 
-    // Handle password change
     if (req.body.password) {
       if (!req.body.currentPassword) {
         return res.status(400).json({ success: false, message: 'Current password required' });
@@ -956,9 +825,7 @@ router.put('/profile/me', protect, requireAnyAdmin, async (req, res) => {
       description: `Updated profile information`,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent'),
-      metadata: {
-        updatedFields: Object.keys(req.body).filter(k => allowedUpdates.includes(k))
-      }
+      metadata: { updatedFields: Object.keys(req.body).filter(k => allowedUpdates.includes(k)) }
     });
 
     const updatedAdmin = await User.findById(admin._id).select('-password -tokenVersion');
@@ -969,33 +836,17 @@ router.put('/profile/me', protect, requireAnyAdmin, async (req, res) => {
   }
 });
 
-// GET admin statistics (actions count, etc.)
 router.get('/profile/stats', protect, requireAnyAdmin, async (req, res) => {
   try {
     let AdminAuditLog;
     try {
       AdminAuditLog = require('../models/AdminAuditLog');
     } catch (e) {
-      return res.json({ 
-        success: true, 
-        stats: { 
-          totalActions: 0, 
-          actionsThisWeek: 0, 
-          actionsThisMonth: 0,
-          approvedVideos: 0,
-          rejectedVideos: 0,
-          bannedUsers: 0,
-          flaggedContent: 0
-        } 
-      });
+      return res.json({ success: true, stats: { totalActions: 0, actionsThisWeek: 0, actionsThisMonth: 0, approvedVideos: 0, rejectedVideos: 0, bannedUsers: 0, flaggedContent: 0 } });
     }
 
-    // Get all actions by this admin
     const adminActions = await AdminAuditLog.find({
-      $or: [
-        { adminId: req.user._id },
-        { adminEmail: req.user.email }
-      ]
+      $or: [{ adminId: req.user._id }, { adminEmail: req.user.email }]
     }).sort({ createdAt: -1 });
 
     const now = new Date();
@@ -1005,53 +856,21 @@ router.get('/profile/stats', protect, requireAnyAdmin, async (req, res) => {
     const actionsThisWeek = adminActions.filter(a => new Date(a.createdAt) > weekAgo).length;
     const actionsThisMonth = adminActions.filter(a => new Date(a.createdAt) > monthAgo).length;
     
-    // Count specific action types
-    const approvedVideos = adminActions.filter(a => 
-      a.actionType === 'APPROVE_VIDEO' || a.actionType?.includes('APPROVE')
-    ).length;
-    
-    const rejectedVideos = adminActions.filter(a => 
-      a.actionType === 'REJECT_VIDEO' || a.actionType?.includes('REJECT')
-    ).length;
-    
-    const bannedUsers = adminActions.filter(a => 
-      a.actionType === 'BAN_USER' || a.actionType?.includes('BAN')
-    ).length;
-    
-    const flaggedContent = adminActions.filter(a => 
-      a.actionType === 'FLAG_VIDEO' || a.actionType?.includes('FLAG')
-    ).length;
+    const approvedVideos = adminActions.filter(a => a.actionType === 'APPROVE_VIDEO' || a.actionType?.includes('APPROVE')).length;
+    const rejectedVideos = adminActions.filter(a => a.actionType === 'REJECT_VIDEO' || a.actionType?.includes('REJECT')).length;
+    const bannedUsers = adminActions.filter(a => a.actionType === 'BAN_USER' || a.actionType?.includes('BAN')).length;
+    const flaggedContent = adminActions.filter(a => a.actionType === 'FLAG_VIDEO' || a.actionType?.includes('FLAG')).length;
 
     res.json({
       success: true,
-      stats: {
-        totalActions: adminActions.length,
-        actionsThisWeek,
-        actionsThisMonth,
-        approvedVideos,
-        rejectedVideos,
-        bannedUsers,
-        flaggedContent
-      }
+      stats: { totalActions: adminActions.length, actionsThisWeek, actionsThisMonth, approvedVideos, rejectedVideos, bannedUsers, flaggedContent }
     });
   } catch (err) {
     console.error('GET ADMIN STATS ERROR:', err);
-    res.json({ 
-      success: true, 
-      stats: { 
-        totalActions: 0, 
-        actionsThisWeek: 0, 
-        actionsThisMonth: 0,
-        approvedVideos: 0,
-        rejectedVideos: 0,
-        bannedUsers: 0,
-        flaggedContent: 0
-      } 
-    });
+    res.json({ success: true, stats: { totalActions: 0, actionsThisWeek: 0, actionsThisMonth: 0, approvedVideos: 0, rejectedVideos: 0, bannedUsers: 0, flaggedContent: 0 } });
   }
 });
 
-// GET recent actions by this admin
 router.get('/profile/recent-actions', protect, requireAnyAdmin, async (req, res) => {
   try {
     const { limit = 10 } = req.query;
@@ -1064,18 +883,12 @@ router.get('/profile/recent-actions', protect, requireAnyAdmin, async (req, res)
     }
 
     const recentActions = await AdminAuditLog.find({
-      $or: [
-        { adminId: req.user._id },
-        { adminEmail: req.user.email }
-      ]
+      $or: [{ adminId: req.user._id }, { adminEmail: req.user.email }]
     })
     .sort({ createdAt: -1 })
     .limit(parseInt(limit));
 
-    res.json({
-      success: true,
-      actions: recentActions
-    });
+    res.json({ success: true, actions: recentActions });
   } catch (err) {
     console.error('GET RECENT ACTIONS ERROR:', err);
     res.json({ success: true, actions: [] });
@@ -1085,7 +898,6 @@ router.get('/profile/recent-actions', protect, requireAnyAdmin, async (req, res)
 /* =====================================================
    ROUTE ALIASES FOR BACKWARD COMPATIBILITY
 ===================================================== */
-
 router.put('/roles/promote/:id', protect, requireSuperAdmin, adminController.promoteAdmin);
 router.put('/roles/demote/:id', protect, requireSuperAdmin, adminController.demoteAdmin);
 router.put('/shadow-ban/user/:id', protect, requireAnyAdmin, adminController.applyShadowBanUser);
@@ -1093,11 +905,8 @@ router.put('/shadow-ban/user/:id/remove', protect, requireAnyAdmin, adminControl
 router.put('/shadow-ban/content/:id', protect, requireAnyAdmin, adminController.applyShadowBanContent);
 router.put('/shadow-ban/content/:id/remove', protect, requireAnyAdmin, adminController.removeShadowBanContent);
 
-// DEBUG ROUTE - Helpful for testing
 router.get('/debug/users-test', protect, requireAnyAdmin, async (req, res) => {
   try {
-    console.log('🔍 DEBUG: /debug/users-test called by:', req.user.email);
-    
     const regularUsers = await User.find({
       role: { $nin: ['superadmin', 'platformadmin', 'supportadmin'] },
       isDeleted: { $ne: true }
@@ -1105,24 +914,9 @@ router.get('/debug/users-test', protect, requireAnyAdmin, async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Debug info',
-      user: {
-        id: req.user._id,
-        email: req.user.email,
-        role: req.user.role
-      },
-      counts: {
-        totalUsers: await User.countDocuments({}),
-        regularUsers: regularUsers.length
-      },
-      users: regularUsers.map(u => ({
-        id: u._id,
-        email: u.email,
-        role: u.role,
-        name: u.name,
-        isVerified: u.isVerified,
-        isBanned: u.isBanned
-      }))
+      user: { id: req.user._id, email: req.user.email, role: req.user.role },
+      counts: { totalUsers: await User.countDocuments({}), regularUsers: regularUsers.length },
+      users: regularUsers.map(u => ({ id: u._id, email: u.email, role: u.role, name: u.name, isVerified: u.isVerified, isBanned: u.isBanned }))
     });
   } catch (err) {
     console.error('Debug route error:', err);
