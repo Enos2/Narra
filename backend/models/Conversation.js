@@ -1,191 +1,109 @@
 /**
- * File: backend/models/Conversation.js
- * Description: Conversation model for messaging between users
+ * models/Conversation.js
+ * Supports two lanes:
+ *   "user"       — user ↔ user
+ *   "admin"      — admin ↔ admin (any role)
+ *
+ * participantModel distinguishes which collection each participant lives in.
  */
 
 const mongoose = require('mongoose');
 
+const ParticipantSchema = new mongoose.Schema(
+  {
+    participantId:    { type: mongoose.Schema.Types.ObjectId, required: true },
+    participantModel: { type: String, enum: ['User', 'Admin'], required: true },
+    unreadCount:      { type: Number, default: 0 },
+    lastReadAt:       { type: Date, default: null },
+  },
+  { _id: false }
+);
+
 const ConversationSchema = new mongoose.Schema(
   {
-    // Participants in the conversation
-    participants: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true,
+    lane: {
+      type: String,
+      enum: ['user', 'admin'],
+      required: true,
+      index: true,
+    },
+
+    participants: {
+      type: [ParticipantSchema],
+      validate: {
+        validator: (v) => v.length === 2,
+        message: 'A conversation must have exactly 2 participants.',
       },
-    ],
-
-    // Conversation type
-    type: {
-      type: String,
-      enum: ['direct', 'support', 'admin-group'],
-      default: 'direct',
-      required: true,
     },
 
-    // For group chats or support tickets
-    title: {
-      type: String,
-      trim: true,
-    },
-
-    // Who created the conversation
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-
-    // Last message preview for conversation list
     lastMessage: {
-      content: String,
-      senderId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
-      senderName: String,
-      createdAt: Date,
-      isRead: { type: Boolean, default: false },
+      content:   { type: String, default: '' },
+      senderId:  { type: mongoose.Schema.Types.ObjectId, default: null },
+      sentAt:    { type: Date, default: null },
     },
 
-    // For support tickets
-    supportMetadata: {
-      status: {
-        type: String,
-        enum: ['open', 'in-progress', 'resolved', 'closed'],
-        default: 'open',
-      },
-      assignedTo: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
-      category: String,
-      priority: {
-        type: String,
-        enum: ['low', 'medium', 'high', 'urgent'],
-        default: 'medium',
-      },
-      resolvedAt: Date,
-      resolvedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    },
-
-    // For minor protection - track if this conversation involves a minor
-    hasMinor: {
-      type: Boolean,
-      default: false,
-    },
-
-    // For admin monitoring
-    isMonitored: {
-      type: Boolean,
-      default: false,
-    },
-
-    // Muted by participants
-    mutedBy: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    ],
-
-    // Blocked by participants
-    blockedBy: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    ],
-
-    // Additional metadata
-    metadata: {
-      type: mongoose.Schema.Types.Mixed,
-    },
+    isActive: { type: Boolean, default: true },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Indexes for faster queries
-ConversationSchema.index({ participants: 1 });
-ConversationSchema.index({ 'supportMetadata.status': 1 });
-ConversationSchema.index({ hasMinor: 1, isMonitored: 1 });
-ConversationSchema.index({ updatedAt: -1 });
+/* ── indexes ── */
+ConversationSchema.index({ 'participants.participantId': 1 });
+ConversationSchema.index({ lane: 1, updatedAt: -1 });
 
-// Ensure unique conversation between two users for direct messages
-ConversationSchema.index(
-  {
-    participants: 1,
-    type: 1,
-  },
-  {
-    unique: true,
-    partialFilterExpression: {
-      type: 'direct',
-      'participants.2': { $exists: false }, // Only for 2-participant direct messages
-    },
-  }
-);
-
-// Virtual for participant count
-ConversationSchema.virtual('participantCount').get(function () {
-  return this.participants.length;
-});
-
-// Method to check if user is participant
-ConversationSchema.methods.isParticipant = function (userId) {
-  return this.participants.some((p) => p.toString() === userId.toString());
-};
-
-// Method to add participant (for group/support)
-ConversationSchema.methods.addParticipant = async function (userId) {
-  if (!this.isParticipant(userId)) {
-    this.participants.push(userId);
-    await this.save();
-  }
-  return this;
-};
-
-// Method to remove participant
-ConversationSchema.methods.removeParticipant = async function (userId) {
-  this.participants = this.participants.filter(
-    (p) => p.toString() !== userId.toString()
+/* ── helpers ── */
+ConversationSchema.methods.hasParticipant = function (userId) {
+  return this.participants.some(
+    (p) => p.participantId.toString() === userId.toString()
   );
-  await this.save();
-  return this;
 };
 
-// Method to mute conversation
-ConversationSchema.methods.mute = function (userId) {
-  if (!this.mutedBy.includes(userId)) {
-    this.mutedBy.push(userId);
+ConversationSchema.methods.getOtherParticipant = function (userId) {
+  return this.participants.find(
+    (p) => p.participantId.toString() !== userId.toString()
+  );
+};
+
+ConversationSchema.methods.incrementUnread = function (senderId) {
+  this.participants.forEach((p) => {
+    if (p.participantId.toString() !== senderId.toString()) {
+      p.unreadCount = (p.unreadCount || 0) + 1;
+    }
+  });
+};
+
+ConversationSchema.methods.clearUnread = function (userId) {
+  const p = this.participants.find(
+    (p) => p.participantId.toString() === userId.toString()
+  );
+  if (p) {
+    p.unreadCount = 0;
+    p.lastReadAt = new Date();
   }
-  return this;
 };
 
-// Method to unmute conversation
-ConversationSchema.methods.unmute = function (userId) {
-  this.mutedBy = this.mutedBy.filter((id) => id.toString() !== userId.toString());
-  return this;
+/* ── static: find or create a 1-on-1 conversation ── */
+ConversationSchema.statics.findOrCreate = async function ({
+  lane,
+  participantA,   // { id, model }
+  participantB,   // { id, model }
+}) {
+  const existing = await this.findOne({
+    lane,
+    'participants.participantId': { $all: [participantA.id, participantB.id] },
+  });
+  if (existing) return { conversation: existing, created: false };
+
+  const conversation = await this.create({
+    lane,
+    participants: [
+      { participantId: participantA.id, participantModel: participantA.model },
+      { participantId: participantB.id, participantModel: participantB.model },
+    ],
+  });
+  return { conversation, created: true };
 };
 
-// Method to block conversation
-ConversationSchema.methods.block = function (userId) {
-  if (!this.blockedBy.includes(userId)) {
-    this.blockedBy.push(userId);
-  }
-  return this;
-};
-
-// Method to unblock conversation
-ConversationSchema.methods.unblock = function (userId) {
-  this.blockedBy = this.blockedBy.filter((id) => id.toString() !== userId.toString());
-  return this;
-};
-
-module.exports = mongoose.model('Conversation', ConversationSchema);
+module.exports =
+  mongoose.models.Conversation ||
+  mongoose.model('Conversation', ConversationSchema);

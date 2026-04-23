@@ -1,184 +1,232 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const path = require('path');
-const http = require('http');
-const socketIO = require('socket.io');
+/**
+ * server.js — Narra Backend
+ * Socket.IO messaging rebuilt from scratch (clean slate).
+ */
+
+const express    = require('express');
+const mongoose   = require('mongoose');
+const cors       = require('cors');
+const path       = require('path');
+const http       = require('http');
+const socketIO   = require('socket.io');
+const jwt        = require('jsonwebtoken');
 require('dotenv').config();
 
+const User  = require('./models/User');
+const Admin = require('./models/Admin');
+
 // Routes
-const authRoutes = require('./routes/authRoutes');
-const videoRoutes = require('./routes/videoRoutes');
-const liveRoutes = require('./routes/liveRoutes');
-const userRoutes = require('./routes/userRoutes');
-const adminRoutes = require('./routes/adminRoutes');
-const liveQualificationRoutes = require('./routes/liveQualificationRoutes');
-const messageRoutes = require('./routes/messageRoutes');
-const uploadRoutes = require('./routes/uploadRoutes');
-const adRoutes = require('./routes/adRoutes');
-const searchRoutes = require('./routes/searchRoutes');
-const historyRoutes = require('./routes/historyRoutes');
-const playlistRoutes = require('./routes/playlistRoutes');
-const commentRoutes = require('./routes/commentRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
+const authRoutes             = require('./routes/authRoutes');
+const videoRoutes            = require('./routes/videoRoutes');
+const liveRoutes             = require('./routes/liveRoutes');
+const userRoutes             = require('./routes/userRoutes');
+const adminRoutes            = require('./routes/adminRoutes');
+const liveQualificationRoutes= require('./routes/liveQualificationRoutes');
+const messageRoutes          = require('./routes/messageRoutes');
+const uploadRoutes           = require('./routes/uploadRoutes');
+const adRoutes               = require('./routes/adRoutes');
+const searchRoutes           = require('./routes/searchRoutes');
+const historyRoutes          = require('./routes/historyRoutes');
+const playlistRoutes         = require('./routes/playlistRoutes');
+const commentRoutes          = require('./routes/commentRoutes');
+const notificationRoutes     = require('./routes/notificationRoutes');
 
-// Middleware
 const errorHandler = require('./middleware/errorMiddleware');
-const { protect } = require('./middleware/authMiddleware');
 
-const app = express();
+const app    = express();
+const server = http.createServer(app);
 
 /*
 ========================================
-CREATE HTTP SERVER FOR SOCKET.IO
+SOCKET.IO — CLEAN SLATE
 ========================================
 */
-const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin: 'http://localhost:5173',
+    origin:  'http://localhost:5173',
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with', 'Range']
-  }
+    methods: ['GET', 'POST'],
+  },
+  transports: ['websocket', 'polling'],
 });
 
-// Make io accessible to controllers
 app.set('io', io);
 
-/*
-========================================
-SOCKET.IO CONNECTION HANDLER
-========================================
-*/
-const jwt = require('jsonwebtoken');
-const User = require('./models/User');
-
+/* ── Socket authentication middleware ── */
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth.token;
-    if (!token) {
-      return next(new Error('Authentication error'));
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('No token provided'));
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      return next(new Error('Invalid token'));
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password');
-    
-    if (!user) {
-      return next(new Error('User not found'));
+    // Detect admin vs user by role field in JWT
+    const adminRoles = ['superadmin', 'platformadmin', 'supportadmin',
+                        'super_admin', 'platform_admin', 'support_admin'];
+
+    if (adminRoles.includes((decoded.role || '').toLowerCase())) {
+      const admin = await Admin.findById(decoded.id).select('-password').lean();
+      if (!admin)               return next(new Error('Admin not found'));
+      if (admin.status === 'inactive') return next(new Error('Admin account inactive'));
+
+      socket.actor = {
+        id:    admin._id,
+        model: 'Admin',
+        role:  admin.role,
+        name:  admin.fullName,
+      };
+    } else {
+      const user = await User.findById(decoded.id).select('-password').lean();
+      if (!user)  return next(new Error('User not found'));
+      if (user.isBanned) return next(new Error('Account banned'));
+
+      // Token version check (force logout support)
+      if ((user.tokenVersion || 0) !== (decoded.tokenVersion || 0)) {
+        return next(new Error('Session expired'));
+      }
+
+      socket.actor = {
+        id:    user._id,
+        model: 'User',
+        role:  user.role,
+        name:  user.username || user.firstName || 'User',
+      };
     }
 
-    if ((user.tokenVersion || 0) !== (decoded.tokenVersion || 0)) {
-      return next(new Error('Token expired'));
-    }
-
-    socket.user = user;
     next();
   } catch (err) {
-    next(new Error('Authentication error'));
+    console.error('Socket auth error:', err.message);
+    next(new Error('Authentication failed'));
   }
 });
 
+/* ── Socket connection handler ── */
 io.on('connection', (socket) => {
-  console.log(`🔌 Socket connected: ${socket.user.email} (${socket.user._id})`);
+  const { actor } = socket;
+  console.log(`🔌 Connected: ${actor.model} "${actor.name}" (${actor.id})`);
 
-  socket.join(`user:${socket.user._id}`);
+  // Personal notification room
+  const personalRoom = `${actor.model === 'Admin' ? 'admin' : 'user'}:${actor.id}`;
+  socket.join(personalRoom);
 
-  socket.on('join-conversations', async (conversationIds) => {
-    try {
-      const Conversation = require('./models/Conversation');
-      
-      for (const convId of conversationIds) {
-        const conversation = await Conversation.findById(convId);
-        if (conversation && conversation.isParticipant(socket.user._id)) {
+  /*
+   * Client sends the list of conversation IDs it wants to subscribe to.
+   * Server verifies membership before granting access.
+   */
+  socket.on('subscribe-conversations', async (conversationIds) => {
+    if (!Array.isArray(conversationIds)) return;
+
+    const Conversation = require('./models/Conversation');
+
+    for (const convId of conversationIds) {
+      try {
+        const conv = await Conversation.findById(convId).lean();
+        if (!conv) continue;
+
+        const isMember = conv.participants.some(
+          (p) => p.participantId.toString() === actor.id.toString()
+        );
+
+        if (isMember) {
           socket.join(`conversation:${convId}`);
-          console.log(`  Joined conversation: ${convId}`);
         }
+      } catch {
+        // skip invalid ids
       }
-    } catch (err) {
-      console.error('Error joining conversations:', err);
     }
   });
 
-  socket.on('typing', (data) => {
-    socket.to(`conversation:${data.conversationId}`).emit('user-typing', {
-      userId: socket.user._id,
-      username: socket.user.name,
-      conversationId: data.conversationId,
-      isTyping: data.isTyping
+  /* Typing indicator — just relay, no DB write */
+  socket.on('typing', ({ conversationId, isTyping }) => {
+    socket.to(`conversation:${conversationId}`).emit('typing', {
+      senderId:       actor.id,
+      senderName:     actor.name,
+      conversationId,
+      isTyping,
     });
   });
 
-  socket.on('mark-read', async (data) => {
+  /* Fast-path read (HTTP endpoint also handles this) */
+  socket.on('mark-read', async ({ conversationId }) => {
     try {
-      const Message = require('./models/Message');
+      const Message      = require('./models/Message');
+      const Conversation = require('./models/Conversation');
+
       await Message.updateMany(
         {
-          conversationId: data.conversationId,
-          senderId: { $ne: socket.user._id },
-          'readBy.userId': { $ne: socket.user._id }
+          conversationId,
+          senderId: { $ne: actor.id },
+          'readBy.readerId': { $ne: actor.id },
+          isDeleted: false,
         },
         {
-          $push: { readBy: { userId: socket.user._id, readAt: new Date() } }
+          $push: {
+            readBy: { readerId: actor.id, readerModel: actor.model, readAt: new Date() },
+          },
         }
       );
 
-      socket.to(`conversation:${data.conversationId}`).emit('messages-read', {
-        conversationId: data.conversationId,
-        userId: socket.user._id,
-        readAt: new Date()
+      const conv = await Conversation.findById(conversationId);
+      if (conv) {
+        conv.clearUnread(actor.id);
+        await conv.save();
+      }
+
+      socket.to(`conversation:${conversationId}`).emit('messages-read', {
+        conversationId,
+        readerId:    actor.id,
+        readerModel: actor.model,
+        readAt:      new Date(),
       });
     } catch (err) {
-      console.error('Error marking read:', err);
+      console.error('Socket mark-read error:', err.message);
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log(`🔌 Socket disconnected: ${socket.user.email}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`🔌 Disconnected: ${actor.model} "${actor.name}" — ${reason}`);
   });
 });
 
-/*
-========================================
-NOW CONNECT MESSAGE CONTROLLER TO SOCKET.IO
-========================================
-*/
+/* ── Inject io into message controller ── */
 const messageController = require('./controllers/messageController');
-if (messageController && typeof messageController.setSocketIO === 'function') {
+if (typeof messageController.setSocketIO === 'function') {
   messageController.setSocketIO(io);
-  console.log('✅ Message controller connected to Socket.IO');
-} else {
-  console.warn('⚠️ Message controller setSocketIO method not found');
+  console.log('✅ Socket.IO injected into message controller');
 }
 
 /*
 ========================================
-GLOBAL MIDDLEWARE
+CORS + BODY PARSING
 ========================================
 */
-const corsOptions = {
-  origin: 'http://localhost:5173',
+app.use(cors({
+  origin:  'http://localhost:5173',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with', 'Range'],
-  exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges']
-};
-
-app.use(cors(corsOptions));
+  exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
+}));
 app.use(express.json());
 
-// Video streaming headers
+/*
+========================================
+STATIC FILE SERVING
+========================================
+*/
 app.use('/uploads', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization, x-requested-with');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'public, max-age=3600');
-  
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 }, express.static(path.join(__dirname, 'uploads'), {
   setHeaders: (res, filePath) => {
@@ -186,171 +234,73 @@ app.use('/uploads', (req, res, next) => {
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
     }
-  }
+  },
 }));
 
 app.use('/media', express.static(path.join(__dirname, 'media')));
 
 /*
 ========================================
-DATABASE CONNECTION
+DATABASE
 ========================================
 */
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
-    console.log('✓ MongoDB connected successfully');
-    
-    if (process.env.ENABLE_STREAMING === 'true' || !process.env.ENABLE_STREAMING) {
+    console.log('✓ MongoDB connected');
+    if (process.env.ENABLE_STREAMING !== 'false') {
       try {
-        const startStreamingServer = require('./streaming-server');
-        startStreamingServer();
-        console.log('✓ RTMP Streaming server started');
-      } catch (error) {
-        console.error('⚠ Failed to start RTMP server:', error.message);
+        const startStreaming = require('./streaming-server');
+        startStreaming();
+        console.log('✓ RTMP streaming server started');
+      } catch (err) {
+        console.warn('⚠ RTMP server not started:', err.message);
       }
     }
   })
-  .catch((err) => {
-    console.error('✗ MongoDB connection error:', err);
-    process.exit(1);
-  });
+  .catch((err) => { console.error('✗ MongoDB error:', err); process.exit(1); });
 
 /*
 ========================================
-HEALTH CHECK
+HEALTH
 ========================================
 */
-app.get('/', (req, res) => {
-  res.send(`
-    <html>
-      <head>
-        <title>Narra Backend</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 40px; background: #0a0a0a; color: #fff; }
-          .container { max-width: 800px; margin: 0 auto; }
-          h1 { color: #4CAF50; }
-          .card { background: #1a1a1a; padding: 20px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #4CAF50; }
-          .endpoint { background: #2a2a2a; padding: 10px; border-radius: 5px; margin: 5px 0; font-family: monospace; }
-          .status { display: inline-block; padding: 5px 10px; border-radius: 5px; font-weight: bold; }
-          .online { background: #4CAF50; color: white; }
-          .offline { background: #f44336; color: white; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <h1>🚀 Narra Backend API Server</h1>
-          <div class="card">
-            <h2>Status: <span class="status online">ONLINE</span></h2>
-            <p>Server is running with video streaming and messaging support</p>
-            <p>✅ Socket.io enabled for real-time messaging</p>
-            <p>✅ Message controller connected to Socket.IO</p>
-            <p>✅ Ad management API active</p>
-            <p>✅ Unified search API active</p>
-            <p>🆕 Watch history API active (resume playback)</p>
-            <p>🆕 Playlist API active (save videos)</p>
-            <p>🆕 Like/Dislike API active</p>
-            <p>🆕 Comments API active</p>
-            <p>🔔 Notifications API active</p>
-          </div>
-        </div>
-      </html>
-    </html>
-  `);
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    success: true,
-    status: 'healthy', 
-    timestamp: new Date(),
-    server: 'Narra Backend API',
-    version: '1.0.0',
-    features: {
-      video_upload: true,
-      live_streaming: true,
-      video_streaming: true,
-      user_authentication: true,
-      admin_moderation: true,
-      realtime_messaging: true,
-      age_verification: true,
-      avatar_upload: true,
-      follow_system: true,
-      twin_detection: true,
-      ad_management: true,
-      unified_search: true,
-      watch_history: true,
-      playlists: true,
-      like_dislike: true,
-      comments: true,
-      notifications: true
-    }
-  });
+app.get('/api/health', (_req, res) => {
+  res.json({ success: true, status: 'healthy', timestamp: new Date() });
 });
 
 /*
 ========================================
-API ROUTES
+ROUTES
 ========================================
 */
-app.use('/api/auth', authRoutes);
-app.use('/api/videos', videoRoutes);
-app.use('/api/lives', liveRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api/auth',             authRoutes);
+app.use('/api/videos',           videoRoutes);
+app.use('/api/lives',            liveRoutes);
+app.use('/api/users',            userRoutes);
+app.use('/api/admin',            adminRoutes);
 app.use('/api/live-qualification', liveQualificationRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/uploads', uploadRoutes);
-app.use('/api/ads', adRoutes);
-app.use('/api/search', searchRoutes);
-app.use('/api/history', historyRoutes);
-app.use('/api/playlists', playlistRoutes);
-app.use('/api/comments', commentRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/messages',         messageRoutes);
+app.use('/api/uploads',          uploadRoutes);
+app.use('/api/ads',              adRoutes);
+app.use('/api/search',           searchRoutes);
+app.use('/api/history',          historyRoutes);
+app.use('/api/playlists',        playlistRoutes);
+app.use('/api/comments',         commentRoutes);
+app.use('/api/notifications',    notificationRoutes);
 
-/*
-========================================
-404 HANDLER
-========================================
-*/
-app.use((req, res) => {
-  console.log(`❌ 404 Not Found: ${req.method} ${req.originalUrl}`);
-  res.status(404).json({ 
-    success: false,
-    message: 'Route not found',
-    requested_url: req.originalUrl
-  });
-});
-
-/*
-========================================
-GLOBAL ERROR HANDLER
-========================================
-*/
+app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
 app.use(errorHandler);
 
 /*
 ========================================
-SERVER START
+START
 ========================================
 */
 const PORT = process.env.PORT || 5000;
-
 server.listen(PORT, () => {
-  console.log('============================================');
-  console.log('🚀 NARRA BACKEND SERVER STARTED');
-  console.log('============================================');
-  console.log(`📡 API Server: http://localhost:${PORT}`);
-  console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
-  console.log(`📁 Video files: http://localhost:${PORT}/uploads`);
-  console.log(`💬 Messaging system: ACTIVE`);
-  console.log(`✅ Message controller: CONNECTED`);
-  console.log(`📢 Ad management: ACTIVE`);
-  console.log(`🔍 Unified search: ACTIVE`);
-  console.log(`🆕 Watch history: ACTIVE (resume playback)`);
-  console.log(`🆕 Playlists: ACTIVE (save videos)`);
-  console.log(`🆕 Like/Dislike: ACTIVE`);
-  console.log(`🆕 Comments: ACTIVE`);
-  console.log(`🔔 Notifications: ACTIVE`);
-  console.log('============================================\n');
+  console.log('════════════════════════════════════');
+  console.log(`🚀 Narra API — http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket  — ws://localhost:${PORT}`);
+  console.log('════════════════════════════════════');
 });

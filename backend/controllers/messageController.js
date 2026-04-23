@@ -1,507 +1,582 @@
 /**
- * File: backend/controllers/messageController.js
- * Description: Controllers for messaging functionality
+ * controllers/messageController.js
+ *
+ * All endpoints normalise to req.actor (set by messagingMiddleware.resolveActor).
+ *
+ * Routes:
+ *   POST   /api/messages/conversations          — start or retrieve a conversation
+ *   GET    /api/messages/conversations          — list my conversations
+ *   GET    /api/messages/conversations/:id      — get one conversation + messages
+ *   POST   /api/messages/conversations/:id      — send a message
+ *   PUT    /api/messages/conversations/:id/read — mark conversation as read
+ *   DELETE /api/messages/:messageId             — soft-delete a message (sender only)
+ *
+ *   — Admin moderation (platform/super admin) —
+ *   GET    /api/messages/admin/user-conversations       — list all user conversations
+ *   GET    /api/messages/admin/user-conversations/:id   — read a user conversation
+ *
+ *   — Super admin only —
+ *   GET    /api/messages/admin/admin-conversations      — list all admin conversations
+ *   GET    /api/messages/admin/admin-conversations/:id  — read an admin conversation
  */
 
 const Conversation = require('../models/Conversation');
-const Message = require('../models/Message');
-const Notification = require('../models/Notification');
-const User = require('../models/User');
-const messagingMiddleware = require('../middleware/messagingMiddleware');
+const Message      = require('../models/Message');
+const User         = require('../models/User');
+const Admin        = require('../models/Admin');
+
+let _io = null;
+exports.setSocketIO = (io) => { _io = io; };
+
+/* ─────────────────────────────────────────────
+   HELPERS
+───────────────────────────────────────────── */
 
 /**
- * Helper function to emit socket events (will be connected later)
+ * Populate the "other participant" info onto a conversation object.
+ * Returns a plain object with the other participant's display data attached.
  */
-let io = null;
-exports.setSocketIO = (socketIO) => {
-  io = socketIO;
-};
+async function attachOtherParticipant(conv, actorId) {
+  const plain = conv.toObject ? conv.toObject() : { ...conv };
+  const other = conv.participants.find(
+    (p) => p.participantId.toString() !== actorId.toString()
+  );
+  if (!other) return plain;
 
-const emitToUser = (userId, event, data) => {
-  if (io) {
-    io.to(`user:${userId.toString()}`).emit(event, data);
+  let profile = null;
+  if (other.participantModel === 'User') {
+    profile = await User.findById(other.participantId)
+      .select('firstName lastName username avatar isVerified')
+      .lean();
+    if (profile) {
+      profile.displayName = profile.username || `${profile.firstName} ${profile.lastName}`;
+      profile.type = 'user';
+    }
+  } else {
+    profile = await Admin.findById(other.participantId)
+      .select('fullName role')
+      .lean();
+    if (profile) {
+      profile.displayName = profile.fullName;
+      profile.type = 'admin';
+    }
   }
-};
 
-const emitToConversation = (conversationId, event, data) => {
-  if (io) {
-    io.to(`conversation:${conversationId.toString()}`).emit(event, data);
-  }
-};
+  plain.otherParticipant = profile;
+  return plain;
+}
 
 /**
- * Get or create a direct conversation between two users
+ * Determine the lane for the current actor.
  */
-exports.getOrCreateConversation = async (req, res) => {
+function laneFor(actor) {
+  return actor.model === 'Admin' ? 'admin' : 'user';
+}
+
+/* ─────────────────────────────────────────────
+   START OR RETRIEVE A CONVERSATION
+   POST /api/messages/conversations
+   body: { recipientId }
+───────────────────────────────────────────── */
+exports.startConversation = async (req, res) => {
   try {
-    const currentUser = req.user;
     const { recipientId } = req.body;
+    const actor = req.actor;
 
     if (!recipientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Recipient ID is required'
-      });
+      return res.status(400).json({ success: false, message: 'recipientId is required' });
     }
 
-    // Check if conversation already exists
-    let conversation = await Conversation.findOne({
-      type: 'direct',
-      participants: { $all: [currentUser._id, recipientId], $size: 2 }
-    }).populate('participants', 'name email role dateOfBirth avatar');
-
-    if (!conversation) {
-      // Create new conversation
-      conversation = await Conversation.create({
-        participants: [currentUser._id, recipientId],
-        type: 'direct',
-        createdBy: currentUser._id,
-        hasMinor: messagingMiddleware.utils.isMinor(currentUser) || 
-                  messagingMiddleware.utils.isMinor(await User.findById(recipientId))
-      });
-
-      // Populate participants
-      await conversation.populate('participants', 'name email role dateOfBirth avatar');
-
-      // Create system message for conversation start
-      await Message.create({
-        conversationId: conversation._id,
-        senderId: currentUser._id,
-        content: 'Conversation started',
-        contentType: 'system',
-        systemType: 'user-joined',
-        moderationStatus: 'clean'
-      });
+    if (recipientId.toString() === actor.id.toString()) {
+      return res.status(400).json({ success: false, message: 'Cannot start a conversation with yourself' });
     }
 
-    res.json({
+    const lane = laneFor(actor);
+
+    // Verify the recipient exists in the right collection
+    let recipient;
+    if (lane === 'user') {
+      recipient = await User.findById(recipientId).select('firstName lastName username avatar isVerified');
+      if (!recipient) return res.status(404).json({ success: false, message: 'User not found' });
+    } else {
+      recipient = await Admin.findById(recipientId).select('fullName role status');
+      if (!recipient) return res.status(404).json({ success: false, message: 'Admin not found' });
+      if (recipient.status === 'inactive') {
+        return res.status(403).json({ success: false, message: 'That admin account is inactive' });
+      }
+    }
+
+    const recipientModel = lane === 'user' ? 'User' : 'Admin';
+
+    const { conversation, created } = await Conversation.findOrCreate({
+      lane,
+      participantA: { id: actor.id, model: actor.model },
+      participantB: { id: recipientId, model: recipientModel },
+    });
+
+    const enriched = await attachOtherParticipant(conversation, actor.id);
+
+    return res.status(created ? 201 : 200).json({
       success: true,
-      conversation
+      conversation: enriched,
+      created,
     });
-  } catch (error) {
-    console.error('❌ getOrCreateConversation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error creating conversation',
-      error: error.message
-    });
+  } catch (err) {
+    console.error('startConversation error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
-/**
- * Send a message in a conversation
- */
+/* ─────────────────────────────────────────────
+   LIST MY CONVERSATIONS
+   GET /api/messages/conversations
+───────────────────────────────────────────── */
+exports.listConversations = async (req, res) => {
+  try {
+    const actor = req.actor;
+    const lane  = laneFor(actor);
+
+    const conversations = await Conversation.find({
+      lane,
+      'participants.participantId': actor.id,
+      isActive: true,
+    }).sort({ updatedAt: -1 });
+
+    const enriched = await Promise.all(
+      conversations.map((c) => attachOtherParticipant(c, actor.id))
+    );
+
+    return res.json({ success: true, conversations: enriched });
+  } catch (err) {
+    console.error('listConversations error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+/* ─────────────────────────────────────────────
+   GET ONE CONVERSATION + MESSAGES
+   GET /api/messages/conversations/:id
+───────────────────────────────────────────── */
+exports.getConversation = async (req, res) => {
+  try {
+    const actor = req.actor;
+    const { id }  = req.params;
+    const page    = parseInt(req.query.page)  || 1;
+    const limit   = parseInt(req.query.limit) || 50;
+    const skip    = (page - 1) * limit;
+
+    const conversation = await Conversation.findById(id);
+    if (!conversation) {
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
+    }
+
+    // Must be a participant
+    if (!conversation.hasParticipant(actor.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const [messages, total] = await Promise.all([
+      Message.find({ conversationId: id, isDeleted: false })
+        .sort({ createdAt: 1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Message.countDocuments({ conversationId: id, isDeleted: false }),
+    ]);
+
+    const enriched = await attachOtherParticipant(conversation, actor.id);
+
+    return res.json({
+      success: true,
+      conversation: enriched,
+      messages,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    console.error('getConversation error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+/* ─────────────────────────────────────────────
+   SEND A MESSAGE
+   POST /api/messages/conversations/:id
+   body: { content }
+───────────────────────────────────────────── */
 exports.sendMessage = async (req, res) => {
   try {
-    const sender = req.user;
-    const { conversationId, content, contentType = 'text', attachments = [] } = req.body;
+    const actor   = req.actor;
+    const { id }  = req.params;
+    const { content } = req.body;
 
-    if (!conversationId || !content) {
-      return res.status(400).json({
-        success: false,
-        message: 'Conversation ID and content are required'
-      });
+    if (!content || !content.trim()) {
+      return res.status(400).json({ success: false, message: 'Message content is required' });
     }
 
-    // Get conversation and verify it exists
-    const conversation = await Conversation.findById(conversationId);
+    const conversation = await Conversation.findById(id);
     if (!conversation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Conversation not found'
-      });
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
-    // Verify sender is a participant
-    if (!conversation.isParticipant(sender._id)) {
-      return res.status(403).json({
-        success: false,
-        message: 'You are not a participant in this conversation'
-      });
-    }
-
-    // Check if conversation is blocked by sender
-    if (conversation.blockedBy.some(id => id.toString() === sender._id.toString())) {
-      return res.status(403).json({
-        success: false,
-        message: 'You have blocked this conversation'
-      });
+    if (!conversation.hasParticipant(actor.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
     // Create message
     const message = await Message.create({
-      conversationId,
-      senderId: sender._id,
-      content,
-      contentType,
-      attachments,
-      moderationStatus: req.body.moderationFlags ? 'flagged' : 'pending',
-      moderationDetails: req.body.moderationFlags ? {
-        automatedFlags: [req.body.moderationFlags],
-        flaggedAt: new Date()
-      } : undefined,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      conversationId: id,
+      senderId:       actor.id,
+      senderModel:    actor.model,
+      content:        content.trim(),
     });
 
-    // Update conversation's last message
+    // Update conversation snapshot
     conversation.lastMessage = {
-      content: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
-      senderId: sender._id,
-      senderName: sender.name,
-      createdAt: new Date(),
-      isRead: false
+      content:  content.trim().substring(0, 100),
+      senderId: actor.id,
+      sentAt:   new Date(),
     };
-    conversation.updatedAt = new Date();
+    conversation.incrementUnread(actor.id);
     await conversation.save();
 
-    // Populate sender info
-    await message.populate('senderId', 'name email role avatar');
-
-    // Get all participants except sender
-    const otherParticipants = conversation.participants.filter(
-      p => p.toString() !== sender._id.toString()
-    );
-
-    // Create notifications for other participants
-    const notificationPromises = otherParticipants.map(async (participantId) => {
-      // Check if participant has muted this conversation
-      if (conversation.mutedBy.some(id => id.toString() === participantId.toString())) {
-        return null;
-      }
-
-      return Notification.create({
-        userId: participantId,
-        type: 'message',
-        priority: 'normal',
-        title: `New message from ${sender.name}`,
-        message: content.substring(0, 150) + (content.length > 150 ? '...' : ''),
-        link: {
-          url: `/messages?conversation=${conversationId}`,
-          text: 'View Message'
-        },
-        reference: {
-          model: 'Message',
-          id: message._id
-        },
-        triggeredBy: sender._id,
-        data: {
-          conversationId,
-          senderName: sender.name,
-          senderId: sender._id
-        }
+    // Real-time delivery via Socket.IO
+    if (_io) {
+      _io.to(`conversation:${id}`).emit('new-message', {
+        message,
+        conversationId: id,
       });
-    });
 
-    await Promise.all(notificationPromises.filter(Boolean));
-
-    // Emit socket events
-    emitToConversation(conversationId, 'new-message', {
-      message,
-      conversationId
-    });
-
-    // Emit to each participant's user room for notification
-    otherParticipants.forEach(participantId => {
-      emitToUser(participantId, 'message-notification', {
-        conversationId,
-        message: {
-          id: message._id,
-          sender: {
-            id: sender._id,
-            name: sender.name
-          },
-          preview: content.substring(0, 50)
-        }
-      });
-    });
-
-    res.status(201).json({
-      success: true,
-      message
-    });
-  } catch (error) {
-    console.error('❌ sendMessage error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error sending message',
-      error: error.message
-    });
-  }
-};
-
-/**
- * Get messages for a conversation (paginated)
- */
-exports.getMessages = async (req, res) => {
-  try {
-    const { conversationId } = req.params;
-    const { page = 1, limit = 50 } = req.query;
-    const skip = (page - 1) * limit;
-
-    const messages = await Message.find({ 
-      conversationId,
-      isDeleted: false 
-    })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate('senderId', 'name email role avatar')
-      .lean();
-
-    const total = await Message.countDocuments({ 
-      conversationId,
-      isDeleted: false 
-    });
-
-    // Mark messages as delivered for current user
-    const messageIds = messages.map(m => m._id);
-    await Message.updateMany(
-      { 
-        _id: { $in: messageIds },
-        'deliveredTo.userId': { $ne: req.user._id }
-      },
-      { 
-        $push: { deliveredTo: { userId: req.user._id, deliveredAt: new Date() } }
-      }
-    );
-
-    res.json({
-      success: true,
-      messages: messages.reverse(), // Return in chronological order
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit)
-      }
-    });
-  } catch (error) {
-    console.error('❌ getMessages error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching messages',
-      error: error.message
-    });
-  }
-};
-
-/**
- * Get all conversations for current user
- */
-exports.getConversations = async (req, res) => {
-  try {
-    const userId = req.user._id;
-
-    const conversations = await Conversation.find({
-      participants: userId,
-      blockedBy: { $ne: userId } // Exclude blocked conversations
-    })
-      .sort({ updatedAt: -1 })
-      .populate('participants', 'name email role dateOfBirth avatar')
-      .populate('lastMessage.senderId', 'name')
-      .lean();
-
-    // For each conversation, get unread count
-    const conversationsWithUnread = await Promise.all(
-      conversations.map(async (conv) => {
-        const unreadCount = await Message.countDocuments({
-          conversationId: conv._id,
-          senderId: { $ne: userId },
-          'readBy.userId': { $ne: userId },
-          isDeleted: false
+      // Notify the other participant's personal room
+      const other = conversation.getOtherParticipant(actor.id);
+      if (other) {
+        const roomPrefix = other.participantModel === 'Admin' ? 'admin' : 'user';
+        _io.to(`${roomPrefix}:${other.participantId}`).emit('conversation-updated', {
+          conversationId: id,
+          lastMessage: conversation.lastMessage,
         });
+      }
+    }
 
-        // Check if conversation involves a minor
-        const participants = await User.find(
-          { _id: { $in: conv.participants.map(p => p._id) } },
-          'dateOfBirth'
-        );
-        
-        const hasMinor = participants.some(p => 
-          p.dateOfBirth && messagingMiddleware.utils.isMinor(p)
-        );
-
-        return {
-          ...conv,
-          unreadCount,
-          hasMinor
-        };
-      })
-    );
-
-    res.json({
-      success: true,
-      conversations: conversationsWithUnread
-    });
-  } catch (error) {
-    console.error('❌ getConversations error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching conversations',
-      error: error.message
-    });
+    return res.status(201).json({ success: true, message });
+  } catch (err) {
+    console.error('sendMessage error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
-/**
- * Mark messages as read
- */
+/* ─────────────────────────────────────────────
+   MARK AS READ
+   PUT /api/messages/conversations/:id/read
+───────────────────────────────────────────── */
 exports.markAsRead = async (req, res) => {
   try {
-    const { conversationId } = req.params;
-    const userId = req.user._id;
+    const actor  = req.actor;
+    const { id } = req.params;
 
-    // Update all unread messages in this conversation
-    const result = await Message.updateMany(
+    const conversation = await Conversation.findById(id);
+    if (!conversation) {
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
+    }
+
+    if (!conversation.hasParticipant(actor.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    // Mark all unread messages in this conversation
+    await Message.updateMany(
       {
-        conversationId,
-        senderId: { $ne: userId },
-        'readBy.userId': { $ne: userId }
+        conversationId: id,
+        senderId: { $ne: actor.id },
+        'readBy.readerId': { $ne: actor.id },
+        isDeleted: false,
       },
       {
-        $push: { readBy: { userId, readAt: new Date() } }
+        $push: {
+          readBy: { readerId: actor.id, readerModel: actor.model, readAt: new Date() },
+        },
       }
     );
 
-    // Update conversation last message read status
-    await Conversation.updateOne(
-      { _id: conversationId },
-      { 'lastMessage.isRead': true }
-    );
+    conversation.clearUnread(actor.id);
+    await conversation.save();
 
-    // Emit read receipts
-    emitToConversation(conversationId, 'messages-read', {
-      conversationId,
-      userId,
-      readAt: new Date()
-    });
+    if (_io) {
+      _io.to(`conversation:${id}`).emit('messages-read', {
+        conversationId: id,
+        readerId:       actor.id,
+        readerModel:    actor.model,
+        readAt:         new Date(),
+      });
+    }
 
-    res.json({
-      success: true,
-      markedCount: result.modifiedCount
-    });
-  } catch (error) {
-    console.error('❌ markAsRead error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error marking messages as read',
-      error: error.message
-    });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('markAsRead error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
-/**
- * Delete a message (soft delete)
- */
+/* ─────────────────────────────────────────────
+   SOFT-DELETE A MESSAGE
+   DELETE /api/messages/:messageId
+───────────────────────────────────────────── */
 exports.deleteMessage = async (req, res) => {
   try {
+    const actor = req.actor;
     const { messageId } = req.params;
-    const userId = req.user._id;
 
     const message = await Message.findById(messageId);
     if (!message) {
-      return res.status(404).json({
-        success: false,
-        message: 'Message not found'
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    if (message.senderId.toString() !== actor.id.toString()) {
+      return res.status(403).json({ success: false, message: 'You can only delete your own messages' });
+    }
+
+    message.isDeleted      = true;
+    message.deletedAt      = new Date();
+    message.deletedBy      = actor.id;
+    message.deletedByModel = actor.model;
+    await message.save();
+
+    if (_io) {
+      _io.to(`conversation:${message.conversationId}`).emit('message-deleted', {
+        messageId,
+        conversationId: message.conversationId,
       });
     }
 
-    // Check if user is sender or admin
-    const isAdmin = ['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role);
-    const isSender = message.senderId.toString() === userId.toString();
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('deleteMessage error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
 
-    if (!isSender && !isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to delete this message'
-      });
+/* ─────────────────────────────────────────────
+   SEARCH USERS TO MESSAGE (user lane)
+   GET /api/messages/search-users?q=
+───────────────────────────────────────────── */
+exports.searchUsers = async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length < 1) {
+      return res.json({ success: true, users: [] });
     }
 
-    await message.softDelete(userId);
+    const regex = new RegExp(q.trim(), 'i');
+    const users = await User.find({
+      isDeleted: false,
+      isBanned: false,
+      _id: { $ne: req.actor.id },
+      $or: [{ username: regex }, { firstName: regex }, { lastName: regex }],
+    })
+      .select('firstName lastName username avatar isVerified')
+      .limit(20)
+      .lean();
 
-    // Emit deletion event
-    emitToConversation(message.conversationId.toString(), 'message-deleted', {
-      messageId,
-      conversationId: message.conversationId
-    });
+    return res.json({ success: true, users });
+  } catch (err) {
+    console.error('searchUsers error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
 
-    res.json({
+/* ─────────────────────────────────────────────
+   SEARCH ADMINS TO MESSAGE (admin lane)
+   GET /api/messages/search-admins?q=
+───────────────────────────────────────────── */
+exports.searchAdmins = async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length < 1) {
+      return res.json({ success: true, admins: [] });
+    }
+
+    const regex  = new RegExp(q.trim(), 'i');
+    const admins = await Admin.find({
+      status: 'active',
+      _id: { $ne: req.actor.id },
+      fullName: regex,
+    })
+      .select('fullName role')
+      .limit(20)
+      .lean();
+
+    return res.json({ success: true, admins });
+  } catch (err) {
+    console.error('searchAdmins error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+/* ═══════════════════════════════════════════════
+   ADMIN MODERATION — view user conversations
+   Platform admin + super admin
+═══════════════════════════════════════════════ */
+
+/**
+ * GET /api/messages/admin/user-conversations
+ * List all user-lane conversations (paginated).
+ */
+exports.adminListUserConversations = async (req, res) => {
+  try {
+    const page  = parseInt(req.query.page)  || 1;
+    const limit = parseInt(req.query.limit) || 30;
+    const skip  = (page - 1) * limit;
+
+    const [conversations, total] = await Promise.all([
+      Conversation.find({ lane: 'user', isActive: true })
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Conversation.countDocuments({ lane: 'user', isActive: true }),
+    ]);
+
+    // Enrich both participants for moderation view
+    const enriched = await Promise.all(
+      conversations.map(async (conv) => {
+        const plain = conv.toObject();
+        plain.participantProfiles = await Promise.all(
+          conv.participants.map(async (p) => {
+            const u = await User.findById(p.participantId)
+              .select('firstName lastName username avatar isVerified isBanned')
+              .lean();
+            return u ? { ...u, displayName: u.username || `${u.firstName} ${u.lastName}` } : null;
+          })
+        );
+        return plain;
+      })
+    );
+
+    return res.json({
       success: true,
-      message: 'Message deleted successfully'
+      conversations: enriched,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
-  } catch (error) {
-    console.error('❌ deleteMessage error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting message',
-      error: error.message
-    });
+  } catch (err) {
+    console.error('adminListUserConversations error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
 /**
- * Block a conversation
+ * GET /api/messages/admin/user-conversations/:id
+ * Read a specific user conversation.
  */
-exports.blockConversation = async (req, res) => {
+exports.adminGetUserConversation = async (req, res) => {
   try {
-    const { conversationId } = req.params;
-    const userId = req.user._id;
+    const { id } = req.params;
+    const conversation = await Conversation.findById(id);
 
-    const conversation = await Conversation.findById(conversationId);
-    if (!conversation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Conversation not found'
-      });
+    if (!conversation || conversation.lane !== 'user') {
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
-    conversation.block(userId);
-    await conversation.save();
+    const messages = await Message.find({ conversationId: id })
+      .sort({ createdAt: 1 })
+      .lean();
 
-    res.json({
+    const participantProfiles = await Promise.all(
+      conversation.participants.map(async (p) => {
+        const u = await User.findById(p.participantId)
+          .select('firstName lastName username avatar isVerified isBanned')
+          .lean();
+        return u ? { ...u, displayName: u.username || `${u.firstName} ${u.lastName}` } : null;
+      })
+    );
+
+    return res.json({
       success: true,
-      message: 'Conversation blocked'
+      conversation: { ...conversation.toObject(), participantProfiles },
+      messages,
     });
-  } catch (error) {
-    console.error('❌ blockConversation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error blocking conversation',
-      error: error.message
+  } catch (err) {
+    console.error('adminGetUserConversation error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+/* ═══════════════════════════════════════════════
+   SUPER ADMIN — view admin conversations
+═══════════════════════════════════════════════ */
+
+/**
+ * GET /api/messages/admin/admin-conversations
+ */
+exports.superAdminListAdminConversations = async (req, res) => {
+  try {
+    const page  = parseInt(req.query.page)  || 1;
+    const limit = parseInt(req.query.limit) || 30;
+    const skip  = (page - 1) * limit;
+
+    const [conversations, total] = await Promise.all([
+      Conversation.find({ lane: 'admin', isActive: true })
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Conversation.countDocuments({ lane: 'admin', isActive: true }),
+    ]);
+
+    const enriched = await Promise.all(
+      conversations.map(async (conv) => {
+        const plain = conv.toObject();
+        plain.participantProfiles = await Promise.all(
+          conv.participants.map(async (p) => {
+            const a = await Admin.findById(p.participantId)
+              .select('fullName role status')
+              .lean();
+            return a ? { ...a, displayName: a.fullName } : null;
+          })
+        );
+        return plain;
+      })
+    );
+
+    return res.json({
+      success: true,
+      conversations: enriched,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
+  } catch (err) {
+    console.error('superAdminListAdminConversations error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
 /**
- * Unblock a conversation
+ * GET /api/messages/admin/admin-conversations/:id
  */
-exports.unblockConversation = async (req, res) => {
+exports.superAdminGetAdminConversation = async (req, res) => {
   try {
-    const { conversationId } = req.params;
-    const userId = req.user._id;
+    const { id } = req.params;
+    const conversation = await Conversation.findById(id);
 
-    const conversation = await Conversation.findById(conversationId);
-    if (!conversation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Conversation not found'
-      });
+    if (!conversation || conversation.lane !== 'admin') {
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
-    conversation.unblock(userId);
-    await conversation.save();
+    const messages = await Message.find({ conversationId: id })
+      .sort({ createdAt: 1 })
+      .lean();
 
-    res.json({
+    const participantProfiles = await Promise.all(
+      conversation.participants.map(async (p) => {
+        const a = await Admin.findById(p.participantId)
+          .select('fullName role status')
+          .lean();
+        return a ? { ...a, displayName: a.fullName } : null;
+      })
+    );
+
+    return res.json({
       success: true,
-      message: 'Conversation unblocked'
+      conversation: { ...conversation.toObject(), participantProfiles },
+      messages,
     });
-  } catch (error) {
-    console.error('❌ unblockConversation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error unblocking conversation',
-      error: error.message
-    });
+  } catch (err) {
+    console.error('superAdminGetAdminConversation error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
