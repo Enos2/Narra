@@ -1,24 +1,22 @@
 /**
- * File: backend/models/Ad.js
- * Description: Ad model for NARRA platform with age-based targeting
- * FIXED: Pre-save hook rewritten to use async/await pattern (no `next` param).
- *        The old hook used next() which breaks when save() is called recursively
- *        from instance methods like trackImpression(), approve(), etc., because
- *        Mongoose does not pass next as a function in those internal calls.
+ * File: backend/models/Promotion.js
+ * Internal name: Promotion (displayed as "Campaign" to users/admins)
+ * Replaces: Ad.js
+ * Purpose: Narra platform campaign/promotion system
  */
 
 const mongoose = require('mongoose');
 
-const AdSchema = new mongoose.Schema(
+const PromotionSchema = new mongoose.Schema(
   {
     /*
     ========================================
-    BASIC AD INFO
+    BASIC INFO
     ========================================
     */
     title: {
       type: String,
-      required: [true, 'Ad title is required'],
+      required: [true, 'Campaign title is required'],
       trim: true,
       maxlength: [100, 'Title cannot exceed 100 characters']
     },
@@ -30,16 +28,16 @@ const AdSchema = new mongoose.Schema(
 
     /*
     ========================================
-    AD TYPE & PLACEMENT
+    TYPE & PLACEMENT
     ========================================
     */
     type: {
       type: String,
       enum: {
         values: ['video', 'banner', 'sponsored'],
-        message: '{VALUE} is not a valid ad type'
+        message: '{VALUE} is not a valid campaign type'
       },
-      required: [true, 'Ad type is required']
+      required: [true, 'Campaign type is required']
     },
 
     placement: {
@@ -48,12 +46,12 @@ const AdSchema = new mongoose.Schema(
         values: ['pre-roll', 'mid-roll', 'sidebar', 'between-rows', 'home-banner'],
         message: '{VALUE} is not a valid placement'
       },
-      required: [true, 'Ad placement is required']
+      required: [true, 'Placement is required']
     },
 
     /*
     ========================================
-    MEDIA ASSETS
+    MEDIA
     ========================================
     */
     mediaUrl: {
@@ -77,7 +75,7 @@ const AdSchema = new mongoose.Schema(
 
     /*
     ========================================
-    AGE RATING & CONTENT MATCHING
+    AGE & CONTENT
     ========================================
     */
     ageRating: {
@@ -86,11 +84,9 @@ const AdSchema = new mongoose.Schema(
         values: ['G', 'PG', 'PG-13', '13+', '16+', '18+', 'ALL'],
         message: '{VALUE} is not a valid age rating'
       },
-      required: [true, 'Age rating is required'],
       default: 'ALL'
     },
 
-    // Match with video content flags for contextual targeting
     contentFlags: {
       violence: { type: Boolean, default: false },
       sex:      { type: Boolean, default: false },
@@ -100,23 +96,18 @@ const AdSchema = new mongoose.Schema(
 
     /*
     ========================================
-    TARGETING OPTIONS
+    TARGETING
     ========================================
     */
-    targetCountries: [{
-      type: String,
-      uppercase: true
-    }],
+    targetCountries: [{ type: String, uppercase: true }],
     targetContinents: [{
       type: String,
       enum: ['AF', 'AN', 'AS', 'EU', 'NA', 'OC', 'SA']
     }],
 
-    // Age range targeting (overrides ageRating if set)
     minAge: { type: Number, min: 0, max: 120, default: null },
     maxAge: { type: Number, min: 0, max: 120, default: null },
 
-    // Gender targeting (optional)
     targetGender: {
       type: String,
       enum: ['male', 'female', 'other', 'all'],
@@ -125,7 +116,7 @@ const AdSchema = new mongoose.Schema(
 
     /*
     ========================================
-    CAMPAIGN SCHEDULE & BUDGET
+    SCHEDULE & BUDGET
     ========================================
     */
     startDate: {
@@ -143,7 +134,6 @@ const AdSchema = new mongoose.Schema(
       }
     },
 
-    // Budget controls
     totalBudget: {
       type: Number,
       required: [true, 'Total budget is required'],
@@ -151,14 +141,7 @@ const AdSchema = new mongoose.Schema(
     },
     dailyBudget: {
       type: Number,
-      default: null,
-      validate: {
-        validator: function (v) {
-          if (!v) return true;
-          return v <= this.totalBudget;
-        },
-        message: 'Daily budget cannot exceed total budget'
-      }
+      default: null
     },
     currency: {
       type: String,
@@ -166,7 +149,6 @@ const AdSchema = new mongoose.Schema(
       enum: ['USD', 'EUR', 'GBP', 'KES']
     },
 
-    // Frequency capping
     maxImpressionsPerUser: {
       type: Number,
       default: 10,
@@ -189,14 +171,8 @@ const AdSchema = new mongoose.Schema(
     uniqueImpressions: { type: Number, default: 0 },
     clicks:            { type: Number, default: 0 },
     uniqueClicks:      { type: Number, default: 0 },
-    ctr: {
-      type: Number,
-      default: 0,
-      min: 0,
-      max: 100
-    },
+    ctr:               { type: Number, default: 0, min: 0, max: 100 },
 
-    // Revenue tracking
     spentAmount:     { type: Number, default: 0 },
     remainingBudget: { type: Number, default: 0 },
 
@@ -207,7 +183,7 @@ const AdSchema = new mongoose.Schema(
     */
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Admin',
       required: true
     },
 
@@ -220,44 +196,38 @@ const AdSchema = new mongoose.Schema(
       default: 'pending'
     },
 
-    // Approval workflow
     approved:   { type: Boolean, default: false },
-    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
     approvedAt: { type: Date, default: null },
 
     rejected:        { type: Boolean, default: false },
     rejectionReason: { type: String, default: null },
 
-    // Pause/Resume tracking
     pausedAt:  { type: Date, default: null },
-    pausedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    pausedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
     resumedAt: { type: Date, default: null },
-    resumedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    resumedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
 
     /*
     ========================================
-    REVENUE SHARING
+    BLOCKED ACCOUNTS / REGIONS
     ========================================
     */
-    platformShare: { type: Number, default: 20, min: 0, max: 100 },
-    creatorShare:  { type: Number, default: 80, min: 0, max: 100 },
+    blockedUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    blockedCountries: [{ type: String, uppercase: true }],
+    blockedContinents: [{ type: String }],
 
     /*
     ========================================
-    METADATA & TRACKING
+    METADATA
     ========================================
     */
     tags:  [{ type: String }],
     notes: { type: String, default: null },
 
-    // For programmatic ads
-    isProgrammatic: { type: Boolean, default: false },
-    bidPrice:       { type: Number, default: null },
-
-    // Soft delete
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null },
-    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null }
   },
   {
     timestamps: true,
@@ -271,20 +241,20 @@ const AdSchema = new mongoose.Schema(
 INDEXES
 ========================================
 */
-AdSchema.index({ status: 1, startDate: 1, endDate: 1 });
-AdSchema.index({ ageRating: 1 });
-AdSchema.index({ targetCountries: 1 });
-AdSchema.index({ createdBy: 1 });
-AdSchema.index({ isDeleted: 1 });
-AdSchema.index({ type: 1, placement: 1 });
-AdSchema.index({ totalBudget: 1, spentAmount: 1 });
+PromotionSchema.index({ status: 1, startDate: 1, endDate: 1 });
+PromotionSchema.index({ ageRating: 1 });
+PromotionSchema.index({ targetCountries: 1 });
+PromotionSchema.index({ createdBy: 1 });
+PromotionSchema.index({ isDeleted: 1 });
+PromotionSchema.index({ type: 1, placement: 1 });
+PromotionSchema.index({ totalBudget: 1, spentAmount: 1 });
 
 /*
 ========================================
 VIRTUALS
 ========================================
 */
-AdSchema.virtual('isActive').get(function () {
+PromotionSchema.virtual('isActive').get(function () {
   const now = new Date();
   return (
     this.status === 'active' &&
@@ -295,57 +265,39 @@ AdSchema.virtual('isActive').get(function () {
   );
 });
 
-AdSchema.virtual('progress').get(function () {
+PromotionSchema.virtual('progress').get(function () {
   if (!this.totalBudget) return 0;
   return Math.min(100, (this.spentAmount / this.totalBudget) * 100);
 });
 
-AdSchema.virtual('daysRemaining').get(function () {
+PromotionSchema.virtual('daysRemaining').get(function () {
   const now = new Date();
   if (now > this.endDate) return 0;
-  const diffTime = this.endDate - now;
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return Math.ceil((this.endDate - now) / (1000 * 60 * 60 * 24));
 });
 
 /*
 ========================================
-PRE-SAVE HOOK — FIXED
-========================================
-The previous version used the callback pattern:
-  AdSchema.pre('save', function(next) { ... next(); })
-
-This BREAKS when save() is called from within instance methods
-(trackImpression, approve, pause, etc.) because Mongoose internally
-invokes the hook without passing a usable `next` function in those
-recursive save paths, causing: "TypeError: next is not a function".
-
-The correct fix is to use the async pattern with NO next parameter.
-Mongoose detects the async function and handles flow automatically.
-Any thrown error is caught and propagated by Mongoose itself.
+PRE-SAVE HOOK
 ========================================
 */
-AdSchema.pre('save', async function () {
-  // Update CTR
+PromotionSchema.pre('save', async function () {
   if (this.impressions > 0) {
     this.ctr = parseFloat(((this.clicks / this.impressions) * 100).toFixed(4));
   }
 
-  // Set remainingBudget on first save (new document)
   if (this.isNew) {
     this.remainingBudget = this.totalBudget;
   } else {
-    // Update remaining budget on subsequent saves
     this.remainingBudget = Math.max(0, this.totalBudget - this.spentAmount);
   }
 
-  // Auto-end if budget exhausted or end date passed
   const now = new Date();
   if (this.status === 'active') {
     if (this.remainingBudget <= 0 || now > this.endDate) {
       this.status = 'ended';
     }
   }
-  // No next() call needed — async pre-hooks resolve automatically
 });
 
 /*
@@ -355,19 +307,23 @@ INSTANCE METHODS
 */
 
 /**
- * Check if ad is eligible for a user based on age
+ * Check if this promotion is eligible to be shown to a given user.
+ * Checks age, gender, country, continent, and block lists.
  */
-AdSchema.methods.isEligibleForUser = function (user) {
+PromotionSchema.methods.isEligibleForUser = function (user) {
   if (!this.isActive) return false;
 
-  if (!user) {
-    return ['G', 'PG', 'ALL'].includes(this.ageRating);
+  // Check blocked user
+  if (user && this.blockedUserIds && this.blockedUserIds.length > 0) {
+    const userId = user._id || user.id;
+    if (this.blockedUserIds.some(id => id.toString() === userId.toString())) return false;
   }
 
-  const userAge = user.dateOfBirth
+  const userAge = user && user.dateOfBirth
     ? Math.floor((new Date() - new Date(user.dateOfBirth)) / (1000 * 60 * 60 * 24 * 365.25))
     : null;
 
+  // Age rating check
   if (userAge !== null) {
     const ageAllowed = (rating) => {
       switch (rating) {
@@ -384,25 +340,36 @@ AdSchema.methods.isEligibleForUser = function (user) {
     if (!ageAllowed(this.ageRating)) return false;
   }
 
-  if (this.minAge && userAge < this.minAge) return false;
-  if (this.maxAge && userAge > this.maxAge) return false;
-  if (this.targetGender !== 'all' && user.gender !== this.targetGender) return false;
+  if (this.minAge && userAge !== null && userAge < this.minAge) return false;
+  if (this.maxAge && userAge !== null && userAge > this.maxAge) return false;
 
-  if (this.targetCountries && this.targetCountries.length > 0) {
-    if (!user.country || !this.targetCountries.includes(user.country)) return false;
+  // Gender check
+  if (this.targetGender !== 'all' && user && user.gender && user.gender !== this.targetGender) return false;
+
+  // Country block
+  if (user && user.country && this.blockedCountries && this.blockedCountries.length > 0) {
+    if (this.blockedCountries.includes(user.country)) return false;
   }
 
+  // Continent block
+  if (user && user.continent && this.blockedContinents && this.blockedContinents.length > 0) {
+    if (this.blockedContinents.includes(user.continent)) return false;
+  }
+
+  // Country targeting (whitelist — if set, only show to these countries)
+  if (this.targetCountries && this.targetCountries.length > 0) {
+    if (!user || !user.country || !this.targetCountries.includes(user.country)) return false;
+  }
+
+  // Continent targeting (whitelist)
   if (this.targetContinents && this.targetContinents.length > 0) {
-    if (!user.continent || !this.targetContinents.includes(user.continent)) return false;
+    if (!user || !user.continent || !this.targetContinents.includes(user.continent)) return false;
   }
 
   return true;
 };
 
-/**
- * Track an impression
- */
-AdSchema.methods.trackImpression = async function (userId, isUnique = false) {
+PromotionSchema.methods.trackImpression = async function (userId, isUnique = false) {
   this.impressions += 1;
   if (isUnique) this.uniqueImpressions += 1;
 
@@ -415,10 +382,7 @@ AdSchema.methods.trackImpression = async function (userId, isUnique = false) {
   return this;
 };
 
-/**
- * Track a click
- */
-AdSchema.methods.trackClick = async function (userId, isUnique = false) {
+PromotionSchema.methods.trackClick = async function (userId, isUnique = false) {
   this.clicks += 1;
   if (isUnique) this.uniqueClicks += 1;
   if (this.impressions > 0) {
@@ -428,41 +392,28 @@ AdSchema.methods.trackClick = async function (userId, isUnique = false) {
   return this;
 };
 
-/**
- * Pause the ad campaign
- */
-AdSchema.methods.pause = async function (userId) {
-  if (this.status !== 'active') {
-    throw new Error('Can only pause active ads');
-  }
+PromotionSchema.methods.pause = async function (adminId) {
+  if (this.status !== 'active') throw new Error('Only active campaigns can be paused');
   this.status   = 'paused';
   this.pausedAt = new Date();
-  this.pausedBy = userId;
+  this.pausedBy = adminId;
   await this.save();
   return this;
 };
 
-/**
- * Resume the ad campaign
- */
-AdSchema.methods.resume = async function (userId) {
-  if (this.status !== 'paused') {
-    throw new Error('Can only resume paused ads');
-  }
+PromotionSchema.methods.resume = async function (adminId) {
+  if (this.status !== 'paused') throw new Error('Only paused campaigns can be resumed');
   this.status    = 'active';
   this.resumedAt = new Date();
-  this.resumedBy = userId;
+  this.resumedBy = adminId;
   await this.save();
   return this;
 };
 
-/**
- * Approve the ad (admin action)
- */
-AdSchema.methods.approve = async function (userId) {
+PromotionSchema.methods.approve = async function (adminId) {
   this.status          = 'active';
   this.approved        = true;
-  this.approvedBy      = userId;
+  this.approvedBy      = adminId;
   this.approvedAt      = new Date();
   this.rejected        = false;
   this.rejectionReason = null;
@@ -470,10 +421,7 @@ AdSchema.methods.approve = async function (userId) {
   return this;
 };
 
-/**
- * Reject the ad (admin action)
- */
-AdSchema.methods.reject = async function (userId, reason) {
+PromotionSchema.methods.reject = async function (adminId, reason) {
   this.status          = 'rejected';
   this.approved        = false;
   this.rejected        = true;
@@ -484,13 +432,11 @@ AdSchema.methods.reject = async function (userId, reason) {
   return this;
 };
 
-/**
- * Soft delete the ad
- */
-AdSchema.methods.softDelete = async function (userId) {
+PromotionSchema.methods.softDelete = async function (adminId) {
   this.isDeleted = true;
   this.deletedAt = new Date();
-  this.deletedBy = userId;
+  this.deletedBy = adminId;
+  this.status    = 'ended';
   await this.save();
   return this;
 };
@@ -502,9 +448,10 @@ STATIC METHODS
 */
 
 /**
- * Get active ads for a user based on age and targeting
+ * Get active promotions eligible for a specific user.
+ * Filters by age, gender, country, continent, and block lists server-side.
  */
-AdSchema.statics.getActiveAdsForUser = async function (user, limit = 5) {
+PromotionSchema.statics.getActiveForUser = async function (user, placement = null, limit = 5) {
   const now = new Date();
 
   const query = {
@@ -515,101 +462,100 @@ AdSchema.statics.getActiveAdsForUser = async function (user, limit = 5) {
     remainingBudget: { $gt: 0 }
   };
 
+  if (placement) query.placement = placement;
+
+  // Age rating filter
   if (user && user.dateOfBirth) {
     const userAge = Math.floor(
       (now - new Date(user.dateOfBirth)) / (1000 * 60 * 60 * 24 * 365.25)
     );
-
-    const allowedRatings = ['G', 'ALL'];
-    if (userAge >= 8)  allowedRatings.push('PG');
-    if (userAge >= 13) allowedRatings.push('PG-13', '13+');
-    if (userAge >= 16) allowedRatings.push('16+');
-    if (userAge >= 18) allowedRatings.push('18+');
-
-    query.ageRating = { $in: allowedRatings };
+    const allowed = ['G', 'ALL'];
+    if (userAge >= 8)  allowed.push('PG');
+    if (userAge >= 13) allowed.push('PG-13', '13+');
+    if (userAge >= 16) allowed.push('16+');
+    if (userAge >= 18) allowed.push('18+');
+    query.ageRating = { $in: allowed };
   } else {
     query.ageRating = { $in: ['G', 'PG', 'ALL'] };
   }
 
-  const ads = await this.find(query)
-    .sort({ ctr: -1, remainingBudget: -1 })
-    .limit(limit)
-    .populate('createdBy', 'name email');
+  // Exclude blocked users
+  if (user) {
+    const userId = user._id || user.id;
+    query.blockedUserIds = { $nin: [userId] };
 
-  return ads;
-};
+    // Country block
+    if (user.country) {
+      query.blockedCountries = { $nin: [user.country] };
+    }
 
-/**
- * Get ads for admin moderation
- */
-AdSchema.statics.getForModeration = async function (status = 'pending', page = 1, limit = 20) {
-  const query = { isDeleted: false };
-  if (status !== 'all') query.status = status;
+    // Continent block
+    if (user.continent) {
+      query.blockedContinents = { $nin: [user.continent] };
+    }
 
-  const skip = (page - 1) * limit;
+    // Gender targeting — only include "all" or matching gender
+    if (user.gender) {
+      query.targetGender = { $in: ['all', user.gender] };
+    }
 
-  const [ads, total] = await Promise.all([
-    this.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('createdBy', 'name email role'),
-    this.countDocuments(query)
-  ]);
-
-  return {
-    ads,
-    pagination: { total, page, limit, pages: Math.ceil(total / limit) }
-  };
-};
-
-/**
- * Get ad analytics for reporting
- */
-AdSchema.statics.getAnalytics = async function (period = 'week') {
-  const now = new Date();
-  let startDate;
-
-  switch (period) {
-    case 'day':   startDate = new Date(now.getTime() - 1   * 24 * 60 * 60 * 1000); break;
-    case 'week':  startDate = new Date(now.getTime() - 7   * 24 * 60 * 60 * 1000); break;
-    case 'month': startDate = new Date(now.getTime() - 30  * 24 * 60 * 60 * 1000); break;
-    case 'year':  startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000); break;
-    default:      startDate = new Date(now.getTime() - 7   * 24 * 60 * 60 * 1000);
+    // Country targeting (whitelist) — show if no countries set, or user country is included
+    if (user.country) {
+      query.$or = [
+        { targetCountries: { $size: 0 } },
+        { targetCountries: user.country }
+      ];
+    }
   }
 
-  const ads = await this.find({
-    createdAt: { $gte: startDate },
-    isDeleted: false
-  });
+  const promotions = await this.find(query)
+    .sort({ ctr: -1, remainingBudget: -1 })
+    .limit(limit)
+    .lean();
 
-  const totalImpressions = ads.reduce((sum, ad) => sum + ad.impressions, 0);
-  const totalClicks      = ads.reduce((sum, ad) => sum + ad.clicks, 0);
-  const totalSpent       = ads.reduce((sum, ad) => sum + ad.spentAmount, 0);
-  const totalBudget      = ads.reduce((sum, ad) => sum + ad.totalBudget, 0);
+  return promotions;
+};
+
+PromotionSchema.statics.getAnalytics = async function (period = 'week') {
+  const now = new Date();
+  let startDate;
+  switch (period) {
+    case 'day':   startDate = new Date(now.getTime() - 86400000);       break;
+    case 'week':  startDate = new Date(now.getTime() - 604800000);      break;
+    case 'month': startDate = new Date(now.getTime() - 2592000000);     break;
+    case 'year':  startDate = new Date(now.getTime() - 31536000000);    break;
+    default:      startDate = new Date(now.getTime() - 604800000);
+  }
+
+  const items = await this.find({ createdAt: { $gte: startDate }, isDeleted: false });
 
   return {
     period,
     summary: {
-      totalAds: ads.length,
-      totalImpressions,
-      totalClicks,
-      totalSpent,
-      totalBudget,
-      averageCTR: totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0
+      totalCampaigns:   items.length,
+      totalImpressions: items.reduce((s, p) => s + p.impressions, 0),
+      totalClicks:      items.reduce((s, p) => s + p.clicks, 0),
+      totalSpent:       items.reduce((s, p) => s + p.spentAmount, 0),
+      totalBudget:      items.reduce((s, p) => s + p.totalBudget, 0),
+      averageCTR:
+        items.reduce((s, p) => s + p.impressions, 0) > 0
+          ? (items.reduce((s, p) => s + p.clicks, 0) /
+             items.reduce((s, p) => s + p.impressions, 0)) * 100
+          : 0
     },
     byStatus: {
-      active:  ads.filter(ad => ad.status === 'active').length,
-      paused:  ads.filter(ad => ad.status === 'paused').length,
-      ended:   ads.filter(ad => ad.status === 'ended').length,
-      pending: ads.filter(ad => ad.status === 'pending').length
+      active:   items.filter(p => p.status === 'active').length,
+      paused:   items.filter(p => p.status === 'paused').length,
+      ended:    items.filter(p => p.status === 'ended').length,
+      pending:  items.filter(p => p.status === 'pending').length,
+      rejected: items.filter(p => p.status === 'rejected').length
     },
     byType: {
-      video:     ads.filter(ad => ad.type === 'video').length,
-      banner:    ads.filter(ad => ad.type === 'banner').length,
-      sponsored: ads.filter(ad => ad.type === 'sponsored').length
+      video:     items.filter(p => p.type === 'video').length,
+      banner:    items.filter(p => p.type === 'banner').length,
+      sponsored: items.filter(p => p.type === 'sponsored').length
     }
   };
 };
 
-module.exports = mongoose.model('Ad', AdSchema);
+module.exports = mongoose.models.Promotion || mongoose.model('Promotion', PromotionSchema);

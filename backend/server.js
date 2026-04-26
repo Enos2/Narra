@@ -24,7 +24,7 @@ const adminRoutes            = require('./routes/adminRoutes');
 const liveQualificationRoutes= require('./routes/liveQualificationRoutes');
 const messageRoutes          = require('./routes/messageRoutes');
 const uploadRoutes           = require('./routes/uploadRoutes');
-const adRoutes               = require('./routes/adRoutes');
+const promotionRoutes        = require('./routes/promotionRoutes');
 const searchRoutes           = require('./routes/searchRoutes');
 const historyRoutes          = require('./routes/historyRoutes');
 const playlistRoutes         = require('./routes/playlistRoutes');
@@ -38,7 +38,7 @@ const server = http.createServer(app);
 
 /*
 ========================================
-SOCKET.IO — CLEAN SLATE
+SOCKET.IO
 ========================================
 */
 const io = socketIO(server, {
@@ -52,7 +52,6 @@ const io = socketIO(server, {
 
 app.set('io', io);
 
-/* ── Socket authentication middleware ── */
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -65,11 +64,10 @@ io.use(async (socket, next) => {
       return next(new Error('Invalid token'));
     }
 
-    // Detect admin vs user by role field in JWT
-    const adminRoles = ['superadmin', 'platformadmin', 'supportadmin',
-                        'super_admin', 'platform_admin', 'support_admin'];
+    const normalizedRole = (decoded.role || '').toLowerCase().replace(/_/g, '');
+    const adminRoles = ['superadmin', 'platformadmin', 'supportadmin'];
 
-    if (adminRoles.includes((decoded.role || '').toLowerCase())) {
+    if (adminRoles.includes(normalizedRole)) {
       const admin = await Admin.findById(decoded.id).select('-password').lean();
       if (!admin)               return next(new Error('Admin not found'));
       if (admin.status === 'inactive') return next(new Error('Admin account inactive'));
@@ -85,7 +83,6 @@ io.use(async (socket, next) => {
       if (!user)  return next(new Error('User not found'));
       if (user.isBanned) return next(new Error('Account banned'));
 
-      // Token version check (force logout support)
       if ((user.tokenVersion || 0) !== (decoded.tokenVersion || 0)) {
         return next(new Error('Session expired'));
       }
@@ -105,19 +102,13 @@ io.use(async (socket, next) => {
   }
 });
 
-/* ── Socket connection handler ── */
 io.on('connection', (socket) => {
   const { actor } = socket;
-  console.log(`🔌 Connected: ${actor.model} "${actor.name}" (${actor.id})`);
+  console.log(`Connected: ${actor.model} "${actor.name}" (${actor.id})`);
 
-  // Personal notification room
   const personalRoom = `${actor.model === 'Admin' ? 'admin' : 'user'}:${actor.id}`;
   socket.join(personalRoom);
 
-  /*
-   * Client sends the list of conversation IDs it wants to subscribe to.
-   * Server verifies membership before granting access.
-   */
   socket.on('subscribe-conversations', async (conversationIds) => {
     if (!Array.isArray(conversationIds)) return;
 
@@ -132,16 +123,13 @@ io.on('connection', (socket) => {
           (p) => p.participantId.toString() === actor.id.toString()
         );
 
-        if (isMember) {
-          socket.join(`conversation:${convId}`);
-        }
+        if (isMember) socket.join(`conversation:${convId}`);
       } catch {
         // skip invalid ids
       }
     }
   });
 
-  /* Typing indicator — just relay, no DB write */
   socket.on('typing', ({ conversationId, isTyping }) => {
     socket.to(`conversation:${conversationId}`).emit('typing', {
       senderId:       actor.id,
@@ -151,7 +139,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  /* Fast-path read (HTTP endpoint also handles this) */
   socket.on('mark-read', async ({ conversationId }) => {
     try {
       const Message      = require('./models/Message');
@@ -189,15 +176,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', (reason) => {
-    console.log(`🔌 Disconnected: ${actor.model} "${actor.name}" — ${reason}`);
+    console.log(`Disconnected: ${actor.model} "${actor.name}" — ${reason}`);
   });
 });
 
-/* ── Inject io into message controller ── */
 const messageController = require('./controllers/messageController');
 if (typeof messageController.setSocketIO === 'function') {
   messageController.setSocketIO(io);
-  console.log('✅ Socket.IO injected into message controller');
 }
 
 /*
@@ -247,18 +232,18 @@ DATABASE
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
-    console.log('✓ MongoDB connected');
+    console.log('MongoDB connected');
     if (process.env.ENABLE_STREAMING !== 'false') {
       try {
         const startStreaming = require('./streaming-server');
         startStreaming();
-        console.log('✓ RTMP streaming server started');
+        console.log('RTMP streaming server started');
       } catch (err) {
-        console.warn('⚠ RTMP server not started:', err.message);
+        console.warn('RTMP server not started:', err.message);
       }
     }
   })
-  .catch((err) => { console.error('✗ MongoDB error:', err); process.exit(1); });
+  .catch((err) => { console.error('MongoDB error:', err); process.exit(1); });
 
 /*
 ========================================
@@ -282,7 +267,10 @@ app.use('/api/admin',            adminRoutes);
 app.use('/api/live-qualification', liveQualificationRoutes);
 app.use('/api/messages',         messageRoutes);
 app.use('/api/uploads',          uploadRoutes);
-app.use('/api/ads',              adRoutes);
+// Primary route: /api/promotions
+app.use('/api/promotions',       promotionRoutes);
+// Backward-compat alias: /api/ads — keeps existing frontend requests.js working
+app.use('/api/ads',              promotionRoutes);
 app.use('/api/search',           searchRoutes);
 app.use('/api/history',          historyRoutes);
 app.use('/api/playlists',        playlistRoutes);
@@ -299,8 +287,6 @@ START
 */
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log('════════════════════════════════════');
-  console.log(`🚀 Narra API — http://localhost:${PORT}`);
-  console.log(`🔌 WebSocket  — ws://localhost:${PORT}`);
-  console.log('════════════════════════════════════');
+  console.log(`Narra API running on http://localhost:${PORT}`);
+  console.log(`WebSocket running on ws://localhost:${PORT}`);
 });
