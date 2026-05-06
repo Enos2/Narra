@@ -1,6 +1,8 @@
 /**
  * server.js — Narra Backend
- * Socket.IO messaging rebuilt from scratch (clean slate).
+ * UPDATED: Full Socket.IO live streaming rooms + chat integration
+ * FIXED: HLS static file serving for live streams on Windows
+ * FIXED: HLS served BEFORE any auth middleware (public access)
  */
 
 const express    = require('express');
@@ -10,40 +12,39 @@ const path       = require('path');
 const http       = require('http');
 const socketIO   = require('socket.io');
 const jwt        = require('jsonwebtoken');
+const fs         = require('fs');
 require('dotenv').config();
 
 const User  = require('./models/User');
 const Admin = require('./models/Admin');
 
 // Routes
-const authRoutes             = require('./routes/authRoutes');
-const videoRoutes            = require('./routes/videoRoutes');
-const liveRoutes             = require('./routes/liveRoutes');
-const userRoutes             = require('./routes/userRoutes');
-const adminRoutes            = require('./routes/adminRoutes');
-const liveQualificationRoutes= require('./routes/liveQualificationRoutes');
-const messageRoutes          = require('./routes/messageRoutes');
-const uploadRoutes           = require('./routes/uploadRoutes');
-const promotionRoutes        = require('./routes/promotionRoutes');
-const searchRoutes           = require('./routes/searchRoutes');
-const historyRoutes          = require('./routes/historyRoutes');
-const playlistRoutes         = require('./routes/playlistRoutes');
-const commentRoutes          = require('./routes/commentRoutes');
-const notificationRoutes     = require('./routes/notificationRoutes');
+const authRoutes              = require('./routes/authRoutes');
+const videoRoutes             = require('./routes/videoRoutes');
+const liveRoutes              = require('./routes/liveRoutes');
+const userRoutes              = require('./routes/userRoutes');
+const adminRoutes             = require('./routes/adminRoutes');
+const liveQualificationRoutes = require('./routes/liveQualificationRoutes');
+const messageRoutes           = require('./routes/messageRoutes');
+const uploadRoutes            = require('./routes/uploadRoutes');
+const promotionRoutes         = require('./routes/promotionRoutes');
+const searchRoutes            = require('./routes/searchRoutes');
+const historyRoutes           = require('./routes/historyRoutes');
+const playlistRoutes          = require('./routes/playlistRoutes');
+const commentRoutes           = require('./routes/commentRoutes');
+const notificationRoutes      = require('./routes/notificationRoutes');
 
 const errorHandler = require('./middleware/errorMiddleware');
 
 const app    = express();
 const server = http.createServer(app);
 
-/*
-========================================
-SOCKET.IO
-========================================
-*/
+// ─────────────────────────────────────────────
+// SOCKET.IO
+// ─────────────────────────────────────────────
 const io = socketIO(server, {
   cors: {
-    origin:  'http://localhost:5173',
+    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     credentials: true,
     methods: ['GET', 'POST'],
   },
@@ -52,6 +53,7 @@ const io = socketIO(server, {
 
 app.set('io', io);
 
+// ─── Socket Auth Middleware ───────────────────
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -69,18 +71,19 @@ io.use(async (socket, next) => {
 
     if (adminRoles.includes(normalizedRole)) {
       const admin = await Admin.findById(decoded.id).select('-password').lean();
-      if (!admin)               return next(new Error('Admin not found'));
+      if (!admin)                return next(new Error('Admin not found'));
       if (admin.status === 'inactive') return next(new Error('Admin account inactive'));
 
       socket.actor = {
         id:    admin._id,
         model: 'Admin',
         role:  admin.role,
-        name:  admin.fullName,
+        name:  admin.fullName || admin.email,
+        avatar: admin.avatar || null,
       };
     } else {
       const user = await User.findById(decoded.id).select('-password').lean();
-      if (!user)  return next(new Error('User not found'));
+      if (!user)         return next(new Error('User not found'));
       if (user.isBanned) return next(new Error('Account banned'));
 
       if ((user.tokenVersion || 0) !== (decoded.tokenVersion || 0)) {
@@ -88,10 +91,11 @@ io.use(async (socket, next) => {
       }
 
       socket.actor = {
-        id:    user._id,
-        model: 'User',
-        role:  user.role,
-        name:  user.username || user.firstName || 'User',
+        id:     user._id,
+        model:  'User',
+        role:   user.role,
+        name:   user.username || user.firstName || 'Viewer',
+        avatar: user.avatar || null,
       };
     }
 
@@ -102,40 +106,34 @@ io.use(async (socket, next) => {
   }
 });
 
+// ─── Socket Connection Handler ────────────────
 io.on('connection', (socket) => {
   const { actor } = socket;
-  console.log(`Connected: ${actor.model} "${actor.name}" (${actor.id})`);
+  console.log(`[Socket] Connected: ${actor.model} "${actor.name}" (${actor.id})`);
 
+  // Personal notification room
   const personalRoom = `${actor.model === 'Admin' ? 'admin' : 'user'}:${actor.id}`;
   socket.join(personalRoom);
 
+  // ── MESSAGING ─────────────────────────────────
   socket.on('subscribe-conversations', async (conversationIds) => {
     if (!Array.isArray(conversationIds)) return;
-
     const Conversation = require('./models/Conversation');
-
     for (const convId of conversationIds) {
       try {
         const conv = await Conversation.findById(convId).lean();
         if (!conv) continue;
-
         const isMember = conv.participants.some(
           (p) => p.participantId.toString() === actor.id.toString()
         );
-
         if (isMember) socket.join(`conversation:${convId}`);
-      } catch {
-        // skip invalid ids
-      }
+      } catch { /* skip */ }
     }
   });
 
   socket.on('typing', ({ conversationId, isTyping }) => {
     socket.to(`conversation:${conversationId}`).emit('typing', {
-      senderId:       actor.id,
-      senderName:     actor.name,
-      conversationId,
-      isTyping,
+      senderId: actor.id, senderName: actor.name, conversationId, isTyping,
     });
   });
 
@@ -145,67 +143,226 @@ io.on('connection', (socket) => {
       const Conversation = require('./models/Conversation');
 
       await Message.updateMany(
-        {
-          conversationId,
-          senderId: { $ne: actor.id },
-          'readBy.readerId': { $ne: actor.id },
-          isDeleted: false,
-        },
-        {
-          $push: {
-            readBy: { readerId: actor.id, readerModel: actor.model, readAt: new Date() },
-          },
-        }
+        { conversationId, senderId: { $ne: actor.id }, 'readBy.readerId': { $ne: actor.id }, isDeleted: false },
+        { $push: { readBy: { readerId: actor.id, readerModel: actor.model, readAt: new Date() } } }
       );
 
       const conv = await Conversation.findById(conversationId);
-      if (conv) {
-        conv.clearUnread(actor.id);
-        await conv.save();
-      }
+      if (conv) { conv.clearUnread(actor.id); await conv.save(); }
 
       socket.to(`conversation:${conversationId}`).emit('messages-read', {
-        conversationId,
-        readerId:    actor.id,
-        readerModel: actor.model,
-        readAt:      new Date(),
+        conversationId, readerId: actor.id, readerModel: actor.model, readAt: new Date(),
       });
     } catch (err) {
       console.error('Socket mark-read error:', err.message);
     }
   });
 
+  // ── LIVE STREAMING ROOMS ──────────────────────
+
+  /**
+   * Join a live stream room
+   * Client sends: { liveId }
+   */
+  socket.on('live:join', async ({ liveId }) => {
+    if (!liveId) return;
+    const room = `live:${liveId}`;
+    socket.join(room);
+    console.log(`[Socket] ${actor.name} joined live room: ${liveId}`);
+
+    // Let everyone in the room know someone joined
+    socket.to(room).emit('live:viewer:joined', {
+      userId: actor.id,
+      name: actor.name,
+      avatar: actor.avatar,
+    });
+
+    // Acknowledge to sender
+    socket.emit('live:joined', { liveId, room });
+  });
+
+  /**
+   * Leave a live stream room
+   * Client sends: { liveId }
+   */
+  socket.on('live:leave', ({ liveId }) => {
+    if (!liveId) return;
+    const room = `live:${liveId}`;
+    socket.leave(room);
+    socket.to(room).emit('live:viewer:left', {
+      userId: actor.id,
+      name: actor.name,
+    });
+    console.log(`[Socket] ${actor.name} left live room: ${liveId}`);
+  });
+
+  /**
+   * Send a live chat message
+   * Client sends: { liveId, text }
+   * Broadcasts to entire room
+   */
+  socket.on('live:chat', async ({ liveId, text }) => {
+    if (!liveId || !text || !text.trim()) return;
+
+    // Sanitize text — strip HTML, limit length
+    const sanitized = String(text).replace(/<[^>]*>/g, '').substring(0, 300).trim();
+    if (!sanitized) return;
+
+    // Check if user is shadow banned (don't send but don't tell them)
+    if (actor.model === 'User') {
+      try {
+        const user = await User.findById(actor.id).select('isShadowBanned restrictions').lean();
+        if (user?.isShadowBanned || user?.restrictions?.comment) {
+          // Echo back to sender only (ghost mode)
+          socket.emit('live:chat:message', {
+            id: Date.now().toString(),
+            liveId,
+            userId: actor.id,
+            name: actor.name,
+            avatar: actor.avatar,
+            text: sanitized,
+            sentAt: new Date(),
+            isOwn: true,
+          });
+          return;
+        }
+      } catch { /* allow through */ }
+    }
+
+    const msg = {
+      id: `${actor.id}-${Date.now()}`,
+      liveId,
+      userId: actor.id,
+      name: actor.name,
+      avatar: actor.avatar,
+      role: actor.role,
+      text: sanitized,
+      sentAt: new Date(),
+    };
+
+    // Broadcast to everyone in the room including sender
+    io.to(`live:${liveId}`).emit('live:chat:message', msg);
+  });
+
+  /**
+   * Admin: delete a chat message
+   * Client sends: { liveId, messageId }
+   */
+  socket.on('live:chat:delete', ({ liveId, messageId }) => {
+    const adminRoles = ['superadmin', 'platformadmin', 'supportadmin'];
+    if (!adminRoles.includes(actor.role)) return;
+    io.to(`live:${liveId}`).emit('live:chat:deleted', { messageId });
+  });
+
+  /**
+   * Host heartbeat — keeps stream "live" flag accurate
+   * Client sends: { liveId }
+   */
+  socket.on('live:heartbeat', ({ liveId }) => {
+    socket.to(`live:${liveId}`).emit('live:heartbeat', { liveId, ts: Date.now() });
+  });
+
+  /**
+   * WebRTC signaling for browser-based streaming
+   * Client sends: { liveId, offer, targetId }
+   */
+  socket.on('webrtc:offer', ({ liveId, offer, targetId }) => {
+    if (targetId) {
+      io.to(targetId).emit('webrtc:offer', { offer, from: socket.id, liveId });
+    } else {
+      socket.to(`live:${liveId}`).emit('webrtc:offer', { offer, from: socket.id, liveId });
+    }
+  });
+
+  socket.on('webrtc:answer', ({ answer, to }) => {
+    io.to(to).emit('webrtc:answer', { answer, from: socket.id });
+  });
+
+  socket.on('webrtc:ice-candidate', ({ candidate, to }) => {
+    io.to(to).emit('webrtc:ice-candidate', { candidate, from: socket.id });
+  });
+
+  // ── DISCONNECT ────────────────────────────────
   socket.on('disconnect', (reason) => {
-    console.log(`Disconnected: ${actor.model} "${actor.name}" — ${reason}`);
+    console.log(`[Socket] Disconnected: ${actor.model} "${actor.name}" — ${reason}`);
   });
 });
 
+// Attach io to messageController
 const messageController = require('./controllers/messageController');
 if (typeof messageController.setSocketIO === 'function') {
   messageController.setSocketIO(io);
 }
 
-/*
-========================================
-CORS + BODY PARSING
-========================================
-*/
+// Attach io to streaming server
+try {
+  const streamingServer = require('./streaming-server');
+  if (typeof streamingServer.setSocketIO === 'function') {
+    streamingServer.setSocketIO(io);
+  }
+} catch { /* streaming server optional */ }
+
+// ─────────────────────────────────────────────
+// CORS + BODY PARSING
+// ─────────────────────────────────────────────
 app.use(cors({
-  origin:  'http://localhost:5173',
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with', 'Range'],
   exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-/*
-========================================
-STATIC FILE SERVING
-========================================
-*/
+// ─────────────────────────────────────────────
+// STATIC FILES - HLS MUST BE FIRST (BEFORE ANY AUTH)
+// ─────────────────────────────────────────────
+
+// CRITICAL: Serve HLS files FIRST with NO authentication requirements
+const liveMediaPath = path.resolve(__dirname, 'media', 'live');
+console.log(`[Server] HLS files directory: ${liveMediaPath}`);
+console.log(`[Server] Directory exists: ${fs.existsSync(liveMediaPath)}`);
+
+// Create directory if it doesn't exist
+if (!fs.existsSync(liveMediaPath)) {
+  fs.mkdirSync(liveMediaPath, { recursive: true });
+  console.log(`[Server] Created HLS directory: ${liveMediaPath}`);
+}
+
+// Serve HLS files - PUBLIC access, no auth middleware should run before this
+app.use('/live', (req, res, next) => {
+  console.log(`[HLS Request] ${req.method} ${req.url} - IP: ${req.ip}`);
+  
+  // Set CORS headers for public access
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Content-Length, Content-Range, Accept-Ranges');
+  res.setHeader('Cache-Control', 'no-cache, private');
+  res.setHeader('Accept-Ranges', 'bytes');
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+}, express.static(liveMediaPath, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.m3u8')) {
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    } else if (filePath.endsWith('.ts')) {
+      res.setHeader('Content-Type', 'video/mp2t');
+    }
+  },
+  // Allow serving files even if they're being written
+  fallthrough: true
+}));
+
+// ─────────────────────────────────────────────
+// OTHER STATIC FILES
+// ─────────────────────────────────────────────
 app.use('/uploads', (req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
+  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:5173');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
@@ -222,71 +379,72 @@ app.use('/uploads', (req, res, next) => {
   },
 }));
 
-app.use('/media', express.static(path.join(__dirname, 'media')));
+// Also serve media root for compatibility
+app.use('/media', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-cache');
+  next();
+}, express.static(path.join(__dirname, 'media')));
 
-/*
-========================================
-DATABASE
-========================================
-*/
+// ─────────────────────────────────────────────
+// DATABASE
+// ─────────────────────────────────────────────
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
-    console.log('MongoDB connected');
+    console.log('✅ MongoDB connected');
     if (process.env.ENABLE_STREAMING !== 'false') {
       try {
         const startStreaming = require('./streaming-server');
-        startStreaming();
-        console.log('RTMP streaming server started');
+        const streamingServer = startStreaming();
+        // Pass io after start
+        if (typeof startStreaming.setSocketIO === 'function') {
+          startStreaming.setSocketIO(io);
+        }
       } catch (err) {
-        console.warn('RTMP server not started:', err.message);
+        console.warn('⚠️  RTMP server not started:', err.message);
+        console.warn('   Install FFmpeg to enable RTMP streaming.');
       }
     }
   })
   .catch((err) => { console.error('MongoDB error:', err); process.exit(1); });
 
-/*
-========================================
-HEALTH
-========================================
-*/
+// ─────────────────────────────────────────────
+// HEALTH
+// ─────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
-  res.json({ success: true, status: 'healthy', timestamp: new Date() });
+  res.json({ success: true, status: 'healthy', timestamp: new Date(), streaming: process.env.ENABLE_STREAMING !== 'false' });
 });
 
-/*
-========================================
-ROUTES
-========================================
-*/
-app.use('/api/auth',             authRoutes);
-app.use('/api/videos',           videoRoutes);
-app.use('/api/lives',            liveRoutes);
-app.use('/api/users',            userRoutes);
-app.use('/api/admin',            adminRoutes);
+// ─────────────────────────────────────────────
+// ROUTES
+// ─────────────────────────────────────────────
+app.use('/api/auth',              authRoutes);
+app.use('/api/videos',            videoRoutes);
+app.use('/api/lives',             liveRoutes);
+app.use('/api/users',             userRoutes);
+app.use('/api/admin',             adminRoutes);
 app.use('/api/live-qualification', liveQualificationRoutes);
-app.use('/api/messages',         messageRoutes);
-app.use('/api/uploads',          uploadRoutes);
-// Primary route: /api/promotions
-app.use('/api/promotions',       promotionRoutes);
-// Backward-compat alias: /api/ads — keeps existing frontend requests.js working
-app.use('/api/ads',              promotionRoutes);
-app.use('/api/search',           searchRoutes);
-app.use('/api/history',          historyRoutes);
-app.use('/api/playlists',        playlistRoutes);
-app.use('/api/comments',         commentRoutes);
-app.use('/api/notifications',    notificationRoutes);
+app.use('/api/messages',          messageRoutes);
+app.use('/api/uploads',           uploadRoutes);
+app.use('/api/promotions',        promotionRoutes);
+app.use('/api/ads',               promotionRoutes);   // backward compat
+app.use('/api/search',            searchRoutes);
+app.use('/api/history',           historyRoutes);
+app.use('/api/playlists',         playlistRoutes);
+app.use('/api/comments',          commentRoutes);
+app.use('/api/notifications',     notificationRoutes);
 
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
 app.use(errorHandler);
 
-/*
-========================================
-START
-========================================
-*/
+// ─────────────────────────────────────────────
+// START
+// ─────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Narra API running on http://localhost:${PORT}`);
-  console.log(`WebSocket running on ws://localhost:${PORT}`);
+  console.log(`\n🚀 Narra API  →  http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket  →  ws://localhost:${PORT}`);
+  console.log(`📺 HLS Media  →  http://localhost:${PORT}/live`);
+  console.log(`📡 RTMP       →  rtmp://localhost:1935/live\n`);
 });

@@ -2,54 +2,33 @@ const mongoose = require('mongoose');
 
 const LiveSchema = new mongoose.Schema(
   {
-    /*
-    ========================================
-    BASIC INFO
-    ========================================
-    */
     title: { type: String, required: true, trim: true, maxlength: 200 },
-    description: { type: String, maxlength: 5000 },
-    thumbnailUrl: { type: String },
+    description: { type: String, maxlength: 5000, default: '' },
+    thumbnailUrl: { type: String, default: '' },
 
-    /*
-    ========================================
-    HOST / CREATOR
-    ========================================
-    */
     host: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
 
-    /*
-    ========================================
-    STATUS & TIMING
-    ========================================
-    */
-    status: { 
-      type: String, 
+    status: {
+      type: String,
       enum: ['pending', 'scheduled', 'live', 'ended', 'cancelled'],
-      default: 'scheduled', 
-      index: true 
+      default: 'pending',
+      index: true,
     },
-    scheduledAt: Date,
-    startedAt: Date,
-    endedAt: Date,
-    duration: Number, // seconds, calculated when ended
-    forceClosed: { type: Boolean, default: false }, // admin can force-close live
+    scheduledAt: { type: Date, default: null },
+    startedAt: { type: Date, default: null },
+    endedAt: { type: Date, default: null },
+    duration: { type: Number, default: 0 },
+    forceClosed: { type: Boolean, default: false },
 
-    /*
-    ========================================
-    CLASSIFICATION
-    ========================================
-    */
-    category: { type: String }, // talk, concert, sports, podcast, etc
-    tags: [{ type: String, index: true }],
-    ageRating: { type: String, enum: ['G', 'PG', 'PG-13', 'R', 'NC-17'], default: 'PG' },
+    category: { type: String, default: 'general' },
+    tags: [{ type: String }],
+    ageRating: {
+      type: String,
+      enum: ['G', 'PG', 'PG-13', 'R', 'NC-17', '13+', '16+', '18+'],
+      default: 'PG',
+    },
 
-    /*
-    ========================================
-    PAYWALL & MONETIZATION
-    ========================================
-    */
-    isPaid: { type: Boolean, default: false, index: true },
+    isPaid: { type: Boolean, default: false },
     price: { type: Number, default: 0, min: 0 },
     currency: { type: String, default: 'USD' },
     purchases: [
@@ -59,50 +38,36 @@ const LiveSchema = new mongoose.Schema(
       },
     ],
 
-    /*
-    ========================================
-    SPONSORED / FUNDRAISER
-    ========================================
-    */
     isSponsored: { type: Boolean, default: false },
     isFundraiser: { type: Boolean, default: false },
-    sponsorDescription: { type: String, required: function () { return this.isSponsored; } },
-    fundraiserDescription: { type: String, required: function () { return this.isFundraiser; } },
-    fundraiserGoal: { type: Number },
+    sponsorDescription: { type: String, default: '' },
+    fundraiserDescription: { type: String, default: '' },
+    fundraiserGoal: { type: Number, default: 0 },
     fundraiserRaised: { type: Number, default: 0 },
 
-    /*
-    ========================================
-    VIEWERS & CHAT
-    ========================================
-    */
     viewers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     peakViewers: { type: Number, default: 0 },
     totalViews: { type: Number, default: 0 },
     chatEnabled: { type: Boolean, default: true },
     chatSlowMode: { type: Boolean, default: false },
 
-    /*
-    ========================================
-    GEO RESTRICTIONS
-    ========================================
-    */
     blockedCountries: [{ type: String }],
     blockedContinents: [{ type: String }],
 
-    /*
-    ========================================
-    MODERATION
-    ========================================
-    */
     approved: { type: Boolean, default: false, index: true },
-    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
+    rejected: { type: Boolean, default: false },
     isRemoved: { type: Boolean, default: false },
-    removedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    removalReason: { type: String },
+    removedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    removalReason: { type: String, default: '' },
     flagged: { type: Boolean, default: false },
-    flagReason: { type: String },
-    adminNotes: { type: String },
+    flagReason: { type: String, default: '' },
+    adminNotes: { type: String, default: '' },
+    isShadowBanned: { type: Boolean, default: false },
+    shadowBanReason: { type: String, default: '' },
+    shadowBannedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    shadowBannedAt: { type: Date, default: null },
     violationReports: [
       {
         admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -111,51 +76,38 @@ const LiveSchema = new mongoose.Schema(
       },
     ],
 
-    /*
-    ========================================
-    REPLAY HANDLING
-    ========================================
-    */
-    saveReplay: { type: Boolean, default: true },
-    replayVideo: { type: mongoose.Schema.Types.ObjectId, ref: 'Video' },
+    adminEnded: { type: Boolean, default: false },
+    adminEndedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    adminEndedReason: { type: String, default: '' },
 
-    /*
-    ========================================
-    SYSTEM
-    ========================================
-    */
+    saveReplay: { type: Boolean, default: true },
+    replayVideo: { type: mongoose.Schema.Types.ObjectId, ref: 'Video', default: null },
+
     isDeleted: { type: Boolean, default: false },
 
-    /*
-    ========================================
-    STREAM KEYS / HLS
-    ========================================
-    */
-    rtmpUrl: { type: String },
-    streamKey: { type: String },
-    hlsUrl: { type: String },
+    streamKey: { type: String, default: '' },
+    rtmpUrl: { type: String, default: '' },
+    streamUrl: { type: String, default: '' },
+    hlsUrl: { type: String, default: '' },
   },
   { timestamps: true }
 );
 
-/*
-========================================
-PRE SAVE HOOK - FIXED VERSION
-========================================
-*/
-LiveSchema.pre('save', function (next) {
-  // Check if both sponsored and fundraiser
+// ✅ FIXED MIDDLEWARE (NO next, NO crash)
+LiveSchema.pre('save', function () {
+  // Prevent conflicting monetization types
   if (this.isSponsored && this.isFundraiser) {
-    const error = new Error('Live stream cannot be both sponsored and fundraiser');
-    return next(error);
+    throw new Error('Live stream cannot be both sponsored and fundraiser');
   }
-  
-  // If not paid, ensure price is 0
-  if (!this.isPaid) {
-    this.price = 0;
+
+  // Force all streams to be free
+  this.isPaid = false;
+  this.price = 0;
+
+  // Auto-fill streamUrl from rtmpUrl if missing
+  if (this.rtmpUrl && !this.streamUrl) {
+    this.streamUrl = this.rtmpUrl;
   }
-  
-  next(); // Call next without error to proceed
 });
 
 module.exports = mongoose.model('Live', LiveSchema);

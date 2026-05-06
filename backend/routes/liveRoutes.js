@@ -1,126 +1,140 @@
 /**
  * File: backend/routes/liveRoutes.js
- * Description: Handles live stream endpoints — create, join, purchase, access, admin moderation, shadow ban
- * UPDATED: Added streaming management endpoints
+ * REBUILT FROM SCRATCH
+ * All routes for live streaming — user, host, and admin
  */
 
 const express = require('express');
 const router = express.Router();
 
 const {
+  checkLiveQualification,
   createLive,
   getLiveFeed,
-  checkLiveAccess,
+  getStreamStatus,
   joinLive,
-  purchaseLive,
-  updateLiveStatus,
-  deleteLive,
-  shadowBanLive,
-  setLivePrivilege,
-  addLiveStrike,
-  getUserLiveDetails,
+  checkLiveAccess,
   startStream,
   stopStream,
-  getStreamStatus,
-  checkLiveQualification
+  getMyLives,
+  purchaseLive,
+  updateLiveStatus,
+  shadowBanLive,
+  deleteLive,
+  setLivePrivilege,
+  addLiveStrike,
+  removeStrike,
+  getUserLiveDetails,
+  getAdminLiveStreams,
+  getAdminLiveStreamDetails,
+  endLiveStreamAdmin,
+  sendStreamWarning,
+  getLiveStreamReports,
+  applyShadowBanToLive,
+  removeShadowBanFromLive,
+  banUserFromStreaming,
 } = require('../controllers/liveController');
 
 const { protect, requireRole } = require('../middleware/authMiddleware');
 
-/**
- * ================================
- * PUBLIC ROUTES
- * ================================
- */
+const ADMIN = ['superadmin', 'platformadmin', 'supportadmin'];
 
-// Get all live streams feed (public)
+// ─────────────────────────────────────────────
+// PUBLIC
+// ─────────────────────────────────────────────
+
+// Live feed (public — no auth needed)
 router.get('/', getLiveFeed);
 
-// Check live qualification (protected)
+// ─────────────────────────────────────────────
+// AUTHENTICATED USER ROUTES
+// ─────────────────────────────────────────────
+
+// Check if current user qualifies for live streaming
 router.get('/check-qualification', protect, checkLiveQualification);
 
-/**
- * ================================
- * CREATOR ROUTES (PROTECTED)
- * ================================
- */
+// Get all of the current user's live streams
+router.get('/my', protect, getMyLives);
 
-// Create a live stream
+// Create a new live stream
 router.post('/', protect, createLive);
 
-// Get specific live stream by ID
+// ─────────────────────────────────────────────
+// ADMIN MANAGEMENT ROUTES (before :id param routes)
+// ─────────────────────────────────────────────
+
+// Admin: get all live streams
+router.get('/admin/all', protect, requireRole(...ADMIN), getAdminLiveStreams);
+
+// Admin: grant / revoke live privilege
+router.post('/privileges', protect, requireRole(...ADMIN), setLivePrivilege);
+
+// Admin: add live strike
+router.post('/strikes', protect, requireRole(...ADMIN), addLiveStrike);
+
+// Admin: remove live strike
+router.delete('/strikes/:id/:strikeId', protect, requireRole(...ADMIN), removeStrike);
+
+// Admin: get user live details
+router.get('/user/:userId', protect, requireRole(...ADMIN), getUserLiveDetails);
+
+// Admin: ban user from streaming
+router.post('/ban-streaming/:id', protect, requireRole(...ADMIN), banUserFromStreaming);
+
+// ─────────────────────────────────────────────
+// SPECIFIC STREAM ROUTES  (/lives/:id/...)
+// ─────────────────────────────────────────────
+
+// Get stream status / details
 router.get('/:id', protect, getStreamStatus);
 
-// Join/watch a live stream
+// Join / start watching a stream
 router.post('/:id/join', protect, joinLive);
 
-// Purchase access to a live stream
-router.post('/:id/purchase', protect, purchaseLive);
-
-// Check live access (age/paywall/admin)
+// Check access (paywall / age)
 router.get('/:id/access', protect, checkLiveAccess);
 
-// Start streaming (when OBS connects)
+// Purchase stream (no-op — all free)
+router.post('/:id/purchase', protect, purchaseLive);
+
+// Host: start broadcasting
 router.post('/:id/start', protect, startStream);
 
-// Stop streaming (when OBS disconnects)
+// Host: stop broadcasting
 router.post('/:id/stop', protect, stopStream);
 
-// Get stream status
+// Status alias
 router.get('/:id/status', protect, getStreamStatus);
 
-/**
- * ================================
- * ADMIN MODERATION ROUTES
- * ================================
- */
+// ─────────────────────────────────────────────
+// ADMIN STREAM MODERATION
+// ─────────────────────────────────────────────
 
-// Update live status (approve/reject/cancel)
-router.patch(
-  '/:id/status',
-  protect,
-  requireRole('platformadmin', 'superadmin', 'supportadmin'),
-  updateLiveStatus
-);
+// Update status (approve / reject / cancel)
+router.patch('/:id/status', protect, requireRole(...ADMIN), updateLiveStatus);
 
-// Shadow ban a live stream
-router.patch(
-  '/:id/shadow-ban',
-  protect,
-  requireRole('platformadmin', 'superadmin', 'supportadmin'),
-  shadowBanLive
-);
+// Toggle shadow ban
+router.patch('/:id/shadow-ban', protect, requireRole(...ADMIN), shadowBanLive);
 
-// Delete a live stream
-router.delete(
-  '/:id',
-  protect,
-  requireRole('platformadmin', 'superadmin', 'supportadmin'),
-  deleteLive
-);
+// Apply shadow ban
+router.post('/:id/apply-shadow-ban', protect, requireRole(...ADMIN), applyShadowBanToLive);
 
-// Grant/revoke live privileges
-router.post(
-  '/privileges',
-  protect,
-  requireRole('platformadmin', 'superadmin', 'supportadmin'),
-  setLivePrivilege
-);
+// Remove shadow ban
+router.post('/:id/remove-shadow-ban', protect, requireRole(...ADMIN), removeShadowBanFromLive);
 
-// Add live strike to user
-router.post(
-  '/strikes',
-  protect,
-  requireRole('platformadmin', 'superadmin', 'supportadmin'),
-  addLiveStrike
-);
+// Admin end stream
+router.post('/:id/admin-end', protect, requireRole(...ADMIN), endLiveStreamAdmin);
 
-// Get user live details
-router.get(
-  '/user/:userId',
-  protect,
-  requireRole('platformadmin', 'superadmin', 'supportadmin'),
-  getUserLiveDetails
-);
+// Send warning / strike to host
+router.post('/:id/warn', protect, requireRole(...ADMIN), sendStreamWarning);
+
+// Get stream reports
+router.get('/:id/reports', protect, requireRole(...ADMIN), getLiveStreamReports);
+
+// Get stream details (admin view)
+router.get('/:id/admin-details', protect, requireRole(...ADMIN), getAdminLiveStreamDetails);
+
+// Delete stream
+router.delete('/:id', protect, requireRole(...ADMIN), deleteLive);
 
 module.exports = router;
