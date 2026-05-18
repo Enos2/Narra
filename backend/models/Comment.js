@@ -66,11 +66,9 @@ CommentSchema.virtual('dislikeCount').get(function () {
   return this.dislikes ? this.dislikes.length : 0;
 });
 
-// Indexes
+// Compound indexes only — single-field indexes are already defined on the fields above
 CommentSchema.index({ video: 1, parentComment: 1, createdAt: -1 });
 CommentSchema.index({ parentComment: 1, createdAt: 1 });
-CommentSchema.index({ user: 1 });
-CommentSchema.index({ isDeleted: 1 });
 
 const Comment = mongoose.models.Comment || mongoose.model('Comment', CommentSchema);
 module.exports = Comment;

@@ -456,8 +456,6 @@ UserSchema.index({ following: 1 });
 UserSchema.index({ twins: 1 });
 UserSchema.index({ followerCount: -1 });
 UserSchema.index({ location: 1 });
-UserSchema.index({ username: 1 });
-UserSchema.index({ email: 1 });
 UserSchema.index({ createdAt: -1 });
 
 /*

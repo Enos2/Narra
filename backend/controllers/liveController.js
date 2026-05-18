@@ -5,6 +5,8 @@
  * qualification checks, admin privilege control, strikes, free streams only
  * FIXED: hlsUrl always uses /live/<streamKey>/index.m3u8 format
  * FIXED: getStreamStatus returns hlsUrl regardless of status so frontend can poll correctly
+ * FIXED: streamKey now returned to ALL authenticated viewers when stream is live
+ * FIXED: buildHlsUrl uses port 5000 (matches server.js static file serving)
  */
 
 const Live = require('../models/Live');
@@ -25,11 +27,11 @@ const isAdmin = (user) => ADMIN_ROLES.includes(user?.role);
 
 /**
  * Build the canonical HLS URL.
- * Node Media Server serves HLS at: http://<host>:<port>/live/<streamKey>/index.m3u8
- * This must match exactly what streaming-server.js generates.
+ * FIXED: Use port 5000 — HLS files are served by server.js at /live/<streamKey>/index.m3u8
+ * NOT port 8000 (that was Node Media Server's built-in HTTP which we don't use for HLS serving)
  */
 const buildHlsUrl = (streamKey) => {
-  const HLS_BASE = process.env.HLS_SERVER_URL || 'http://localhost:8000';
+  const HLS_BASE = process.env.HLS_SERVER_URL || 'http://localhost:5000';
   return `${HLS_BASE}/live/${streamKey}/index.m3u8`;
 };
 
@@ -230,7 +232,7 @@ const createLive = async (req, res) => {
     const streamKey = crypto.randomBytes(20).toString('hex');
     const RTMP_URL = process.env.RTMP_SERVER_URL || 'rtmp://localhost:1935/live';
 
-    // FIXED: Always use the correct HLS URL format: /live/<streamKey>/index.m3u8
+    // FIXED: Always use the correct HLS URL format pointing to port 5000
     const rtmpUrl = `${RTMP_URL}/${streamKey}`;
     const hlsUrl = buildHlsUrl(streamKey);
 
@@ -318,7 +320,7 @@ const getLiveFeed = async (req, res) => {
 
     const result = lives.map((live) => ({
       ...live,
-      // FIXED: Always build the correct hlsUrl from the streamKey in case DB value is stale
+      // Always build the correct hlsUrl from the streamKey in case DB value is stale
       hlsUrl: live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl,
       playbackUrl: live.status === 'live' ? (live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl) : null,
       isLive: live.status === 'live',
@@ -346,8 +348,7 @@ const getStreamStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Live stream not found.' });
     }
 
-    // FIXED: Always compute the correct hlsUrl from streamKey — never trust the stored value alone
-    // This ensures the frontend gets the right URL even if the DB value is from an old format
+    // Always compute the correct hlsUrl from streamKey — never trust the stored value alone
     const correctHlsUrl = live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl;
 
     const isHostUser = req.user?._id?.toString() === live.host?._id?.toString();
@@ -369,12 +370,15 @@ const getStreamStatus = async (req, res) => {
         viewerCount: live.viewers?.length || 0,
         peakViewers: live.peakViewers,
         totalViews: live.totalViews,
-        // FIXED: Always return hlsUrl so frontend can build player immediately.
+        // Always return hlsUrl so frontend can build player immediately.
         // The HLS player handles retries if the stream hasn't started yet.
         hlsUrl: correctHlsUrl,
         playbackUrl: live.status === 'live' ? correctHlsUrl : null,
-        // Only expose streamKey and rtmpUrl to the host
-        streamKey: isHostUser ? live.streamKey : undefined,
+        // FIXED: Return streamKey to ALL authenticated users when stream is live.
+        // Viewers need streamKey so LiveWatch.jsx can build the HLS URL client-side
+        // and showVideo becomes true (previously only host got streamKey → viewers saw black screen).
+        streamKey: live.status === 'live' ? live.streamKey : (isHostUser ? live.streamKey : undefined),
+        // Only expose rtmpUrl (RTMP ingest credentials) to the host
         rtmpUrl: isHostUser ? live.rtmpUrl : undefined,
         chatEnabled: live.chatEnabled,
         chatSlowMode: live.chatSlowMode,
@@ -434,7 +438,7 @@ const joinLive = async (req, res) => {
       });
     }
 
-    // FIXED: Always derive hlsUrl from streamKey
+    // Always derive hlsUrl from streamKey
     const correctHlsUrl = live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl;
 
     res.json({
@@ -449,6 +453,9 @@ const joinLive = async (req, res) => {
         isLive: true,
         playbackUrl: correctHlsUrl,
         hlsUrl: correctHlsUrl,
+        // FIXED: Always return streamKey to viewers on join so LiveWatch.jsx
+        // can set showVideo = true and initialise the HLS player
+        streamKey: live.streamKey,
         viewerCount: live.viewers.length,
         isHost: isHostUser,
         chatEnabled: live.chatEnabled,
@@ -485,6 +492,8 @@ const checkLiveAccess = async (req, res) => {
       isAdmin: isAdminUser,
       playbackUrl: live.status === 'live' ? correctHlsUrl : null,
       hlsUrl: correctHlsUrl,
+      // Return streamKey to all authenticated users for access check
+      streamKey: live.status === 'live' ? live.streamKey : undefined,
       status: live.status,
       title: live.title,
       chatEnabled: live.chatEnabled,
@@ -522,7 +531,7 @@ const startStream = async (req, res) => {
     live.status = 'live';
     live.startedAt = new Date();
     live.viewers = [];
-    // FIXED: Ensure hlsUrl is always correct before saving
+    // Ensure hlsUrl is always correct before saving
     live.hlsUrl = correctHlsUrl;
     await live.save({ validateBeforeSave: false });
 
@@ -533,6 +542,7 @@ const startStream = async (req, res) => {
         liveId: live._id,
         title: live.title,
         hlsUrl: correctHlsUrl,
+        streamKey: live.streamKey,
         startedAt: live.startedAt,
       });
       io.emit('feed:stream:started', { liveId: live._id, title: live.title });
@@ -626,7 +636,7 @@ const getMyLives = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // FIXED: Ensure hlsUrl is always correct in list view too
+    // Ensure hlsUrl is always correct in list view too
     const result = lives.map((live) => ({
       ...live,
       hlsUrl: live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl,
