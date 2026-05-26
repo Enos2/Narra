@@ -1,0 +1,739 @@
+/**
+ * File: frontend/src/theme.css
+ * Global CSS custom properties for the theme system.
+ * All page-specific colors reference these variables.
+ * The ThemeContext.jsx sets them on :root dynamically.
+ */
+
+:root {
+  /* These are the defaults (crimson theme) — ThemeContext overrides them at runtime */
+  --theme-bg: #030303;
+  --theme-accent: #8b0000;
+  --theme-accent-light: #cc0000;
+  --theme-accent-rgb: 139, 0, 0;
+  --theme-bg-rgb: 3, 3, 3;
+}
+
+/* ============================================================
+   UNIVERSAL OVERRIDES
+   Every page's claw/scar/blood elements now respect the theme.
+   These selectors cover ALL pages by targeting shared class patterns.
+   ============================================================ */
+
+/* ── Blood stroke lines (every page) ── */
+.blood-stroke,
+.home-page .blood-stroke,
+.upload-wrapper .blood-stroke,
+.live-wrapper .blood-stroke,
+.dash-page .dash-blood-top,
+.dash-page .dash-blood-bottom,
+.prf-blood-stroke,
+.acct-blood-stroke,
+.msg-root .msg-blood-top,
+.msg-root .msg-blood-bottom,
+.notifications-page .blood-stroke,
+.nd-stroke,
+.forgot-password-page .blood-stroke,
+.login-page .blood-stroke {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(var(--theme-accent-rgb), 0.8),
+    var(--theme-accent),
+    rgba(var(--theme-accent-rgb), 0.8),
+    transparent
+  ) !important;
+}
+
+/* ── Claw marks (every page) ── */
+.home-page .claw,
+.upload-wrapper .claw,
+.live-wrapper .claw,
+.notifications-claw-background .claw,
+.login-page .claw,
+.forgot-password-page .claw {
+  background: rgba(var(--theme-accent-rgb), 0.2) !important;
+}
+
+.home-page .claw::before,
+.home-page .claw::after,
+.upload-wrapper .claw::before,
+.upload-wrapper .claw::after,
+.live-wrapper .claw::before,
+.live-wrapper .claw::after,
+.login-page .claw::before,
+.login-page .claw::after,
+.forgot-password-page .claw::before,
+.forgot-password-page .claw::after {
+  background: rgba(var(--theme-accent-rgb), 0.25) !important;
+}
+
+.acct-claw {
+  background: rgba(var(--theme-accent-rgb), 0.12) !important;
+}
+.acct-claw::before, .acct-claw::after {
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+
+.prf-claw {
+  background: rgba(var(--theme-accent-rgb), 0.1) !important;
+}
+.prf-claw::before, .prf-claw::after {
+  background: rgba(var(--theme-accent-rgb), 0.13) !important;
+}
+
+.msg-root .msg-claw {
+  background: rgba(var(--theme-accent-rgb), 0.25) !important;
+}
+.msg-root .msg-claw::before,
+.msg-root .msg-claw::after {
+  background: rgba(var(--theme-accent-rgb), 0.3) !important;
+}
+
+.dash-page .dash-claw {
+  background: rgba(var(--theme-accent-rgb), 0.26) !important;
+}
+.dash-page .dash-claw::before,
+.dash-page .dash-claw::after {
+  background: rgba(var(--theme-accent-rgb), 0.30) !important;
+}
+
+.notifications-claw-background .claw {
+  background: rgba(var(--theme-accent-rgb), 0.25) !important;
+}
+
+/* ── Diagonal scars ── */
+.home-page .scar-diagonal,
+.upload-wrapper .scar-diagonal,
+.live-wrapper .scar-diagonal,
+.login-page .scar-diag,
+.forgot-password-page .scar-diag {
+  background: linear-gradient(
+    135deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.acct-scar-diag {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--theme-accent-rgb), 0.7),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.prf-scar-diag {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--theme-accent-rgb), 0.7),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.msg-root .msg-scar-diag {
+  background: linear-gradient(
+    135deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.dash-page .dash-scar-diag {
+  background: linear-gradient(
+    135deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.notifications-claw-background .scar-diagonal {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--theme-accent-rgb), 0.8),
+    rgba(var(--theme-accent-rgb), 0.4),
+    transparent
+  ) !important;
+}
+
+/* ── Horizontal scratches ── */
+.home-page .scratch-horizontal,
+.upload-wrapper .scratch-horizontal,
+.live-wrapper .scratch-horizontal {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.acct-scratch-h {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--theme-accent-rgb), 0.7),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.prf-scratch-h {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--theme-accent-rgb), 0.7),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.msg-root .msg-scratch-h {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.dash-page .dash-scratch-h {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.notifications-claw-background .scratch-horizontal {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--theme-accent-rgb), 0.8),
+    rgba(var(--theme-accent-rgb), 0.4),
+    transparent
+  ) !important;
+}
+
+/* ── Vertical scratches ── */
+.home-page .scratch-vertical,
+.upload-wrapper .scratch-vertical,
+.live-wrapper .scratch-vertical {
+  background: linear-gradient(
+    180deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.acct-scratch-v {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--theme-accent-rgb), 0.7),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.prf-scratch-v {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--theme-accent-rgb), 0.7),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.msg-root .msg-scratch-v {
+  background: linear-gradient(
+    180deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.dash-page .dash-scratch-v {
+  background: linear-gradient(
+    180deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.notifications-claw-background .scratch-vertical {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--theme-accent-rgb), 0.8),
+    rgba(var(--theme-accent-rgb), 0.4),
+    transparent
+  ) !important;
+}
+
+/* ── Triple claws ── */
+.home-page .triple-claw span,
+.upload-wrapper .triple-claw span,
+.live-wrapper .triple-claw span {
+  background: linear-gradient(
+    180deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.acct-triple span {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--theme-accent-rgb), 0.8),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.prf-triple span {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--theme-accent-rgb), 0.8),
+    rgba(var(--theme-accent-rgb), 0.3),
+    transparent
+  ) !important;
+}
+
+.msg-root .msg-triple span {
+  background: linear-gradient(
+    180deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.dash-page .dash-triple span {
+  background: linear-gradient(
+    180deg,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    transparent
+  ) !important;
+}
+
+.notifications-claw-background .triple-claw span {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--theme-accent-rgb), 0.85),
+    rgba(var(--theme-accent-rgb), 0.35),
+    transparent
+  ) !important;
+}
+
+/* ── X scars ── */
+.home-page .scar-x::before,
+.home-page .scar-x::after,
+.upload-wrapper .scar-x::before,
+.upload-wrapper .scar-x::after,
+.live-wrapper .scar-x::before,
+.live-wrapper .scar-x::after {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent),
+    var(--theme-accent-light)
+  ) !important;
+}
+
+.acct-scar-x::before,
+.acct-scar-x::after {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--theme-accent-rgb), 0.9),
+    rgba(var(--theme-accent-rgb), 0.4)
+  ) !important;
+}
+
+.prf-scar-x::before,
+.prf-scar-x::after {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--theme-accent-rgb), 0.9),
+    rgba(var(--theme-accent-rgb), 0.4)
+  ) !important;
+}
+
+.msg-root .msg-scar-x::before,
+.msg-root .msg-scar-x::after {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent),
+    var(--theme-accent-light)
+  ) !important;
+}
+
+.dash-page .dash-scar-x::before,
+.dash-page .dash-scar-x::after {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent),
+    var(--theme-accent-light)
+  ) !important;
+}
+
+.notifications-claw-background .scar-x::before,
+.notifications-claw-background .scar-x::after {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--theme-accent-rgb), 0.9),
+    rgba(var(--theme-accent-rgb), 0.5)
+  ) !important;
+}
+
+/* ── Page backgrounds ── */
+.home-page,
+.upload-wrapper,
+.live-wrapper,
+.login-page,
+.forgot-password-page,
+.notifications-page,
+.prf-wrapper,
+.account-wrapper,
+.msg-root,
+.dash-page {
+  background: var(--theme-bg) !important;
+}
+
+/* ── Home page interactive elements ── */
+.home-page .filter-btn.active,
+.home-page .following-btn.active {
+  background: var(--theme-accent) !important;
+}
+.home-page .following-btn {
+  background: rgba(var(--theme-accent-rgb), 0.2) !important;
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent-light) !important;
+}
+.home-page .search-filter-bar {
+  border-color: var(--theme-accent) !important;
+}
+.home-page .hero-cta {
+  background: linear-gradient(135deg, var(--theme-accent), color-mix(in srgb, var(--theme-accent) 80%, black)) !important;
+}
+.home-page .row-title::after {
+  background: linear-gradient(90deg, var(--theme-accent), var(--theme-accent-light)) !important;
+}
+
+/* ── Dashboard interactive elements ── */
+.dash-page .dash-tab.dash-tab-active {
+  background: linear-gradient(135deg, var(--theme-accent), color-mix(in srgb, var(--theme-accent) 80%, black)) !important;
+}
+.dash-page .dash-header {
+  border-color: rgba(var(--theme-accent-rgb), 0.3) !important;
+}
+.dash-page .dash-review-btn {
+  background: linear-gradient(135deg, var(--theme-accent), color-mix(in srgb, var(--theme-accent) 80%, black)) !important;
+}
+.dash-page .dash-table th {
+  border-bottom-color: rgba(var(--theme-accent-rgb), 0.3) !important;
+}
+.dash-page .dash-stat-card:hover {
+  border-color: var(--theme-accent) !important;
+  box-shadow: 0 8px 30px rgba(var(--theme-accent-rgb), 0.2) !important;
+}
+.dash-page .dash-stat-info h2 {
+  color: var(--theme-accent-light) !important;
+}
+.dash-page .dash-views,
+.dash-page .dash-price-amt {
+  color: var(--theme-accent-light) !important;
+}
+.dash-page .dash-genre-tag {
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+  border-color: rgba(var(--theme-accent-rgb), 0.3) !important;
+  color: var(--theme-accent-light) !important;
+}
+.dash-page .dash-sidebar {
+  border-left-color: var(--theme-accent) !important;
+}
+.dash-page .dash-sb-label {
+  color: var(--theme-accent) !important;
+}
+.dash-page .dash-search-wrap input {
+  border-color: var(--theme-accent) !important;
+}
+.dash-page .dash-refresh-btn {
+  border-color: var(--theme-accent) !important;
+}
+.dash-page .dash-refresh-btn:hover {
+  background: var(--theme-accent) !important;
+}
+
+/* ── Account page ── */
+.account-page h1 {
+  color: var(--theme-accent) !important;
+  text-shadow: 0 0 20px rgba(var(--theme-accent-rgb), 0.5) !important;
+}
+.tab-btn.active {
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent) !important;
+  box-shadow: 0 0 12px rgba(var(--theme-accent-rgb), 0.3) !important;
+}
+.tab-btn {
+  border-color: rgba(var(--theme-accent-rgb), 0.3) !important;
+  color: rgba(var(--theme-accent-rgb), 0.7) !important;
+}
+.account-card {
+  border-color: rgba(var(--theme-accent-rgb), 0.25) !important;
+}
+.account-card:hover {
+  border-color: rgba(var(--theme-accent-rgb), 0.5) !important;
+  box-shadow: 0 0 20px rgba(var(--theme-accent-rgb), 0.08) !important;
+}
+.account-card h2 {
+  color: var(--theme-accent) !important;
+}
+.acct-save-btn {
+  background: var(--theme-accent) !important;
+  border-color: var(--theme-accent) !important;
+}
+.acct-edit-btn {
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent) !important;
+}
+.stat-value {
+  color: var(--theme-accent) !important;
+}
+.avatar {
+  border-color: var(--theme-accent) !important;
+}
+.avatar-placeholder {
+  color: var(--theme-accent) !important;
+  border-color: rgba(var(--theme-accent-rgb), 0.4) !important;
+}
+.prf-blood-stroke,
+.acct-blood-stroke {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(var(--theme-accent-rgb), 0.8),
+    var(--theme-accent),
+    rgba(var(--theme-accent-rgb), 0.8),
+    transparent
+  ) !important;
+}
+.settings-section h3 {
+  border-bottom-color: rgba(var(--theme-accent-rgb), 0.15) !important;
+  color: var(--theme-accent) !important;
+}
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  border-color: var(--theme-accent) !important;
+  box-shadow: 0 0 8px rgba(var(--theme-accent-rgb), 0.2) !important;
+}
+.setting-label input[type="checkbox"] {
+  accent-color: var(--theme-accent) !important;
+}
+.social-section h3 {
+  color: var(--theme-accent) !important;
+}
+.stat-card.highlight {
+  border-color: rgba(var(--theme-accent-rgb), 0.5) !important;
+  background: rgba(var(--theme-accent-rgb), 0.06) !important;
+}
+.acct-follow-btn-small {
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent) !important;
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+.acct-follow-btn-small:hover {
+  background: var(--theme-accent) !important;
+}
+.acct-creator-btn {
+  border-color: rgba(var(--theme-accent-rgb), 0.4) !important;
+  color: var(--theme-accent) !important;
+}
+.content-item:hover {
+  border-color: var(--theme-accent) !important;
+}
+.acct-login-btn {
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent) !important;
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+.acct-browse-btn {
+  background: var(--theme-accent) !important;
+}
+.msg-convo-row--active {
+  border-left-color: var(--theme-accent) !important;
+}
+.msg-compose__send {
+  background: var(--theme-accent) !important;
+}
+.msg-convo-row__unread-dot,
+.msg-convo-row__badge {
+  background: var(--theme-accent) !important;
+}
+
+/* ── Profile page ── */
+.prf-follow-btn {
+  background: var(--theme-accent) !important;
+  color: #fff !important;
+}
+.prf-avatar {
+  border-color: var(--theme-accent) !important;
+  box-shadow: 0 0 20px rgba(var(--theme-accent-rgb), 0.3) !important;
+}
+.prf-avatar-placeholder {
+  border-color: rgba(var(--theme-accent-rgb), 0.5) !important;
+  color: var(--theme-accent) !important;
+}
+.prf-stat-value { color: var(--theme-accent) !important; }
+.prf-username { color: rgba(var(--theme-accent-rgb), 0.6) !important; }
+.prf-bio { border-left-color: var(--theme-accent) !important; }
+.prf-tab-btn.active {
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent) !important;
+}
+.prf-video-card:hover {
+  border-color: var(--theme-accent) !important;
+  box-shadow: 0 8px 20px rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+.prf-spinner { border-top-color: var(--theme-accent) !important; }
+.prf-back-btn {
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent) !important;
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+.prf-error-icon { color: var(--theme-accent) !important; }
+
+/* ── Notifications page ── */
+.notification-row.unread {
+  border-left-color: var(--theme-accent) !important;
+  background: rgba(var(--theme-accent-rgb), 0.08) !important;
+}
+.notification-tabs button.active {
+  background: rgba(var(--theme-accent-rgb), 0.2) !important;
+  color: var(--theme-accent-light) !important;
+  border-color: var(--theme-accent) !important;
+}
+.unread-dot { background: var(--theme-accent) !important; }
+.mark-all-read {
+  border-color: rgba(var(--theme-accent-rgb), 0.4) !important;
+  color: var(--theme-accent) !important;
+}
+.loading-spinner { border-top-color: var(--theme-accent) !important; }
+
+/* ── Login/ForgotPassword pages ── */
+.login-page .submit-button,
+.forgot-password-page .submit-button {
+  border-color: rgba(var(--theme-accent-rgb), 0.5) !important;
+}
+.login-page .submit-button:hover,
+.forgot-password-page .submit-button:hover {
+  border-color: var(--theme-accent) !important;
+  background: rgba(var(--theme-accent-rgb), 0.1) !important;
+}
+.login-page .input-group input:focus,
+.forgot-password-page .input-group input:focus {
+  border-color: var(--theme-accent) !important;
+  box-shadow: 0 0 12px rgba(var(--theme-accent-rgb), 0.2) !important;
+}
+.login-page .logo-glint,
+.forgot-password-page .logo-glint {
+  border-color: rgba(var(--theme-accent-rgb), 0.5) !important;
+}
+.login-page .signup-link,
+.forgot-password-page .back-link {
+  color: var(--theme-accent) !important;
+}
+.login-page .header-scar,
+.forgot-password-page .header-scar,
+.login-page .header-scar::before,
+.login-page .header-scar::after,
+.forgot-password-page .header-scar::before,
+.forgot-password-page .header-scar::after {
+  background: var(--theme-accent) !important;
+}
+.login-page .login-container,
+.forgot-password-page .forgot-container {
+  border-color: rgba(var(--theme-accent-rgb), 0.3) !important;
+  box-shadow: 0 0 50px rgba(var(--theme-accent-rgb), 0.1) !important;
+}
+.login-page .visual-panel,
+.forgot-password-page .forgot-visual-panel {
+  border-right-color: rgba(var(--theme-accent-rgb), 0.3) !important;
+}
+.login-page .visual-title,
+.forgot-password-page .visual-title {
+  text-shadow: 0 0 20px rgba(var(--theme-accent-rgb), 0.5) !important;
+}
+.login-page .grip-mark,
+.login-page .grip-mark::before,
+.login-page .grip-mark::after,
+.forgot-password-page .grip-mark,
+.forgot-password-page .grip-mark::before,
+.forgot-password-page .grip-mark::after {
+  background: var(--theme-accent) !important;
+}
+
+/* ── Upload page ── */
+.upload-wrapper .upload-section:hover {
+  border-color: var(--theme-accent) !important;
+  box-shadow: 0 0 25px rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+.upload-wrapper .section-icon {
+  color: var(--theme-accent) !important;
+}
+.upload-wrapper .file-input-wrapper.drag-over {
+  border-color: var(--theme-accent) !important;
+  background: rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+
+/* ── LiveStream page ── */
+.live-wrapper .live-section {
+  border-color: var(--theme-accent) !important;
+}
+.live-wrapper .live-section:hover {
+  border-color: var(--theme-accent-light) !important;
+  box-shadow: 0 0 25px rgba(var(--theme-accent-rgb), 0.15) !important;
+}
+.live-wrapper .section-icon {
+  color: var(--theme-accent) !important;
+}
+.live-wrapper .live-input,
+.live-wrapper .live-textarea,
+.live-wrapper .live-select {
+  border-color: var(--theme-accent) !important;
+}
+.live-wrapper .genre-btn {
+  border-color: var(--theme-accent) !important;
+}
+.live-wrapper .genre-btn.genre-selected {
+  background: var(--theme-accent) !important;
+  border-color: var(--theme-accent) !important;
+}
+.live-wrapper .live-file {
+  border-color: var(--theme-accent) !important;
+}
+
+/* ── Navbar ── */
+.nav-link.active .link-text { color: var(--theme-accent) !important; }
+.nav-link.active .link-indicator {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--theme-accent),
+    var(--theme-accent-light),
+    var(--theme-accent),
+    transparent
+  ) !important;
+}
+.navbar .user-avatar-btn .avatar-fallback {
+  background: linear-gradient(135deg, var(--theme-accent), color-mix(in srgb, var(--theme-accent) 80%, black)) !important;
+}

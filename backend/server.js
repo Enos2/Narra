@@ -3,6 +3,7 @@
  * UPDATED: Full Socket.IO live streaming rooms + chat integration
  * FIXED: HLS static file serving for live streams on Windows
  * FIXED: HLS served BEFORE any auth middleware (public access)
+ * FIXED: MongoDB connection with correct env variable
  */
 
 const express    = require('express');
@@ -387,12 +388,26 @@ app.use('/media', (req, res, next) => {
 }, express.static(path.join(__dirname, 'media')));
 
 // ─────────────────────────────────────────────
-// DATABASE
+// DATABASE - FIXED: Use MONGODB_URI from .env
 // ─────────────────────────────────────────────
+const mongoURI = process.env.MONGODB_URI || process.env.MONGO_URI;
+
+if (!mongoURI) {
+  console.error('❌ MongoDB URI not found in environment variables!');
+  console.error('   Check your .env file has MONGODB_URI or MONGO_URI set');
+  process.exit(1);
+}
+
+console.log(`[MongoDB] Connecting to database...`);
+
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(mongoURI, {
+    serverSelectionTimeoutMS: 30000,
+    socketTimeoutMS: 45000,
+    connectTimeoutMS: 30000,
+  })
   .then(() => {
-    console.log('✅ MongoDB connected');
+    console.log('✅ MongoDB connected successfully');
     if (process.env.ENABLE_STREAMING !== 'false') {
       try {
         const startStreaming = require('./streaming-server');
@@ -407,13 +422,31 @@ mongoose
       }
     }
   })
-  .catch((err) => { console.error('MongoDB error:', err); process.exit(1); });
+  .catch((err) => { 
+    console.error('❌ MongoDB connection error:', err.message);
+    console.error('   Please check your internet connection and MongoDB Atlas settings');
+    console.error('   The server will continue running but database features will not work');
+    // Don't exit - let server run without DB for testing
+  });
 
 // ─────────────────────────────────────────────
 // HEALTH
 // ─────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
-  res.json({ success: true, status: 'healthy', timestamp: new Date(), streaming: process.env.ENABLE_STREAMING !== 'false' });
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  res.json({ 
+    success: true, 
+    status: 'healthy', 
+    timestamp: new Date(), 
+    streaming: process.env.ENABLE_STREAMING !== 'false',
+    database: dbStatus[dbState] || 'unknown'
+  });
 });
 
 // ─────────────────────────────────────────────

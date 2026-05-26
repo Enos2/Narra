@@ -1,0 +1,847 @@
+/**
+ * File: frontend/src/pages/LiveStream.css
+ * CLAW MARK THEME - Bold Blue for Live Streaming
+ * FIXED: Distributed scar background like Home/Upload, page-specific prefixes
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.live-wrapper {
+  position: relative;
+  min-height: 100vh;
+  background: #030303;
+  display: flex;
+  justify-content: center;
+  padding: 6rem 1rem 2rem;
+  overflow-x: hidden;
+}
+
+/* ========== BLOOD STROKE LINES - BLUE (page-specific) ========== */
+.live-wrapper .blood-stroke {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #043ede, #3b82f6, #043ede, transparent);
+  z-index: 10;
+  animation: pulse 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.live-wrapper .blood-stroke.top { top: 0; }
+.live-wrapper .blood-stroke.bottom { bottom: 0; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.9; }
+}
+
+/* ========== DISTRIBUTED CLAW MARK BACKGROUND - BLUE & DARKER ========== */
+.live-wrapper .claw-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Base claw marks - DARKER BLUE */
+.live-wrapper .claw {
+  position: absolute;
+  background: rgba(4, 62, 222, 0.35);
+  width: 100px;
+  height: 100px;
+  border-radius: 0 0 0 50px;
+  transform: rotate(-15deg);
+}
+
+.live-wrapper .claw::before,
+.live-wrapper .claw::after {
+  content: '';
+  position: absolute;
+  background: rgba(4, 62, 222, 0.4);
+  width: 35px;
+  height: 70px;
+  border-radius: 0 0 0 35px;
+}
+
+.live-wrapper .claw::before { top: 15px; left: -15px; transform: rotate(-20deg); }
+.live-wrapper .claw::after { top: 40px; left: -8px; transform: rotate(-35deg); }
+
+/* Original claws - edges */
+.live-wrapper .claw-1 { top: 5%; left: 2%; transform: rotate(-25deg); }
+.live-wrapper .claw-2 { bottom: 8%; right: 3%; transform: rotate(160deg); }
+.live-wrapper .claw-3 { top: 35%; right: 5%; transform: rotate(15deg); }
+.live-wrapper .claw-4 { bottom: 25%; left: 3%; transform: rotate(200deg); }
+.live-wrapper .claw-5 { top: 70%; left: 8%; transform: rotate(-45deg); }
+
+/* Additional claws - center and distributed */
+.live-wrapper .claw-6 { top: 15%; left: 45%; transform: rotate(40deg); opacity: 0.8; }
+.live-wrapper .claw-7 { top: 50%; right: 40%; transform: rotate(-30deg); opacity: 0.75; }
+.live-wrapper .claw-8 { bottom: 35%; left: 55%; transform: rotate(120deg); opacity: 0.7; }
+.live-wrapper .claw-9 { top: 80%; right: 50%; transform: rotate(200deg); opacity: 0.75; }
+.live-wrapper .claw-10 { top: 45%; left: 25%; transform: rotate(-15deg); opacity: 0.7; }
+.live-wrapper .claw-11 { bottom: 15%; left: 45%; transform: rotate(80deg); opacity: 0.75; }
+.live-wrapper .claw-12 { top: 12%; right: 35%; transform: rotate(95deg); opacity: 0.7; }
+
+/* ========== DIAGONAL SCAR LINES - DARKER BLUE ========== */
+.live-wrapper .scar-diagonal {
+  position: absolute;
+  height: 2px;
+  background: linear-gradient(135deg, #043ede, #3b82f6, transparent);
+  transform-origin: left center;
+  opacity: 0.6;
+  animation: scarFloat 6s ease-in-out infinite;
+}
+
+.live-wrapper .scar-diag-1 {
+  top: 15%;
+  left: 10%;
+  width: 120px;
+  transform: rotate(25deg);
+  animation-delay: 0s;
+}
+
+.live-wrapper .scar-diag-2 {
+  top: 45%;
+  right: 8%;
+  width: 150px;
+  transform: rotate(-15deg);
+  animation-delay: 1s;
+}
+
+.live-wrapper .scar-diag-3 {
+  bottom: 30%;
+  left: 15%;
+  width: 100px;
+  transform: rotate(45deg);
+  animation-delay: 2s;
+}
+
+.live-wrapper .scar-diag-4 {
+  top: 70%;
+  right: 20%;
+  width: 130px;
+  transform: rotate(-30deg);
+  animation-delay: 3s;
+}
+
+/* ========== HORIZONTAL SCRATCH MARKS - DARKER BLUE ========== */
+.live-wrapper .scratch-horizontal {
+  position: absolute;
+  height: 2px;
+  background: linear-gradient(90deg, #043ede, #3b82f6, transparent);
+  opacity: 0.55;
+  animation: scratchPulse 4s ease-in-out infinite;
+}
+
+.live-wrapper .scratch-h-1 {
+  top: 8%;
+  left: 20%;
+  width: 80px;
+  animation-delay: 0s;
+}
+
+.live-wrapper .scratch-h-2 {
+  top: 28%;
+  right: 15%;
+  width: 100px;
+  animation-delay: 0.5s;
+}
+
+.live-wrapper .scratch-h-3 {
+  top: 48%;
+  left: 35%;
+  width: 70px;
+  animation-delay: 1s;
+}
+
+.live-wrapper .scratch-h-4 {
+  bottom: 35%;
+  right: 25%;
+  width: 110px;
+  animation-delay: 1.5s;
+}
+
+.live-wrapper .scratch-h-5 {
+  bottom: 12%;
+  left: 45%;
+  width: 90px;
+  animation-delay: 2s;
+}
+
+/* ========== VERTICAL SCRATCH MARKS - DARKER BLUE ========== */
+.live-wrapper .scratch-vertical {
+  position: absolute;
+  width: 2px;
+  background: linear-gradient(180deg, #043ede, #3b82f6, transparent);
+  opacity: 0.55;
+  animation: scratchVertical 5s ease-in-out infinite;
+}
+
+.live-wrapper .scratch-v-1 {
+  top: 10%;
+  left: 30%;
+  height: 60px;
+  animation-delay: 0s;
+}
+
+.live-wrapper .scratch-v-2 {
+  top: 25%;
+  right: 35%;
+  height: 80px;
+  animation-delay: 0.8s;
+}
+
+.live-wrapper .scratch-v-3 {
+  top: 55%;
+  left: 50%;
+  height: 70px;
+  animation-delay: 1.6s;
+}
+
+.live-wrapper .scratch-v-4 {
+  bottom: 20%;
+  right: 45%;
+  height: 90px;
+  animation-delay: 2.4s;
+}
+
+/* ========== TRIPLE CLAW MARKS - DARKER BLUE ========== */
+.live-wrapper .triple-claw {
+  position: absolute;
+  width: 40px;
+  height: 60px;
+  z-index: 9;
+}
+
+.live-wrapper .triple-claw span {
+  position: absolute;
+  width: 2px;
+  background: linear-gradient(180deg, #043ede, #3b82f6, transparent);
+  height: 100%;
+  opacity: 0.6;
+  animation: clawScratch 3s ease-in-out infinite;
+}
+
+.live-wrapper .triple-claw span:nth-child(1) { left: 0; transform: rotate(-5deg); }
+.live-wrapper .triple-claw span:nth-child(2) { left: 18px; transform: rotate(0deg); animation-delay: 0.2s; }
+.live-wrapper .triple-claw span:nth-child(3) { left: 36px; transform: rotate(5deg); animation-delay: 0.4s; }
+
+.live-wrapper .triple-1 {
+  top: 18%;
+  left: 60%;
+  height: 55px;
+  transform: rotate(10deg);
+}
+
+.live-wrapper .triple-2 {
+  top: 52%;
+  left: 12%;
+  height: 70px;
+  transform: rotate(-15deg);
+}
+
+.live-wrapper .triple-3 {
+  bottom: 22%;
+  right: 18%;
+  height: 65px;
+  transform: rotate(20deg);
+}
+
+.live-wrapper .triple-4 {
+  top: 75%;
+  right: 55%;
+  height: 50px;
+  transform: rotate(-8deg);
+}
+
+/* ========== X-SHAPED SCARS - DARKER BLUE ========== */
+.live-wrapper .scar-x {
+  position: absolute;
+  width: 35px;
+  height: 35px;
+  opacity: 0.5;
+}
+
+.live-wrapper .scar-x::before,
+.live-wrapper .scar-x::after {
+  content: '';
+  position: absolute;
+  width: 35px;
+  height: 2px;
+  background: linear-gradient(90deg, #043ede, #3b82f6);
+  top: 50%;
+  left: 0;
+}
+
+.live-wrapper .scar-x::before { transform: rotate(45deg); }
+.live-wrapper .scar-x::after { transform: rotate(-45deg); }
+
+.live-wrapper .scar-x-1 {
+  top: 32%;
+  left: 42%;
+  animation: scarPulse 4s ease-in-out infinite;
+}
+
+.live-wrapper .scar-x-2 {
+  top: 62%;
+  right: 48%;
+  animation: scarPulse 4.5s ease-in-out infinite;
+  animation-delay: 0.5s;
+}
+
+.live-wrapper .scar-x-3 {
+  bottom: 18%;
+  left: 38%;
+  animation: scarPulse 5s ease-in-out infinite;
+  animation-delay: 1s;
+}
+
+/* ========== ANIMATIONS ========== */
+@keyframes scarFloat {
+  0%, 100% {
+    opacity: 0.4;
+    width: 100px;
+  }
+  50% {
+    opacity: 0.8;
+    width: 130px;
+  }
+}
+
+@keyframes scratchPulse {
+  0%, 100% {
+    opacity: 0.35;
+    width: 70px;
+  }
+  50% {
+    opacity: 0.75;
+    width: 100px;
+  }
+}
+
+@keyframes scratchVertical {
+  0%, 100% {
+    opacity: 0.35;
+    height: 50px;
+  }
+  50% {
+    opacity: 0.75;
+    height: 80px;
+  }
+}
+
+@keyframes clawScratch {
+  0%, 100% {
+    opacity: 0.4;
+    height: 70%;
+  }
+  50% {
+    opacity: 0.8;
+    height: 100%;
+  }
+}
+
+@keyframes scarPulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
+  }
+}
+
+/* ========== MAIN FORM ========== */
+.live-wrapper .live-page {
+  width: 100%;
+  max-width: 900px;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Header */
+.live-wrapper .live-header {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.live-wrapper .header-scar {
+  width: 60px;
+  height: 3px;
+  margin: 0 auto 1rem;
+  position: relative;
+}
+
+.live-wrapper .header-scar::before,
+.live-wrapper .header-scar::after {
+  content: '';
+  position: absolute;
+  width: 15px;
+  height: 3px;
+  background: inherit;
+  top: 0;
+}
+
+.live-wrapper .header-scar::before { left: -20px; transform: rotate(-15deg); }
+.live-wrapper .header-scar::after { right: -20px; transform: rotate(15deg); }
+
+.live-wrapper .live-header h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 2px;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.5rem;
+}
+
+.live-wrapper .live-header p {
+  color: #8b8b8b;
+  font-size: 0.85rem;
+}
+
+/* Error & Pending */
+.live-wrapper .live-error {
+  background: rgba(4, 62, 222, 0.1);
+  border-left: 3px solid #043ede;
+  padding: 0.8rem 1rem;
+  color: #8b8b8b;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.live-wrapper .error-icon {
+  color: #043ede;
+  font-size: 1rem;
+}
+
+.live-wrapper .live-pending {
+  background: rgba(4, 62, 222, 0.1);
+  border-left: 3px solid #043ede;
+  padding: 0.8rem 1rem;
+  color: #ffd700;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.live-wrapper .live-pending.small {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+}
+
+/* Sections */
+.live-wrapper .live-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1.5rem;
+  background: rgba(10, 10, 10, 0.8);
+  backdrop-filter: blur(5px);
+  border: 1px solid #043ede;
+  border-radius: 16px;
+  transition: all 0.3s ease;
+}
+
+.live-wrapper .live-section:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 0 25px rgba(4, 62, 222, 0.15);
+}
+
+.live-wrapper .section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.live-wrapper .section-icon {
+  color: #043ede;
+  font-size: 0.9rem;
+}
+
+/* Inputs */
+.live-wrapper .live-input,
+.live-wrapper .live-textarea,
+.live-wrapper .live-select {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid #043ede;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+}
+
+.live-wrapper .live-input:focus,
+.live-wrapper .live-textarea:focus,
+.live-wrapper .live-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 10px rgba(4, 62, 222, 0.3);
+}
+
+.live-wrapper .live-input::placeholder,
+.live-wrapper .live-textarea::placeholder {
+  color: #4a4a4a;
+}
+
+.live-wrapper .live-textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* File Input */
+.live-wrapper .file-label {
+  color: #8b8b8b;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.live-wrapper .live-file {
+  padding: 0.8rem;
+  background: rgba(0, 0, 0, 0.4);
+  border: 2px dashed #043ede;
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.live-wrapper .live-file:hover {
+  border-color: #3b82f6;
+  background: rgba(4, 62, 222, 0.05);
+}
+
+/* Genres */
+.live-wrapper .genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.live-wrapper .genre-btn {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  border: 1px solid #043ede;
+  border-radius: 30px;
+  color: #ccc;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.live-wrapper .genre-btn.genre-selected {
+  background: #043ede;
+  color: #fff;
+  border-color: #043ede;
+}
+
+.live-wrapper .genre-btn:hover:not(.genre-selected) {
+  background: rgba(4, 62, 222, 0.2);
+  color: #fff;
+}
+
+/* Purpose Options */
+.live-wrapper .purpose-options {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.live-wrapper .purpose-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+.live-wrapper .purpose-label input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Monetization */
+.live-wrapper .monetization-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.live-wrapper .radio-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+.live-wrapper .radio-label input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.live-wrapper .price-fields {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.live-wrapper .price-fields .live-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.live-wrapper .price-fields .live-select {
+  width: auto;
+  min-width: 80px;
+}
+
+/* Stream Info */
+.live-wrapper .stream-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.live-wrapper .stream-info label {
+  color: #8b8b8b;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.live-wrapper .stream-info input {
+  width: 100%;
+  padding: 0.8rem;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid #043ede;
+  border-radius: 8px;
+  color: #fff;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.live-wrapper .setup-note {
+  color: #8b8b8b;
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Preview Video */
+.live-wrapper .live-video {
+  width: 100%;
+  max-height: 280px;
+  border-radius: 12px;
+  background: #000;
+  margin-top: 0.5rem;
+}
+
+/* Submit Button */
+.live-wrapper .live-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.live-wrapper .primary-btn {
+  padding: 1rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 40px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: #fff;
+  background: #333;
+}
+
+.live-wrapper .primary-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(4, 62, 222, 0.4);
+}
+
+.live-wrapper .primary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Note */
+.live-wrapper .live-note {
+  text-align: center;
+  color: #6b6b6b;
+  font-size: 0.75rem;
+  padding: 1rem;
+  border-top: 1px solid #222;
+  margin-top: 0.5rem;
+}
+
+/* ========== BLOCKED OVERLAY ========== */
+.live-wrapper .blocked-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  flex-direction: column;
+  text-align: center;
+  animation: fadeIn 0.3s ease;
+}
+
+.live-wrapper .blocked-icon {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 1rem;
+  background: radial-gradient(circle, #043ede, transparent);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+.live-wrapper .blocked-overlay h1 {
+  color: #043ede;
+  font-size: 5rem;
+  margin: 0;
+  text-shadow: 0 0 30px #043ede, 0 0 60px rgba(4, 62, 222, 0.5);
+}
+
+.live-wrapper .blocked-overlay p {
+  color: #fff;
+  font-size: 1.2rem;
+  margin-top: 1rem;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 768px) {
+  .live-wrapper {
+    padding: 5rem 1rem 1rem;
+  }
+
+  .live-wrapper .live-section {
+    padding: 1rem;
+  }
+
+  .live-wrapper .live-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .live-wrapper .genres {
+    gap: 0.4rem;
+  }
+
+  .live-wrapper .genre-btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.75rem;
+  }
+
+  .live-wrapper .purpose-options {
+    gap: 1rem;
+  }
+
+  .live-wrapper .price-fields {
+    flex-direction: column;
+  }
+
+  .live-wrapper .price-fields .live-select {
+    width: 100%;
+  }
+
+  .live-wrapper .primary-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .live-wrapper .live-actions {
+    justify-content: center;
+  }
+
+  /* Hide some scars on tablet */
+  .live-wrapper .claw-6,
+  .live-wrapper .claw-7,
+  .live-wrapper .claw-8,
+  .live-wrapper .claw-9,
+  .live-wrapper .claw-10,
+  .live-wrapper .claw-11,
+  .live-wrapper .claw-12,
+  .live-wrapper .scar-diag-3,
+  .live-wrapper .scratch-v-3,
+  .live-wrapper .triple-3 {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .live-wrapper .live-header h1 {
+    font-size: 1.2rem;
+  }
+
+  .live-wrapper .section-title {
+    font-size: 0.9rem;
+  }
+
+  .live-wrapper .live-input,
+  .live-wrapper .live-textarea,
+  .live-wrapper .live-select {
+    padding: 0.6rem 0.8rem;
+    font-size: 0.8rem;
+  }
+
+  .live-wrapper .genre-btn {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.7rem;
+  }
+
+  .live-wrapper .stream-info input {
+    font-size: 0.7rem;
+    padding: 0.6rem;
+  }
+
+  /* Hide more scars on mobile */
+  .live-wrapper .claw-3,
+  .live-wrapper .claw-4,
+  .live-wrapper .claw-5,
+  .live-wrapper .scar-diag-2,
+  .live-wrapper .scar-diag-4,
+  .live-wrapper .scratch-h-3,
+  .live-wrapper .scratch-h-4,
+  .live-wrapper .scratch-v-2,
+  .live-wrapper .triple-2,
+  .live-wrapper .triple-4,
+  .live-wrapper .scar-x-2,
+  .live-wrapper .scar-x-3 {
+    display: none;
+  }
+}
+
+/**
+ * File: frontend/src/pages/LiveStream.css (END)
+ */
