@@ -1,0 +1,402 @@
+/* File: src/pages/admin/AdminList.css */
+.admin-list-container {
+  padding: 2rem;
+  min-height: 100vh;
+  background: #030303;
+  color: #fff;
+}
+
+.admin-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.admin-list-header h1 {
+  font-size: 1.8rem;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, #fff, #ff7733);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.admin-list-header p {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.admin-list-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.toggle-btn {
+  padding: 0.5rem 1rem;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggle-btn.active {
+  background: #f59e0b;
+  border-color: #f59e0b;
+}
+
+.toggle-btn:hover:not(.active) {
+  border-color: #cc5500;
+}
+
+.create-btn {
+  padding: 0.5rem 1rem;
+  background: #cc5500;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.create-btn:hover {
+  background: #ff7733;
+  transform: translateY(-1px);
+}
+
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(204, 85, 0, 0.3);
+  border-radius: 12px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.stat-card h3 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #888;
+  margin-bottom: 0.5rem;
+  letter-spacing: 1px;
+}
+
+.stat-card .stat-value {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #ff7733;
+}
+
+.admin-table-wrapper {
+  overflow-x: auto;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 800px;
+}
+
+.admin-table th {
+  text-align: left;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.5);
+  color: #aaa;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid rgba(204, 85, 0, 0.3);
+}
+
+.admin-table td {
+  padding: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+}
+
+.admin-table tr:hover td {
+  background: rgba(204, 85, 0, 0.05);
+}
+
+.role-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.role-superadmin {
+  background: #ef4444;
+}
+
+.role-platformadmin {
+  background: #f59e0b;
+}
+
+.role-supportadmin {
+  background: #10b981;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.status-active {
+  background: #10b981;
+  color: #fff;
+}
+
+.status-inactive {
+  background: #ef4444;
+  color: #fff;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  padding: 0.25rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #fff;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-deactivate {
+  background: #f59e0b;
+}
+
+.action-deactivate:hover:not(:disabled) {
+  background: #d97706;
+}
+
+.action-reactivate {
+  background: #10b981;
+}
+
+.action-reactivate:hover:not(:disabled) {
+  background: #059669;
+}
+
+.action-promote {
+  background: #8b5cf6;
+}
+
+.action-promote:hover:not(:disabled) {
+  background: #7c3aed;
+}
+
+.action-demote {
+  background: #6b7280;
+}
+
+.action-demote:hover:not(:disabled) {
+  background: #4b5563;
+}
+
+.action-delete {
+  background: #ef4444;
+}
+
+.action-delete:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.admin-list-empty {
+  text-align: center;
+  padding: 3rem;
+  color: #888;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 16px;
+}
+
+.admin-list-loading {
+  text-align: center;
+  padding: 3rem;
+  color: #888;
+}
+
+.admin-list-error {
+  text-align: center;
+  padding: 3rem;
+}
+
+.admin-list-error p {
+  color: #ef4444;
+  margin-bottom: 1rem;
+}
+
+.admin-list-error button {
+  padding: 0.5rem 1rem;
+  background: #cc5500;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.95);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-container {
+  background: #0a0a0a;
+  border: 1px solid #cc5500;
+  border-radius: 16px;
+  padding: 2rem;
+  width: 90%;
+  max-width: 500px;
+}
+
+.modal-container h2 {
+  margin-bottom: 1rem;
+  font-size: 1.3rem;
+  color: #ff7733;
+}
+
+.modal-form-group {
+  margin-bottom: 1rem;
+}
+
+.modal-form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: #ccc;
+  font-size: 0.85rem;
+}
+
+.modal-form-group input,
+.modal-form-group select {
+  width: 100%;
+  padding: 0.6rem;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.modal-form-group input:focus,
+.modal-form-group select:focus {
+  border-color: #cc5500;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+.modal-cancel {
+  padding: 0.5rem 1.2rem;
+  background: #333;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.modal-cancel:hover {
+  background: #444;
+}
+
+.modal-submit {
+  padding: 0.5rem 1.2rem;
+  background: #cc5500;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.modal-submit:hover {
+  background: #ff7733;
+}
+
+.modal-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .admin-list-container {
+    padding: 1rem;
+  }
+
+  .admin-list-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-list-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .admin-table th,
+  .admin-table td {
+    padding: 0.75rem;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+  }
+
+  .action-btn {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-list-header h1 {
+    font-size: 1.4rem;
+  }
+
+  .stat-card .stat-value {
+    font-size: 1.3rem;
+  }
+}

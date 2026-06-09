@@ -1,6 +1,6 @@
 /**
  * File: backend/controllers/authController.js
- * UPDATED: Added audit logging for admin login and logout
+ * UPDATED: Login now accepts username OR email
  */
 
 const User = require('../models/User');
@@ -8,7 +8,6 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const authMiddleware = require('../middleware/authMiddleware');
 
-// Import AdminAuditLog for audit logging
 let AdminAuditLog;
 try {
   AdminAuditLog = require('../models/AdminAuditLog');
@@ -30,9 +29,6 @@ const calculateAge = (dob) => {
   return age;
 };
 
-/**
- * Log admin action to audit log
- */
 const logAdminAuthAction = async ({
   admin,
   actionType,
@@ -44,7 +40,6 @@ const logAdminAuthAction = async ({
 }) => {
   try {
     if (!AdminAuditLog) return;
-    
     const logEntry = new AdminAuditLog({
       adminId: admin._id,
       adminName: admin.name || admin.username || 'Unknown',
@@ -58,7 +53,6 @@ const logAdminAuthAction = async ({
       userAgent,
       metadata
     });
-
     await logEntry.save();
     console.log(`[AUDIT] ${actionLabel} by ${admin.email}`);
   } catch (err) {
@@ -66,7 +60,6 @@ const logAdminAuthAction = async ({
   }
 };
 
-// Helper to format user response with restrictions
 const formatUserResponse = (user) => {
   return {
     id: user._id,
@@ -108,28 +101,26 @@ const formatUserResponse = (user) => {
 
 /*
 ========================================
-REGISTER - UPDATED with restrictions
+REGISTER
 ========================================
 */
 exports.register = async (req, res) => {
   try {
-    const { 
-      firstName, 
-      lastName, 
-      middleName, 
+    const {
+      firstName,
+      lastName,
+      middleName,
       username,
-      email, 
-      password, 
+      email,
+      password,
       dateOfBirth,
-      gender 
+      gender
     } = req.body;
-    
-    // Validate required fields
+
     if (!firstName || !lastName || !username || !email || !password || !dateOfBirth) {
       return res.status(400).json({ message: 'All required fields must be filled' });
     }
 
-    // Validate name lengths
     if (firstName.length < 2) {
       return res.status(400).json({ message: 'First name must be at least 2 characters' });
     }
@@ -137,15 +128,13 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: 'Last name must be at least 2 characters' });
     }
 
-    // Validate username
     const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
     if (!usernameRegex.test(username)) {
-      return res.status(400).json({ 
-        message: 'Username must be 3-30 characters and can only contain letters, numbers, and underscores' 
+      return res.status(400).json({
+        message: 'Username must be 3-30 characters and can only contain letters, numbers, and underscores'
       });
     }
 
-    // Check if username exists
     const existingUsername = await User.findOne({ username: username.toLowerCase() });
     if (existingUsername) {
       return res.status(409).json({ message: 'Username already taken' });
@@ -166,7 +155,6 @@ exports.register = async (req, res) => {
       return res.status(409).json({ message: 'Email already in use' });
     }
 
-    // Hash password before saving
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
@@ -178,7 +166,7 @@ exports.register = async (req, res) => {
       password: hashedPassword,
       dateOfBirth: dob,
       gender: gender || '',
-      restrictions: { upload: false, goLive: false, comment: false }, // Add restrictions with defaults
+      restrictions: { upload: false, goLive: false, comment: false },
       lastLogin: new Date(),
       lastActive: new Date(),
     });
@@ -197,22 +185,33 @@ exports.register = async (req, res) => {
 
 /*
 ========================================
-LOGIN (NORMAL USERS ONLY) - UPDATED with restrictions
+LOGIN — accepts username OR email
 ========================================
 */
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password required' });
+
+    // 'email' field carries whatever the user typed (username or email)
+    const identifier = email;
+
+    if (!identifier || !password) {
+      return res.status(400).json({ message: 'Email/username and password required' });
     }
 
-    const user = await User.findOne({ email });
+    // Search by email OR username so both work
+    const user = await User.findOne({
+      $or: [
+        { email: identifier.toLowerCase() },
+        { username: identifier.toLowerCase() }
+      ]
+    });
+
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // block admins from user login
+    // Block admins from using the regular login endpoint
     if (['supportadmin', 'platformadmin', 'superadmin'].includes(user.role)) {
       return res.status(403).json({ message: 'Admins must use the admin login page' });
     }
@@ -225,7 +224,6 @@ exports.login = async (req, res) => {
       return res.status(403).json({ message: 'Account deactivated' });
     }
 
-    // Use bcrypt.compare directly
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid credentials' });
@@ -250,7 +248,7 @@ exports.login = async (req, res) => {
 
 /*
 ========================================
-ADMIN LOGIN - UPDATED with audit logging
+ADMIN LOGIN — accepts username OR email
 ========================================
 */
 exports.adminLogin = async (req, res) => {
@@ -258,17 +256,25 @@ exports.adminLogin = async (req, res) => {
     const { email, password } = req.body;
     const ipAddress = req.ip;
     const userAgent = req.get('User-Agent');
-    
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password required' });
+
+    const identifier = email;
+
+    if (!identifier || !password) {
+      return res.status(400).json({ message: 'Email/username and password required' });
     }
 
-    const user = await User.findOne({ email });
+    // Search by email OR username
+    const user = await User.findOne({
+      $or: [
+        { email: identifier.toLowerCase() },
+        { username: identifier.toLowerCase() }
+      ]
+    });
+
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // ALLOW ALL ADMIN ROLES
     if (!['supportadmin', 'platformadmin', 'superadmin'].includes(user.role)) {
       return res.status(403).json({ message: 'Invalid admin credentials' });
     }
@@ -279,6 +285,10 @@ exports.adminLogin = async (req, res) => {
 
     if (user.isDeactivated) {
       return res.status(403).json({ message: 'Admin account deactivated' });
+    }
+
+    if (user.adminDeactivated) {
+      return res.status(403).json({ message: 'Admin access blocked. Contact a Super Admin.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -293,7 +303,6 @@ exports.adminLogin = async (req, res) => {
 
     const token = authMiddleware.generateToken(user);
 
-    // ADDED: Log admin login to audit log
     await logAdminAuthAction({
       admin: user,
       actionType: 'ADMIN_LOGIN',
@@ -319,18 +328,17 @@ exports.adminLogin = async (req, res) => {
 
 /*
 ========================================
-LOGOUT - UPDATED with audit logging
+LOGOUT
 ========================================
 */
 exports.logout = async (req, res) => {
   try {
     const user = req.user;
     const isAdmin = ['supportadmin', 'platformadmin', 'superadmin'].includes(user.role);
-    
+
     user.online = false;
     await user.save({ validateBeforeSave: false });
 
-    // ADDED: Log admin logout to audit log (only for admin users)
     if (isAdmin && AdminAuditLog) {
       await logAdminAuthAction({
         admin: user,
@@ -355,7 +363,7 @@ exports.logout = async (req, res) => {
 
 /*
 ========================================
-PROFILE - UPDATED with restrictions
+PROFILE
 ========================================
 */
 exports.getMyProfile = async (req, res) => {
@@ -449,7 +457,7 @@ exports.resetPassword = async (req, res) => {
 
 /*
 ========================================
-ADMIN CREATION (SUPER ADMIN ONLY) - UPDATED with restrictions
+ADMIN CREATION (SUPER ADMIN ONLY)
 ========================================
 */
 exports.createAdmin = async (req, res) => {
@@ -482,11 +490,11 @@ exports.createAdmin = async (req, res) => {
       role,
       dateOfBirth,
       isVerified: true,
-      restrictions: { upload: false, goLive: false, comment: false }, // Admins have no restrictions
+      restrictions: { upload: false, goLive: false, comment: false },
     });
 
-    res.status(201).json({ 
-      message: 'Admin created', 
+    res.status(201).json({
+      message: 'Admin created',
       adminId: admin._id,
       admin: formatUserResponse(admin)
     });
@@ -507,7 +515,6 @@ exports.checkUsername = async (req, res) => {
     if (!username || username.length < 3) {
       return res.json({ available: true });
     }
-
     const existingUser = await User.findOne({ username: username.toLowerCase() });
     res.json({ available: !existingUser });
   } catch (err) {
@@ -531,12 +538,10 @@ exports.updateUserRestrictions = async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Only superadmin and platformadmin can update restrictions
     if (req.user.role !== 'superadmin' && req.user.role !== 'platformadmin') {
       return res.status(403).json({ message: 'Not authorized to update restrictions' });
     }
 
-    // Update restrictions
     if (upload !== undefined) user.restrictions.upload = upload;
     if (goLive !== undefined) user.restrictions.goLive = goLive;
     if (comment !== undefined) user.restrictions.comment = comment;
@@ -584,7 +589,3 @@ exports.getUserRestrictions = async (req, res) => {
     res.status(500).json({ message: 'Failed to get restrictions' });
   }
 };
-
-/**
- * File: backend/controllers/authController.js (END)
- */

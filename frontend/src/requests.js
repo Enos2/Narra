@@ -7,9 +7,31 @@
 
 const API_BASE_URL = "http://localhost:5000/api";
 
+/*
+ * AUTH_ROUTES — 401 on these means "wrong credentials", NOT "session expired".
+ * We must NOT clear session storage when a user simply types the wrong password.
+ */
+const AUTH_ROUTES = ['/auth/login', '/auth/admin/login', '/auth/register'];
+
+function isAuthRoute(url = '') {
+  return AUTH_ROUTES.some(route => url.includes(route));
+}
+
 async function handleResponse(res) {
   if (res.status === 401) {
-    console.error('Authentication failed (401)');
+    // Only treat as SESSION_EXPIRED for authenticated API calls, not login attempts.
+    if (isAuthRoute(res.url)) {
+      // Wrong credentials — surface the server's message to the UI.
+      let errorMessage = 'Invalid email or password';
+      try {
+        const errorData = await res.json();
+        errorMessage = errorData.message || errorData.error || errorMessage;
+      } catch { /* keep default */ }
+      throw new Error(errorMessage);
+    }
+
+    // Authenticated route returned 401 — real session expiry.
+    console.error('Authentication failed (401) — session expired');
     try {
       const currentRole = sessionStorage.getItem('narra_current_role');
       if (currentRole) {
@@ -29,7 +51,8 @@ async function handleResponse(res) {
       const errorData = await res.json();
       errorMessage = errorData.message || errorData.error || errorMessage;
       if (errorData.requiresAuth) throw new Error('AUTH_REQUIRED');
-    } catch {
+    } catch (e) {
+      if (e.message === 'AUTH_REQUIRED') throw e;
       errorMessage = res.statusText || errorMessage;
     }
     throw new Error(errorMessage);
@@ -670,11 +693,6 @@ export async function trackShare(token, videoId, platform) {
    COMMENTS WITH FULL NESTED REPLY SUPPORT
 ====================================================== */
 
-/**
- * Get all comments for a video.
- * Returns a nested tree: each comment has a replies[] array,
- * and each reply can have its own replies[] array (unlimited depth).
- */
 export async function getVideoComments(videoId) {
   try {
     const res = await fetch(`${API_BASE_URL}/comments/video/${videoId}`, {
@@ -685,7 +703,6 @@ export async function getVideoComments(videoId) {
       return [];
     }
     const data = await res.json();
-    // Backend returns array directly (nested tree)
     return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error('getVideoComments error:', error);
@@ -693,21 +710,11 @@ export async function getVideoComments(videoId) {
   }
 }
 
-/**
- * Add a top-level comment OR a reply to any comment/reply.
- *
- * For a top-level comment:  addComment(token, videoId, text, null, null)
- * For a reply to comment:   addComment(token, videoId, text, commentId, authorUserId)
- * For a reply to a reply:   addComment(token, videoId, text, replyId,   replyAuthorId)
- *
- * The backend stores parentCommentId so the tree rebuilds correctly.
- */
 export async function addComment(token, videoId, content, parentCommentId = null, replyToUserId = null) {
   if (!content || !content.trim()) throw new Error('Comment cannot be empty');
 
   const body = { content: content.trim() };
 
-  // Only attach these if they are real non-null non-empty values
   if (parentCommentId && String(parentCommentId) !== 'null' && String(parentCommentId) !== 'undefined') {
     body.parentCommentId = String(parentCommentId);
   }
@@ -724,12 +731,6 @@ export async function addComment(token, videoId, content, parentCommentId = null
   return await handleResponse(res);
 }
 
-/**
- * Delete a comment.
- * - Authors can delete their own comments.
- * - Video creators can delete any comment on their video.
- * - Admins can delete anything.
- */
 export async function deleteComment(token, commentId) {
   const res = await fetch(`${API_BASE_URL}/comments/${commentId}`, {
     method: 'DELETE',
@@ -738,10 +739,6 @@ export async function deleteComment(token, commentId) {
   return await handleResponse(res);
 }
 
-/**
- * Like a comment (toggles like on/off).
- * Also removes existing dislike if present.
- */
 export async function likeComment(token, commentId) {
   const res = await fetch(`${API_BASE_URL}/comments/${commentId}/like`, {
     method: 'POST',
@@ -750,10 +747,6 @@ export async function likeComment(token, commentId) {
   return await handleResponse(res);
 }
 
-/**
- * Dislike a comment (toggles dislike on/off).
- * Also removes existing like if present.
- */
 export async function dislikeComment(token, commentId) {
   const res = await fetch(`${API_BASE_URL}/comments/${commentId}/dislike`, {
     method: 'POST',
@@ -762,9 +755,6 @@ export async function dislikeComment(token, commentId) {
   return await handleResponse(res);
 }
 
-/**
- * Edit own comment content.
- */
 export async function editComment(token, commentId, content) {
   const res = await fetch(`${API_BASE_URL}/comments/${commentId}`, {
     method: 'PUT',
@@ -774,9 +764,6 @@ export async function editComment(token, commentId, content) {
   return await handleResponse(res);
 }
 
-/**
- * Fetch flat replies for a single comment (rarely needed — tree is built in getVideoComments).
- */
 export async function getReplies(commentId) {
   try {
     const res = await fetch(`${API_BASE_URL}/comments/replies/${commentId}`, {
@@ -928,6 +915,92 @@ export async function getInactiveAdmins(token) {
   if (!res.ok) return [];
   const data = await res.json();
   return (data.admins || []).map(a => ({ ...a, avatar: ensureAbsoluteAvatarUrl(a.avatar) }));
+}
+
+/* ======================================================
+   ADMIN MANAGEMENT — MISSING EXPORTS (were causing the crash)
+   These are used by AdminContext.jsx
+====================================================== */
+
+/**
+ * Deactivate an admin account (Super Admin only).
+ * Maps to: PUT /admin/admins/:adminId/deactivate
+ */
+export async function deactivateAdmin(token, adminId) {
+  const res = await fetch(`${API_BASE_URL}/admin/admins/${adminId}/deactivate`, {
+    method: 'PUT',
+    headers: getAuthHeaders(token),
+  });
+  return await handleResponse(res);
+}
+
+/**
+ * Update an admin's role (Super Admin only).
+ * Maps to: PUT /admin/roles/promote/:adminId  (reuses promoteToAdmin)
+ */
+export async function updateAdminRole(token, adminId, newRole) {
+  const res = await fetch(`${API_BASE_URL}/admin/roles/promote/${adminId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(token),
+    body: JSON.stringify({ role: newRole }),
+  });
+  return await handleResponse(res);
+}
+
+/**
+ * Update a regular user's role (Super Admin only).
+ * Maps to: PUT /admin/users/:userId/role
+ */
+export async function updateUserRole(token, userId, newRole) {
+  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/role`, {
+    method: 'PUT',
+    headers: getAuthHeaders(token),
+    body: JSON.stringify({ role: newRole }),
+  });
+  return await handleResponse(res);
+}
+
+/**
+ * Fetch pending/queued videos for admin review.
+ * Wraps getVideosForModeration with status='pending'.
+ */
+export async function getPendingVideos(token) {
+  const res = await fetch(`${API_BASE_URL}/admin/videos/moderation?status=pending`, {
+    headers: getAuthHeaders(token),
+  });
+  if (!res.ok) return { success: false, videos: [] };
+  const data = await res.json();
+  if (data?.videos && Array.isArray(data.videos)) {
+    data.videos = data.videos.map(v => ({
+      ...v,
+      thumbnailUrl: v.thumbnailUrl ? ensureAbsoluteAvatarUrl(v.thumbnailUrl) : null,
+      videoUrl: v.videoUrl ? ensureAbsoluteAvatarUrl(v.videoUrl) : null,
+    }));
+  }
+  return data;
+}
+
+/**
+ * Fetch platform-wide statistics (all admins).
+ * Maps to: GET /admin/stats  or  GET /admin/platform/stats
+ */
+export async function getPlatformStats(token) {
+  // Try primary endpoint first, fall back to alternate
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/stats`, {
+      headers: getAuthHeaders(token),
+    });
+    if (res.ok) return await res.json();
+  } catch { /* fall through */ }
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/platform/stats`, {
+      headers: getAuthHeaders(token),
+    });
+    if (res.ok) return await res.json();
+  } catch { /* fall through */ }
+
+  return { success: false, stats: null };
 }
 
 /* ======================================================
@@ -1334,6 +1407,8 @@ export default {
   getUsers, banUser, unbanUser, verifyUser, unverifyUser, deactivateUser, activateUser, deleteUser,
   permanentlyDeleteUser, applyShadowBanUser, removeShadowBanUser,
   getAdmins, createAdmin, promoteToAdmin, demoteAdmin, getInactiveAdmins,
+  /* ↓ newly added — were missing and causing the crash */
+  deactivateAdmin, updateAdminRole, updateUserRole, getPendingVideos, getPlatformStats,
   getRecentAuditLogs, getAllAuditLogs, getAuditFilterOptions, getAuditLogs,
   getVideosForModeration, getVideoModerationStats, approveVideo, rejectVideo,
   restrictVideo, removeVideoRestriction, flagVideo, removeVideoFlag, shadowBanVideo, removeShadowBanVideo,

@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 // FILE: src/pages/admin/AdminDashboardRouter.jsx
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAppContext } from "../../context/AppContext";

@@ -1,14 +1,8 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 // FILE: frontend/src/components/AuthGate.jsx
-import { useEffect } from "react";
 import { useAppContext } from "../context/AppContext";
 
 function AuthGate({ children }) {
-  const { isAuthReady, checkAuth } = useAppContext();
-
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  const { isAuthReady } = useAppContext();
 
   if (!isAuthReady) {
     return (

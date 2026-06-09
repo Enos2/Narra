@@ -48,59 +48,73 @@ export function MessageProvider({ children }) {
       return;
     }
 
-    const socket = io(SOCKET_URL, {
-      auth:       { token },
-      transports: ['websocket', 'polling'],
-      reconnection:       true,
-      reconnectionAttempts: 5,
-      reconnectionDelay:  2000,
-    });
+    // Delay socket creation so React Strict Mode's immediate cleanup
+    // fires first — this prevents the "WebSocket closed before connection
+    // established" browser warning caused by the double-invoke in dev.
+    let cancelled = false;
+    let socket = null;
 
-    socket.on('connect', () => {
-      setConnected(true);
-      console.log('💬 Messaging socket connected');
-    });
+    const timer = setTimeout(() => {
+      if (cancelled) return;
 
-    socket.on('disconnect', () => {
-      setConnected(false);
-    });
+      socket = io(SOCKET_URL, {
+        auth:       { token },
+        transports: ['websocket', 'polling'],
+        reconnection:         true,
+        reconnectionAttempts: 5,
+        reconnectionDelay:    2000,
+      });
 
-    socket.on('connect_error', (err) => {
-      console.warn('Socket connect error:', err.message);
-    });
+      socket.on('connect', () => {
+        if (cancelled) { socket.disconnect(); return; }
+        setConnected(true);
+        console.log('💬 Messaging socket connected');
+      });
 
-    /* New message arriving — bump unread if not in that conversation */
-    socket.on('new-message', ({ conversationId }) => {
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c._id !== conversationId) return c;
-          // Will be cleared when user opens the conversation
-          return { ...c, _hasNewMessage: true };
-        })
-      );
-    });
+      socket.on('disconnect', () => {
+        if (!cancelled) setConnected(false);
+      });
 
-    /* Conversation metadata updated (last message snapshot) */
-    socket.on('conversation-updated', ({ conversationId, lastMessage }) => {
-      setConversations((prev) =>
-        prev.map((c) =>
-          c._id === conversationId ? { ...c, lastMessage } : c
-        )
-      );
-      setTotalUnread((n) => n + 1);
-    });
+      socket.on('connect_error', (err) => {
+        if (!cancelled) console.warn('Socket connect error:', err.message);
+      });
 
-    socket.on('messages-read', ({ conversationId, readerId }) => {
-      if (readerId?.toString() !== (user._id || user.id)?.toString()) return;
-      setTotalUnread((n) => Math.max(0, n - 1));
-    });
+      socket.on('new-message', ({ conversationId }) => {
+        if (cancelled) return;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c._id !== conversationId ? c : { ...c, _hasNewMessage: true }
+          )
+        );
+      });
 
-    socketRef.current = socket;
+      socket.on('conversation-updated', ({ conversationId, lastMessage }) => {
+        if (cancelled) return;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c._id === conversationId ? { ...c, lastMessage } : c
+          )
+        );
+        setTotalUnread((n) => n + 1);
+      });
+
+      socket.on('messages-read', ({ conversationId, readerId }) => {
+        if (cancelled) return;
+        if (readerId?.toString() !== (user._id || user.id)?.toString()) return;
+        setTotalUnread((n) => Math.max(0, n - 1));
+      });
+
+      socketRef.current = socket;
+    }, 0);
 
     return () => {
-      socket.disconnect();
-      socketRef.current = null;
-      setConnected(false);
+      cancelled = true;
+      clearTimeout(timer);
+      if (socket) {
+        socket.disconnect();
+        socketRef.current = null;
+        setConnected(false);
+      }
     };
   }, [token, user]);
 
@@ -141,10 +155,7 @@ export function MessageProvider({ children }) {
           return sum + (me?.unreadCount || 0);
         }, 0);
         setTotalUnread(unread);
-
-        // Subscribe socket to all conversation rooms
         subscribeToConversations(data.conversations.map((c) => c._id));
-
         return data.conversations;
       }
       return [];

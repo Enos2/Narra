@@ -1,5 +1,5 @@
 // FILE: src/components/AdminLayout.jsx
-import { Outlet, Link, useNavigate } from "react-router-dom";
+import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useTheme } from "../context/ThemeContext";
 import { useState } from "react";
@@ -9,6 +9,7 @@ export default function AdminLayout() {
   const { user, logout, isSuperAdmin, isPlatformAdmin, isSupportAdmin } = useAppContext();
   const { theme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const accent = theme.accent;
@@ -69,11 +70,11 @@ export default function AdminLayout() {
               key={link.path}
               to={link.path}
               className="admin-nav-link"
-              style={({ isActive }) => ({
-                background: isActive ? `rgba(${accentRgb}, 0.15)` : "transparent",
-                borderLeft: isActive ? `3px solid ${accent}` : "3px solid transparent",
-                color: isActive ? accent : "#ccc"
-              })}
+              style={{
+                background: location.pathname === link.path ? `rgba(${accentRgb}, 0.15)` : "transparent",
+                borderLeft: location.pathname === link.path ? `3px solid ${accent}` : "3px solid transparent",
+                color: location.pathname === link.path ? accent : "#ccc"
+              }}
             >
               <span className="admin-nav-icon">{link.icon}</span>
               <span className="admin-nav-label">{link.label}</span>

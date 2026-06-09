@@ -44,6 +44,9 @@ router.put('/me', userController.updateProfile);
 // Delete own account (soft delete)
 router.delete('/me', userController.deleteUser);
 
+// Delete own avatar
+router.delete('/avatar', userController.deleteAvatar);
+
 // Check username availability
 router.get('/check-username', userController.checkUsername);
 

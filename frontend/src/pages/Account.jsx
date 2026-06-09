@@ -17,6 +17,9 @@ import {
 } from "../requests";
 import "./Account.css";
 
+// ── Safe API base URL — never "undefined/..." ───────────────────────────────
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 // ── Theme picker ────────────────────────────────────────────────────────────
 function ThemePicker() {
   const { theme, setTheme, setCustomTheme, presets } = useTheme();
@@ -283,7 +286,7 @@ function Account() {
     return () => { active = false; clearTimeout(t); };
   }, [formData.username, localUser?.username, token]);
 
-  // ── Content lists — stable primitive deps only ──
+  // ── Content lists ──
   const purchasedVideoIds = localUser?.purchasedVideoIds;
   const purchasedVideosField = localUser?.purchasedVideos;
   useEffect(() => {
@@ -396,11 +399,12 @@ function Account() {
     }
   };
 
+  // ── Remove avatar — uses safe API_BASE constant ──
   const handleRemoveAvatar = async () => {
     if (!token) return;
     setRemovingAvatar(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/avatar`, {
+      const response = await fetch(`${API_BASE}/api/users/avatar`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -410,15 +414,19 @@ function Account() {
         await refreshUserData();
         showMessage("success", "Profile picture removed.");
       } else {
+        // Fallback: update via profile endpoint
         const result = await updateUserProfile(token, { avatar: null });
         if (result?.success) {
           setAvatar(null);
           setLocalUser((prev) => ({ ...prev, avatar: null }));
           showMessage("success", "Profile picture removed.");
-        } else throw new Error();
+        } else throw new Error("Remove failed");
       }
-    } catch { showMessage("error", "Failed to remove profile picture."); }
-    finally { if (isMountedRef.current) setRemovingAvatar(false); }
+    } catch {
+      showMessage("error", "Failed to remove profile picture.");
+    } finally {
+      if (isMountedRef.current) setRemovingAvatar(false);
+    }
   };
 
   // ── Form handlers ──
@@ -469,15 +477,20 @@ function Account() {
     }
   };
 
+  // ── Logout all devices — uses safe API_BASE constant ──
   const handleLogoutAllDevices = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/logout-all`, {
+      const res = await fetch(`${API_BASE}/api/auth/logout-all`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       });
-      if (res.ok) { showMessage("success", "Logged out of all devices!"); setTimeout(() => logout(), 2000); }
-      else throw new Error();
-    } catch { showMessage("error", "Failed to logout all devices"); }
+      if (res.ok) {
+        showMessage("success", "Logged out of all devices!");
+        setTimeout(() => logout(), 2000);
+      } else throw new Error();
+    } catch {
+      showMessage("error", "Failed to logout all devices");
+    }
   };
 
   // ── Not signed in ──
@@ -550,7 +563,7 @@ function Account() {
               </div>
 
               <div className="profile-section">
-                {/* ── Avatar column ── */}
+                {/* ── Avatar column - FIXED ── */}
                 <div className="avatar-section">
                   <div className="avatar-wrapper large">
                     {currentAvatar && (
@@ -565,9 +578,18 @@ function Account() {
                         <div className="progress-bar" style={{ width: `${uploadProgress}%` }} />
                       </div>
                     )}
-                    <input type="file" accept="image/*" className="avatar-input" onChange={handleAvatarChange} disabled={uploadingAvatar || removingAvatar} />
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="avatar-input" 
+                      onChange={handleAvatarChange} 
+                      disabled={uploadingAvatar || removingAvatar}
+                      id="avatar-file-input"
+                    />
                     {!uploadingAvatar && !removingAvatar && (
-                      <div className="avatar-overlay"><span>Change Photo</span></div>
+                      <label htmlFor="avatar-file-input" className="avatar-overlay">
+                        <span>Change Photo</span>
+                      </label>
                     )}
                   </div>
 

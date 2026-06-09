@@ -1,0 +1,738 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   AdminVideoApprovals.css  ·  Pure Black Canvas  ·  Per-role accent
+   ═══════════════════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400&display=swap');
+
+/* ── Variables ── */
+.vap-page {
+  --accent: #FFD700;
+  --bg: #000000;
+  --surface: #000000;
+  --surface-2: #000000;
+  --border: rgba(255,215,0,0.15);
+  --text: #FFFFFF;
+  --text-muted: rgba(255,215,0,0.5);
+  --radius: 10px;
+  --radius-lg: 16px;
+  --font-d: 'Bebas Neue', sans-serif;
+  --font-b: 'DM Sans', sans-serif;
+  --font-m: 'DM Mono', monospace;
+
+  position: relative;
+  min-height: 100vh;
+  padding: 2.5rem 2rem 5rem;
+  background: #000000;
+  color: #FFFFFF;
+  font-family: var(--font-b);
+  overflow-x: hidden;
+}
+
+/* Role accent overrides */
+.vap-role-superadmin    { --accent: #FFD700; --border: rgba(255,215,0,0.15); --text-muted: rgba(255,215,0,0.5); }
+.vap-role-platformadmin { --accent: #0800e4; --border: rgba(8,0,228,0.15); --text-muted: rgba(8,0,228,0.5); }
+.vap-role-supportadmin  { --accent: #22c55e; --border: rgba(34,197,94,0.15); --text-muted: rgba(34,197,94,0.5); }
+
+/* ── Background SVG layer ── */
+.vap-bg {
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  overflow: hidden;
+}
+.vap-bg-svg {
+  width: 100%; height: 100%;
+  position: absolute; inset: 0;
+}
+
+/* Grain overlay */
+.vap-grain {
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 1;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+  opacity: 0.3;
+}
+
+/* Bring content above bg */
+.vap-page > *:not(.vap-bg):not(.vap-grain) { position: relative; z-index: 2; }
+
+/* ── Loading ── */
+.vap-loading {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 100vh; gap: 1.5rem; background: #000000;
+  font-family: 'DM Sans', sans-serif; color: var(--accent, #FFD700);
+}
+.vap-loading__ring {
+  width: 50px; height: 50px;
+  border: 3px solid rgba(255,255,255,0.06);
+  border-top: 3px solid var(--accent, #FFD700);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Header ── */
+.vap-header { text-align: center; margin-bottom: 2.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+.vap-header__line {
+  width: 120px; height: 1px;
+  background: linear-gradient(to right, transparent, var(--accent), transparent);
+  opacity: 0.6;
+}
+.vap-headline {
+  font-family: var(--font-d);
+  font-size: clamp(2.5rem, 5vw, 4.2rem);
+  letter-spacing: 0.07em;
+  color: #FFFFFF;
+  position: relative; display: inline-block;
+  text-shadow: 0 0 40px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.vap-headline::after {
+  content: ''; position: absolute; bottom: -4px; left: 0; right: 0;
+  height: 3px; background: var(--accent); border-radius: 2px;
+  box-shadow: 0 0 14px var(--accent);
+}
+.vap-sub { color: var(--text-muted); font-size: 0.85rem; letter-spacing: 0.1em; text-transform: uppercase; }
+
+/* ── Stats ── */
+.vap-stats { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 2rem; }
+.vap-stat {
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.75rem;
+  display: flex; flex-direction: column; align-items: center; gap: 0.2rem;
+  min-width: 100px; transition: border-color 0.25s, transform 0.25s;
+}
+.vap-stat:hover { transform: translateY(-3px); border-color: var(--accent); }
+.vap-stat__num { font-family: var(--font-d); font-size: 2.4rem; line-height: 1; }
+.vap-stat__label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+.vap-stat--pending  .vap-stat__num { color: #f59e0b; }
+.vap-stat--approved .vap-stat__num { color: #22c55e; }
+.vap-stat--rejected .vap-stat__num { color: #ef4444; }
+.vap-stat--removed  .vap-stat__num { color: #6b7280; }
+
+/* ── Tabs ── */
+.vap-tabs { display: flex; justify-content: center; gap: 0.5rem; margin-bottom: 1.75rem; }
+.vap-tab {
+  font-family: var(--font-d); font-size: 1.1rem; letter-spacing: 0.08em;
+  padding: 0.6rem 2.5rem; background: #000000;
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-muted); cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; gap: 0.6rem;
+}
+.vap-tab:hover { color: #FFFFFF; border-color: var(--accent); }
+.vap-tab--active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: var(--accent); color: var(--accent);
+}
+.vap-tab-count {
+  font-family: var(--font-b); font-size: 0.78rem;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent); padding: 0.1rem 0.5rem; border-radius: 20px;
+}
+
+/* ── Controls ── */
+.vap-controls {
+  display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;
+  margin-bottom: 2rem; padding: 1rem 1.25rem;
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.vap-search {
+  flex: 1; min-width: 200px; padding: 0.65rem 1rem;
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #FFFFFF;
+  font-family: var(--font-b); font-size: 0.875rem; outline: none;
+  transition: border-color 0.2s;
+}
+.vap-search:focus { border-color: var(--accent); }
+.vap-filters { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.vap-filter-btn {
+  padding: 0.5rem 1.1rem; background: transparent;
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-muted); font-family: var(--font-b); font-size: 0.78rem;
+  cursor: pointer; transition: all 0.2s;
+}
+.vap-filter-btn:hover { color: #FFFFFF; border-color: var(--accent); }
+.vap-filter-btn--active { background: var(--accent); border-color: var(--accent); color: #000000; font-weight: 600; }
+
+/* ── Error ── */
+.vap-error {
+  padding: 1.5rem; background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.3); border-radius: var(--radius);
+  text-align: center; margin-bottom: 1.5rem; color: #ef4444;
+}
+.vap-retry { margin-top: 0.75rem; padding: 0.4rem 1rem; background: #ef4444; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-family: var(--font-b); }
+
+/* ── Grid ── */
+.vap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 1.5rem;
+}
+
+/* ── Card ── */
+.vap-card {
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s;
+  animation: cardIn 0.4s ease both;
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.vap-card:hover {
+  transform: translateY(-5px);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), 0 16px 40px rgba(0,0,0,0.8);
+}
+
+/* Poster */
+.vap-card__poster { position: relative; aspect-ratio: 16/9; overflow: hidden; background: #000000; flex-shrink: 0; }
+.vap-card__img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.4s; }
+.vap-card:hover .vap-card__img { transform: scale(1.04); }
+
+.vap-card__poster-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex; align-items: center; justify-content: center; gap: 0.75rem;
+  opacity: 0; transition: opacity 0.3s;
+}
+.vap-card:hover .vap-card__poster-overlay { opacity: 1; }
+
+.vap-play-btn {
+  padding: 0.55rem 1.4rem;
+  background: var(--accent); border: none; border-radius: 4px;
+  color: #000000; font-family: var(--font-d); font-size: 1rem;
+  letter-spacing: 0.05em; cursor: pointer;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.vap-play-btn:hover { opacity: 0.85; transform: scale(1.05); }
+.vap-play-btn--main   { background: #fff; }
+.vap-play-btn--series { background: rgba(255,255,255,0.85); }
+
+/* Badges */
+.vap-badge {
+  position: absolute; padding: 0.2rem 0.55rem; border-radius: 4px;
+  font-size: 0.63rem; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; font-family: var(--font-b);
+}
+.vap-badge--status { top: 0.75rem; right: 0.75rem; }
+.vap-badge--pending  { background: #f59e0b; color: #000000; }
+.vap-badge--approved { background: #22c55e; color: #000000; }
+.vap-badge--rejected { background: #ef4444; color: #FFFFFF; }
+.vap-badge--removed  { background: #6b7280; color: #FFFFFF; }
+.vap-badge--type { top: 0.75rem; left: 0.75rem; background: var(--accent); color: #000000; }
+.vap-badge--age  { bottom: 0.75rem; left: 0.75rem; background: rgba(0,0,0,0.8); border: 1px solid rgba(255,255,255,0.2); color: #FFFFFF; }
+
+/* Body */
+.vap-card__body { padding: 1.1rem 1.25rem 0.75rem; flex: 1; display: flex; flex-direction: column; gap: 0.6rem; }
+.vap-card__title { font-family: var(--font-d); font-size: 1.3rem; letter-spacing: 0.04em; color: #FFFFFF; line-height: 1.2; }
+
+.vap-card__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; font-size: 0.72rem; color: var(--text-muted); }
+.vap-meta-chip { background: rgba(255,255,255,0.05); padding: 0.2rem 0.55rem; border-radius: 4px; font-size: 0.68rem; }
+.vap-meta-dot { display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: var(--text-muted); }
+
+.vap-genres { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.vap-genre-tag {
+  padding: 0.18rem 0.6rem; border-radius: 3px; font-size: 0.63rem;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  color: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+
+/* Description */
+.vap-desc { font-size: 0.82rem; color: #888; }
+.vap-desc__text { line-height: 1.6; }
+.vap-desc__text--clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  /* Standard property for compatibility */
+  line-clamp: 3;
+  overflow: hidden;
+}
+.vap-desc__toggle { background: none; border: none; color: var(--accent); font-size: 0.74rem; cursor: pointer; padding: 0; margin-top: 0.3rem; font-family: var(--font-b); }
+.vap-desc__toggle:hover { text-decoration: underline; }
+
+/* Rejection note */
+.vap-rejection-note {
+  padding: 0.6rem 0.75rem; background: rgba(239,68,68,0.1);
+  border-left: 3px solid #ef4444; border-radius: 0 4px 4px 0;
+  font-size: 0.78rem; color: #fca5a5;
+}
+.vap-rejection-note strong { color: #ef4444; display: block; margin-bottom: 0.25rem; }
+
+/* Accordion */
+.vap-accordion { margin-top: 0.25rem; }
+.vap-accordion__toggle {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 0.55rem 0.85rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--accent) 90%, #fff);
+  font-family: var(--font-b); font-size: 0.8rem; cursor: pointer; transition: background 0.2s;
+}
+.vap-accordion__toggle:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.vap-chevron {
+  display: inline-block; width: 10px; height: 10px;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translateY(-2px); transition: transform 0.25s;
+}
+.vap-chevron--open { transform: rotate(-135deg) translateY(-2px); }
+.vap-accordion__body { margin-top: 0.5rem; animation: accIn 0.2s ease; }
+@keyframes accIn { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+
+/* Episodes */
+.vap-eps-tree { display: flex; flex-direction: column; gap: 0.75rem; }
+.vap-season-node { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.vap-season-label { padding: 0.55rem 0.85rem; font-family: var(--font-d); font-size: 0.95rem; letter-spacing: 0.05em; color: var(--accent); border-bottom: 1px solid var(--border); }
+.vap-season-sub { font-family: var(--font-b); font-size: 0.75rem; color: var(--text-muted); margin-left: 0.4rem; }
+.vap-eps-list { display: flex; flex-direction: column; }
+.vap-ep-row {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.vap-ep-row:last-child { border-bottom: none; }
+.vap-ep-row:hover { background: rgba(255,255,255,0.02); }
+.vap-ep-num { font-family: var(--font-d); font-size: 0.85rem; color: var(--accent); min-width: 30px; }
+.vap-ep-title { flex: 1; font-size: 0.8rem; color: #FFFFFF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vap-ep-btns { display: flex; gap: 0.4rem; }
+.vap-ep-btn {
+  padding: 0.22rem 0.7rem; background: var(--accent); border: none;
+  border-radius: 3px; color: #000000; font-size: 0.7rem; font-family: var(--font-b);
+  font-weight: 600; cursor: pointer; white-space: nowrap; transition: opacity 0.2s;
+}
+.vap-ep-btn:hover { opacity: 0.8; }
+.vap-ep-btn--outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+.vap-no-eps { font-size: 0.8rem; color: var(--text-muted); padding: 0.5rem; }
+
+/* Card footer */
+.vap-card__footer { padding: 0.85rem 1.25rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.6rem; }
+.vap-btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+/* Buttons */
+.vap-btn {
+  flex: 1; min-width: 70px; padding: 0.5rem 0.85rem; border: none; border-radius: 5px;
+  font-family: var(--font-b); font-size: 0.76rem; font-weight: 600; cursor: pointer;
+  letter-spacing: 0.02em; transition: opacity 0.2s, transform 0.15s; white-space: nowrap;
+}
+.vap-btn:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+.vap-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.vap-btn--ghost   { background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: #FFFFFF; }
+.vap-btn--approve { background: #22c55e; color: #000000; }
+.vap-btn--reject  { background: #ef4444; color: #FFFFFF; }
+.vap-btn--delete  { background: #374151; color: #FFFFFF; }
+.vap-btn--restore { background: #14b8a6; color: #000000; }
+.vap-btn--perm    { background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; }
+
+/* ── Player modal ── */
+.vap-player-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.95); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9500; padding: 1.5rem;
+}
+.vap-player-shell {
+  width: min(860px, 100%);
+  animation: modalIn 0.25s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes modalIn {
+  from{opacity:0;transform:scale(0.93) translateY(14px)}
+  to  {opacity:1;transform:scale(1)    translateY(0)}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MODALS — fully role-themed approve / reject dialogs
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.vap-modal-backdrop {
+  position: fixed; inset: 0;
+  backdrop-filter: blur(10px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9000; padding: 1.5rem;
+}
+
+/* ── Backdrop tints per role ── */
+.vap-modal-backdrop--superadmin    { background: rgba(0,0,0,0.92); }
+.vap-modal-backdrop--platformadmin { background: rgba(0,0,8,0.93); }
+.vap-modal-backdrop--supportadmin  { background: rgba(0,8,0,0.92); }
+
+/* ── Modal shell ── */
+.vap-modal {
+  position: relative;
+  display: flex; flex-direction: column;
+  max-height: 90vh; width: min(560px, 100%);
+  border-radius: var(--radius-lg); overflow: hidden;
+  animation: modalIn 0.3s cubic-bezier(0.34,1.56,0.64,1);
+}
+
+/* ── SUPERADMIN modal — Gold sovereign theme ── */
+.vap-modal--superadmin {
+  background: #0a0800;
+  border: 1px solid rgba(255,215,0,0.4);
+  box-shadow:
+    0 0 0 1px rgba(255,215,0,0.1),
+    0 0 60px rgba(255,215,0,0.12),
+    0 32px 80px rgba(0,0,0,0.9),
+    inset 0 1px 0 rgba(255,215,0,0.2);
+}
+.vap-modal--superadmin::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 60% 35% at 50% 0%, rgba(255,215,0,0.09) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 20% at 100% 100%, rgba(255,215,0,0.04) 0%, transparent 60%);
+  pointer-events: none; z-index: 0;
+}
+.vap-modal--superadmin .vap-modal__header {
+  background: linear-gradient(135deg, rgba(255,215,0,0.1) 0%, rgba(255,215,0,0.04) 50%, rgba(0,0,0,0) 100%);
+  border-bottom: 1px solid rgba(255,215,0,0.2);
+}
+.vap-modal--superadmin .vap-modal__title {
+  font-family: var(--font-d);
+  font-size: 1.35rem; letter-spacing: 0.12em;
+  color: #FFD700;
+  text-shadow: 0 0 20px rgba(255,215,0,0.5);
+}
+.vap-modal--superadmin .vap-modal__role-badge {
+  font-family: var(--font-m);
+  font-size: 0.6rem; letter-spacing: 0.18em;
+  color: rgba(255,215,0,0.55);
+  text-transform: uppercase;
+  margin-top: 0.1rem;
+}
+.vap-modal--superadmin .vap-modal__close {
+  background: rgba(255,215,0,0.07);
+  border: 1px solid rgba(255,215,0,0.25);
+  color: rgba(255,215,0,0.6);
+  font-family: var(--font-b); font-size: 0.73rem; border-radius: 4px;
+}
+.vap-modal--superadmin .vap-modal__close:hover {
+  background: rgba(255,215,0,0.14); color: #FFD700; border-color: #FFD700;
+}
+.vap-modal--superadmin .vap-modal__video-name {
+  font-family: var(--font-d); font-size: 1.6rem; letter-spacing: 0.06em;
+  color: #FFFFFF;
+  text-shadow: 0 2px 20px rgba(255,215,0,0.15);
+}
+.vap-modal--superadmin .vap-modal__creator {
+  font-family: var(--font-m); font-size: 0.76rem;
+  color: rgba(255,215,0,0.5); letter-spacing: 0.08em;
+}
+.vap-modal--superadmin .vap-form-label {
+  font-family: var(--font-d); font-size: 0.82rem; letter-spacing: 0.14em;
+  color: rgba(255,215,0,0.65);
+}
+.vap-modal--superadmin .vap-option-btn {
+  background: rgba(255,215,0,0.04);
+  border: 1px solid rgba(255,215,0,0.18);
+  color: rgba(255,255,255,0.8);
+  font-family: var(--font-b);
+}
+.vap-modal--superadmin .vap-option-btn:hover {
+  border-color: rgba(255,215,0,0.55); color: #FFD700;
+  background: rgba(255,215,0,0.08);
+}
+.vap-modal--superadmin .vap-option-btn--active {
+  background: #FFD700; border-color: #FFD700; color: #000000; font-weight: 700;
+  box-shadow: 0 0 12px rgba(255,215,0,0.4);
+}
+.vap-modal--superadmin .vap-form-hint {
+  font-family: var(--font-m); font-size: 0.7rem; color: rgba(255,215,0,0.45);
+}
+.vap-modal--superadmin .vap-textarea {
+  background: rgba(255,215,0,0.03);
+  border: 1px solid rgba(255,215,0,0.18); color: #FFFFFF;
+  font-family: var(--font-b);
+}
+.vap-modal--superadmin .vap-textarea:focus { border-color: rgba(255,215,0,0.6); box-shadow: 0 0 0 3px rgba(255,215,0,0.08); }
+.vap-modal--superadmin .vap-modal__footer {
+  border-top: 1px solid rgba(255,215,0,0.15);
+  background: rgba(255,215,0,0.03);
+}
+.vap-modal--superadmin .vap-modal__divider {
+  width: 100%; height: 1px;
+  background: linear-gradient(to right, transparent, rgba(255,215,0,0.3), transparent);
+  margin: 0.25rem 0 1rem;
+}
+/* Decorative corner marks */
+.vap-modal--superadmin::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(to right, transparent 5%, #FFD700 30%, #FFD700 70%, transparent 95%);
+  box-shadow: 0 0 20px rgba(255,215,0,0.6);
+  z-index: 1;
+}
+
+/* ── PLATFORM ADMIN modal — Electric circuit blue theme ── */
+.vap-modal--platformadmin {
+  background: #00000f;
+  border: 1px solid rgba(59,130,246,0.35);
+  box-shadow:
+    0 0 0 1px rgba(59,130,246,0.08),
+    0 0 60px rgba(8,0,228,0.15),
+    0 32px 80px rgba(0,0,0,0.9),
+    inset 0 1px 0 rgba(59,130,246,0.15);
+}
+.vap-modal--platformadmin::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 55% 30% at 0% 0%, rgba(59,130,246,0.08) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 25% at 100% 100%, rgba(8,0,228,0.06) 0%, transparent 60%);
+  pointer-events: none; z-index: 0;
+}
+/* Circuit line top border */
+.vap-modal--platformadmin::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(to right, transparent 0%, #3B82F6 20%, #0800e4 50%, #3B82F6 80%, transparent 100%);
+  box-shadow: 0 0 18px rgba(59,130,246,0.7), 0 0 40px rgba(8,0,228,0.3);
+  z-index: 1;
+}
+.vap-modal--platformadmin .vap-modal__header {
+  background: linear-gradient(135deg, rgba(59,130,246,0.1) 0%, rgba(8,0,228,0.05) 60%, transparent 100%);
+  border-bottom: 1px solid rgba(59,130,246,0.18);
+}
+.vap-modal--platformadmin .vap-modal__title {
+  font-family: var(--font-d);
+  font-size: 1.35rem; letter-spacing: 0.12em;
+  color: #60a5fa;
+  text-shadow: 0 0 20px rgba(59,130,246,0.55);
+}
+.vap-modal--platformadmin .vap-modal__role-badge {
+  font-family: var(--font-m);
+  font-size: 0.6rem; letter-spacing: 0.18em;
+  color: rgba(59,130,246,0.5);
+  text-transform: uppercase;
+  margin-top: 0.1rem;
+}
+.vap-modal--platformadmin .vap-modal__close {
+  background: rgba(59,130,246,0.07);
+  border: 1px solid rgba(59,130,246,0.25);
+  color: rgba(59,130,246,0.6);
+  font-family: var(--font-b); font-size: 0.73rem; border-radius: 4px;
+}
+.vap-modal--platformadmin .vap-modal__close:hover {
+  background: rgba(59,130,246,0.14); color: #60a5fa; border-color: #3B82F6;
+}
+.vap-modal--platformadmin .vap-modal__video-name {
+  font-family: var(--font-d); font-size: 1.6rem; letter-spacing: 0.06em;
+  color: #FFFFFF;
+}
+.vap-modal--platformadmin .vap-modal__creator {
+  font-family: var(--font-m); font-size: 0.76rem;
+  color: rgba(59,130,246,0.55); letter-spacing: 0.08em;
+}
+.vap-modal--platformadmin .vap-form-label {
+  font-family: var(--font-d); font-size: 0.82rem; letter-spacing: 0.14em;
+  color: rgba(59,130,246,0.7);
+}
+.vap-modal--platformadmin .vap-option-btn {
+  background: rgba(59,130,246,0.04);
+  border: 1px solid rgba(59,130,246,0.18);
+  color: rgba(255,255,255,0.8);
+  font-family: var(--font-b);
+}
+.vap-modal--platformadmin .vap-option-btn:hover {
+  border-color: rgba(59,130,246,0.55); color: #60a5fa;
+  background: rgba(59,130,246,0.09);
+}
+.vap-modal--platformadmin .vap-option-btn--active {
+  background: linear-gradient(135deg, #3B82F6 0%, #0800e4 100%);
+  border-color: #3B82F6; color: #FFFFFF; font-weight: 700;
+  box-shadow: 0 0 14px rgba(59,130,246,0.45);
+}
+.vap-modal--platformadmin .vap-form-hint {
+  font-family: var(--font-m); font-size: 0.7rem; color: rgba(59,130,246,0.45);
+}
+.vap-modal--platformadmin .vap-textarea {
+  background: rgba(59,130,246,0.03);
+  border: 1px solid rgba(59,130,246,0.18); color: #FFFFFF;
+  font-family: var(--font-b);
+}
+.vap-modal--platformadmin .vap-textarea:focus { border-color: rgba(59,130,246,0.6); box-shadow: 0 0 0 3px rgba(59,130,246,0.08); }
+.vap-modal--platformadmin .vap-modal__footer {
+  border-top: 1px solid rgba(59,130,246,0.15);
+  background: rgba(59,130,246,0.03);
+}
+.vap-modal--platformadmin .vap-modal__divider {
+  width: 100%; height: 1px;
+  background: linear-gradient(to right, transparent, rgba(59,130,246,0.35), transparent);
+  margin: 0.25rem 0 1rem;
+}
+
+/* ── SUPPORT ADMIN modal — Organic vine green theme ── */
+.vap-modal--supportadmin {
+  background: #000a02;
+  border: 1px solid rgba(34,197,94,0.3);
+  box-shadow:
+    0 0 0 1px rgba(34,197,94,0.07),
+    0 0 60px rgba(34,197,94,0.1),
+    0 32px 80px rgba(0,0,0,0.9),
+    inset 0 1px 0 rgba(34,197,94,0.12);
+}
+.vap-modal--supportadmin::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 50% 30% at 50% 100%, rgba(34,197,94,0.08) 0%, transparent 70%),
+    radial-gradient(ellipse 35% 20% at 0% 0%, rgba(34,197,94,0.04) 0%, transparent 60%);
+  pointer-events: none; z-index: 0;
+}
+.vap-modal--supportadmin::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(to right, transparent 5%, #22c55e 35%, #16a34a 65%, transparent 95%);
+  box-shadow: 0 0 18px rgba(34,197,94,0.6);
+  z-index: 1;
+}
+.vap-modal--supportadmin .vap-modal__header {
+  background: linear-gradient(135deg, rgba(34,197,94,0.09) 0%, rgba(34,197,94,0.03) 60%, transparent 100%);
+  border-bottom: 1px solid rgba(34,197,94,0.15);
+}
+.vap-modal--supportadmin .vap-modal__title {
+  font-family: var(--font-d);
+  font-size: 1.35rem; letter-spacing: 0.12em;
+  color: #4ade80;
+  text-shadow: 0 0 20px rgba(34,197,94,0.5);
+}
+.vap-modal--supportadmin .vap-modal__role-badge {
+  font-family: var(--font-m);
+  font-size: 0.6rem; letter-spacing: 0.18em;
+  color: rgba(34,197,94,0.5);
+  text-transform: uppercase;
+  margin-top: 0.1rem;
+}
+.vap-modal--supportadmin .vap-modal__close {
+  background: rgba(34,197,94,0.06);
+  border: 1px solid rgba(34,197,94,0.22);
+  color: rgba(34,197,94,0.6);
+  font-family: var(--font-b); font-size: 0.73rem; border-radius: 4px;
+}
+.vap-modal--supportadmin .vap-modal__close:hover {
+  background: rgba(34,197,94,0.12); color: #4ade80; border-color: #22c55e;
+}
+.vap-modal--supportadmin .vap-modal__video-name {
+  font-family: var(--font-d); font-size: 1.6rem; letter-spacing: 0.06em;
+  color: #FFFFFF;
+}
+.vap-modal--supportadmin .vap-modal__creator {
+  font-family: var(--font-m); font-size: 0.76rem;
+  color: rgba(34,197,94,0.5); letter-spacing: 0.08em;
+}
+.vap-modal--supportadmin .vap-form-label {
+  font-family: var(--font-d); font-size: 0.82rem; letter-spacing: 0.14em;
+  color: rgba(34,197,94,0.65);
+}
+.vap-modal--supportadmin .vap-option-btn {
+  background: rgba(34,197,94,0.04);
+  border: 1px solid rgba(34,197,94,0.16);
+  color: rgba(255,255,255,0.8);
+  font-family: var(--font-b);
+}
+.vap-modal--supportadmin .vap-option-btn:hover {
+  border-color: rgba(34,197,94,0.5); color: #4ade80;
+  background: rgba(34,197,94,0.08);
+}
+.vap-modal--supportadmin .vap-option-btn--active {
+  background: #22c55e; border-color: #22c55e; color: #000000; font-weight: 700;
+  box-shadow: 0 0 12px rgba(34,197,94,0.4);
+}
+.vap-modal--supportadmin .vap-form-hint {
+  font-family: var(--font-m); font-size: 0.7rem; color: rgba(34,197,94,0.45);
+}
+.vap-modal--supportadmin .vap-textarea {
+  background: rgba(34,197,94,0.03);
+  border: 1px solid rgba(34,197,94,0.16); color: #FFFFFF;
+  font-family: var(--font-b);
+}
+.vap-modal--supportadmin .vap-textarea:focus { border-color: rgba(34,197,94,0.55); box-shadow: 0 0 0 3px rgba(34,197,94,0.08); }
+.vap-modal--supportadmin .vap-modal__footer {
+  border-top: 1px solid rgba(34,197,94,0.13);
+  background: rgba(34,197,94,0.02);
+}
+.vap-modal--supportadmin .vap-modal__divider {
+  width: 100%; height: 1px;
+  background: linear-gradient(to right, transparent, rgba(34,197,94,0.3), transparent);
+  margin: 0.25rem 0 1rem;
+}
+
+/* ── Shared modal structure ── */
+.vap-modal__header {
+  display: flex; flex-direction: column;
+  padding: 1.1rem 1.4rem 1rem;
+  flex-shrink: 0; position: relative; z-index: 1;
+}
+.vap-modal__header-row {
+  display: flex; justify-content: space-between; align-items: flex-start;
+}
+.vap-modal__title-group { display: flex; flex-direction: column; gap: 0.1rem; }
+.vap-modal__close {
+  padding: 0.32rem 0.8rem;
+  cursor: pointer; transition: all 0.2s;
+  flex-shrink: 0; margin-top: 0.1rem;
+}
+.vap-modal__body { padding: 1.4rem 1.4rem 0.75rem; overflow-y: auto; flex: 1; position: relative; z-index: 1; }
+.vap-modal__footer {
+  display: flex; justify-content: flex-end; gap: 0.75rem;
+  padding: 1rem 1.4rem; flex-shrink: 0; position: relative; z-index: 1;
+}
+.vap-modal__footer .vap-btn { flex: unset; min-width: 140px; }
+.vap-modal__video-name { margin-bottom: 0.2rem; }
+.vap-modal__creator { margin-bottom: 1.4rem; }
+
+/* Form */
+.vap-form-group { margin-bottom: 1.35rem; }
+.vap-form-label { display: block; font-weight: 600; text-transform: uppercase; margin-bottom: 0.65rem; }
+.vap-required { color: #ef4444; }
+.vap-form-hint { display: block; margin-top: 0.45rem; }
+.vap-option-grid { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.vap-option-btn {
+  padding: 0.42rem 0.95rem;
+  border-radius: 5px;
+  cursor: pointer; transition: all 0.15s;
+}
+.vap-textarea {
+  width: 100%; padding: 0.75rem 1rem;
+  border-radius: 6px; resize: vertical; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+  font-size: 0.875rem; line-height: 1.6;
+}
+
+/* ── Empty ── */
+.vap-empty {
+  text-align: center; padding: 4rem 2rem;
+  background: #000000;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+.vap-empty__icon {
+  width: 54px; height: 54px; margin: 0 auto 1.25rem;
+  border: 2px solid var(--accent); border-radius: 50%; position: relative;
+}
+.vap-empty__icon::before,.vap-empty__icon::after {
+  content: ''; position: absolute; background: var(--accent); border-radius: 2px;
+}
+.vap-empty__icon::before { width: 2px; height: 20px; top: 50%; left: 50%; transform: translate(-50%,-50%); }
+.vap-empty__icon::after  { width: 20px; height: 2px; top: 50%; left: 50%; transform: translate(-50%,-50%); }
+.vap-empty h3 { font-family: var(--font-d); font-size: 1.5rem; letter-spacing: 0.04em; color: #FFFFFF; margin-bottom: 0.5rem; }
+.vap-empty p  { color: var(--text-muted); font-size: 0.9rem; }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .vap-page { padding: 1.5rem 1rem 3rem; }
+  .vap-grid { grid-template-columns: 1fr; }
+  .vap-controls { flex-direction: column; align-items: stretch; }
+  .vap-search { width: 100%; }
+  .vap-filters { justify-content: center; }
+  .vap-stats { gap: 0.6rem; }
+}

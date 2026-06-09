@@ -1,0 +1,286 @@
+/**
+ * File: frontend/src/components/SpotlightBanner.css
+ * Location: frontend/src/components/SpotlightBanner.css
+ * Matches the dark red Home page theme exactly.
+ * No emojis anywhere in this file.
+ */
+
+/* ══════════════════════════════════════════
+   SHARED VARIABLES — match Home page theme
+══════════════════════════════════════════ */
+.sb-card,
+.sb-roll,
+.sb-strip {
+  --sb-red:    #8b0000;
+  --sb-red-lt: #cc0000;
+  --sb-border: rgba(139,0,0,0.4);
+  --sb-bg:     rgba(10,10,10,0.92);
+  --sb-text:   rgba(255,255,255,0.85);
+  --sb-muted:  rgba(255,255,255,0.45);
+  --sb-radius: 14px;
+}
+
+/* ══════════════════════════════════════════
+   BANNER CARD (sidebar / home-banner)
+══════════════════════════════════════════ */
+.sb-card {
+  position: relative;
+  background: var(--sb-bg);
+  border: 1px solid var(--sb-border);
+  border-radius: var(--sb-radius);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  animation: sb-fadeIn 0.4s ease both;
+}
+
+.sb-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 32px rgba(139,0,0,0.3);
+}
+
+@keyframes sb-fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Banner variant — full width strip */
+.sb-card--banner {
+  width: 100%;
+  max-height: 220px;
+}
+
+/* Sidebar variant — narrow card */
+.sb-card--sidebar {
+  width: 240px;
+  flex-shrink: 0;
+}
+
+/* ── Sponsored label ── */
+.sb-card__label {
+  position: absolute; top: 0.5rem; left: 0.6rem; z-index: 4;
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.1em; color: rgba(255,255,255,0.55);
+  background: rgba(0,0,0,0.6);
+  padding: 0.15rem 0.45rem; border-radius: 4px;
+  border: 1px solid rgba(139,0,0,0.3);
+  pointer-events: none;
+}
+
+/* ── Dismiss button ── */
+.sb-card__dismiss {
+  position: absolute; top: 0.4rem; right: 0.4rem; z-index: 5;
+  background: rgba(0,0,0,0.65);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.5);
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; cursor: pointer;
+  transition: all 0.2s;
+}
+.sb-card__dismiss:hover {
+  background: var(--sb-red); color: #fff;
+  border-color: var(--sb-red);
+}
+
+/* ── Media area ── */
+.sb-card__media {
+  position: relative; width: 100%;
+  height: 160px; overflow: hidden;
+}
+.sb-card--sidebar .sb-card__media { height: 130px; }
+
+.sb-card__image,
+.sb-card__video {
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  transition: transform 0.35s ease;
+}
+.sb-card:hover .sb-card__image,
+.sb-card:hover .sb-card__video { transform: scale(1.04); }
+
+/* Hover overlay */
+.sb-card__overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%);
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  padding: 0.75rem;
+  opacity: 0; transition: opacity 0.25s;
+}
+.sb-card:hover .sb-card__overlay { opacity: 1; }
+
+.sb-card__cta {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: #fff;
+  background: var(--sb-red);
+  padding: 0.3rem 0.75rem; border-radius: 20px;
+}
+
+/* ── Footer ── */
+.sb-card__footer {
+  padding: 0.65rem 0.85rem;
+  display: flex; flex-direction: column; gap: 0.2rem;
+  border-top: 1px solid var(--sb-border);
+  cursor: pointer;
+}
+.sb-card__title {
+  font-size: 0.82rem; font-weight: 600; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sb-card__desc {
+  font-size: 0.68rem; color: var(--sb-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ══════════════════════════════════════════
+   PRE-ROLL / MID-ROLL VIDEO OVERLAY
+══════════════════════════════════════════ */
+.sb-roll {
+  position: fixed; inset: 0; z-index: 9999;
+  background: #000;
+  display: flex; flex-direction: column;
+  animation: sb-fadeIn 0.3s ease both;
+}
+
+.sb-roll__label {
+  position: absolute; top: 1rem; left: 1rem; z-index: 2;
+  font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.1em; color: rgba(255,255,255,0.5);
+  background: rgba(0,0,0,0.7); padding: 0.2rem 0.55rem;
+  border-radius: 4px; border: 1px solid rgba(139,0,0,0.3);
+}
+
+.sb-roll__media {
+  flex: 1; cursor: pointer; overflow: hidden; position: relative;
+}
+.sb-roll__video,
+.sb-roll__image {
+  width: 100%; height: 100%; object-fit: contain; display: block;
+}
+
+.sb-roll__controls {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.75rem 1.25rem;
+  background: rgba(0,0,0,0.9);
+  border-top: 1px solid var(--sb-border);
+  gap: 1rem;
+}
+
+.sb-roll__title {
+  font-size: 0.85rem; color: rgba(255,255,255,0.8);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1;
+}
+
+.sb-roll__skip {
+  padding: 0.45rem 1.1rem; border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.07);
+  color: rgba(255,255,255,0.5);
+  font-size: 0.78rem; font-weight: 600; cursor: not-allowed;
+  transition: all 0.2s; white-space: nowrap;
+  font-family: inherit;
+}
+.sb-roll__skip--ready {
+  cursor: pointer; color: #fff;
+  background: var(--sb-red); border-color: var(--sb-red);
+}
+.sb-roll__skip--ready:hover { background: var(--sb-red-lt); }
+
+/* ══════════════════════════════════════════
+   BETWEEN-ROWS SPOTLIGHT STRIP
+   Appears between content rows on Home page
+══════════════════════════════════════════ */
+.sb-strip {
+  width: 100%;
+  margin: 0.5rem 0 2.5rem 0;
+  position: relative;
+  animation: sb-fadeIn 0.4s ease both;
+}
+
+.sb-strip__inner {
+  display: flex; align-items: stretch;
+  background: var(--sb-bg);
+  border: 1px solid var(--sb-border);
+  border-left: 3px solid var(--sb-red);
+  border-radius: var(--sb-radius);
+  overflow: hidden; cursor: pointer;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.sb-strip__inner:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(139,0,0,0.25);
+}
+
+/* Media side */
+.sb-strip__media {
+  width: 220px; flex-shrink: 0;
+  position: relative; overflow: hidden;
+}
+.sb-strip__image,
+.sb-strip__video {
+  width: 100%; height: 100%; min-height: 110px;
+  object-fit: cover; display: block;
+  transition: transform 0.35s ease;
+}
+.sb-strip__inner:hover .sb-strip__image,
+.sb-strip__inner:hover .sb-strip__video { transform: scale(1.04); }
+
+/* Content side */
+.sb-strip__content {
+  flex: 1; padding: 1rem 1.25rem;
+  display: flex; flex-direction: column; justify-content: center; gap: 0.35rem;
+}
+.sb-strip__label {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.12em; color: rgba(139,0,0,0.7);
+}
+.sb-strip__title {
+  font-size: 1rem; font-weight: 600; color: #fff;
+  margin: 0; line-height: 1.3;
+}
+.sb-strip__desc {
+  font-size: 0.78rem; color: var(--sb-muted);
+  margin: 0; line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.sb-strip__cta {
+  display: inline-block; margin-top: 0.35rem;
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--sb-red-lt);
+  border-bottom: 1px solid var(--sb-red);
+  width: fit-content;
+}
+
+/* Dismiss button */
+.sb-strip__dismiss {
+  position: absolute; top: 0.5rem; right: 0.5rem;
+  background: rgba(0,0,0,0.65);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.4);
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; cursor: pointer;
+  transition: all 0.2s;
+}
+.sb-strip__dismiss:hover {
+  background: var(--sb-red); color: #fff; border-color: var(--sb-red);
+}
+
+/* ══════════════════════════════════════════
+   RESPONSIVE
+══════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .sb-strip__media { width: 130px; }
+  .sb-strip__title { font-size: 0.88rem; }
+  .sb-card--banner { max-height: 180px; }
+  .sb-card__media  { height: 130px; }
+}
+
+@media (max-width: 480px) {
+  .sb-strip__inner { flex-direction: column; }
+  .sb-strip__media { width: 100%; height: 120px; }
+  .sb-strip__content { padding: 0.85rem 1rem; }
+  .sb-card--sidebar { width: 100%; }
+}

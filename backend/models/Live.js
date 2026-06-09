@@ -1,3 +1,4 @@
+// File: backend/models/Live.js
 const mongoose = require('mongoose');
 
 const LiveSchema = new mongoose.Schema(

@@ -5,6 +5,7 @@
   "hints": {
     "compat-api/css": "off",
     "typescript-config/is-valid": "off",
-    "css-prefix-order": "off"
+    "css-prefix-order": "off",
+    "axe/forms": "off"
   }
 }

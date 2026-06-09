@@ -3,6 +3,7 @@
  * Description: User controller with all CRUD operations, follow functionality, and admin actions
  * FIXED: updateProfile returns proper user data with all fields
  * UPDATED: Added notification calls for follow, ban, verify, deactivate, etc.
+ * ADDED: deleteAvatar function
  */
 
 const User = require('../models/User');
@@ -223,6 +224,48 @@ exports.deleteUser = async (req, res) => {
     });
   } catch (error) {
     console.error('Delete user error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+/**
+ * @desc    Delete user avatar
+ * @route   DELETE /api/users/avatar
+ * @access  Private
+ */
+exports.deleteAvatar = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    // Delete the actual file from disk if it exists
+    if (user.avatar && !user.avatar.includes('default')) {
+      const fs = require('fs');
+      const path = require('path');
+      // Convert URL to file path (e.g., /uploads/avatars/xxx.jpg -> uploads/avatars/xxx.jpg)
+      const relativePath = user.avatar.replace('/uploads/', 'uploads/');
+      const filePath = path.join(__dirname, '..', relativePath);
+      
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`Deleted avatar file: ${filePath}`);
+      }
+    }
+    
+    // Set avatar to null
+    user.avatar = null;
+    await user.save();
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Avatar deleted successfully',
+      data: { avatar: null }
+    });
+  } catch (error) {
+    console.error('Delete avatar error:', error);
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
