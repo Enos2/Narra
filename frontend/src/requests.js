@@ -982,24 +982,37 @@ export async function getPendingVideos(token) {
 
 /**
  * Fetch platform-wide statistics (all admins).
- * Maps to: GET /admin/stats  or  GET /admin/platform/stats
+ * FIXED: Tries the correct endpoint FIRST to avoid 404 errors
+ * Maps to: GET /admin/platform/stats (primary) then /admin/stats (fallback)
  */
 export async function getPlatformStats(token) {
-  // Try primary endpoint first, fall back to alternate
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/stats`, {
-      headers: getAuthHeaders(token),
-    });
-    if (res.ok) return await res.json();
-  } catch { /* fall through */ }
-
+  // FIXED: Try the correct endpoint FIRST
   try {
     const res = await fetch(`${API_BASE_URL}/admin/platform/stats`, {
       headers: getAuthHeaders(token),
     });
-    if (res.ok) return await res.json();
-  } catch { /* fall through */ }
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch (err) {
+    console.warn('Primary platform stats endpoint failed:', err.message);
+  }
 
+  // Fallback to old endpoint for backward compatibility
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/stats`, {
+      headers: getAuthHeaders(token),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch (err) {
+    console.warn('Fallback platform stats endpoint failed:', err.message);
+  }
+
+  console.warn('Both platform stats endpoints failed');
   return { success: false, stats: null };
 }
 

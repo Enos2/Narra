@@ -3,6 +3,7 @@
  * COMPLETE FIXED VERSION - ALL ROUTES INCLUDED WITH NOTIFICATIONS
  * UPDATED: Added remove strike route and fixed all audit logging
  * FIXED: Remove strike route now uses DELETE method (was POST)
+ * ADDED: /platform/stats route for platform statistics
  */
 
 const express = require('express');
@@ -75,6 +76,86 @@ const logAdminAction = async ({ admin, actionType, actionLabel, targetType, targ
     console.error('Failed to log admin action:', err);
   }
 };
+
+/* =====================================================
+   PLATFORM STATISTICS ROUTE (ADDED - FIXES 404 ERROR)
+===================================================== */
+router.get('/platform/stats', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    // Get platform statistics
+    const totalUsers = await User.countDocuments({ isDeleted: { $ne: true } });
+    const totalVideos = await Video.countDocuments({ isDeleted: { $ne: true } });
+    const totalAdmins = await User.countDocuments({ 
+      role: { $in: ['superadmin', 'platformadmin', 'supportadmin'] },
+      isDeleted: { $ne: true }
+    });
+    
+    // Get pending videos count
+    const pendingVideos = await Video.countDocuments({ 
+      status: 'pending',
+      approved: false,
+      isDeleted: { $ne: true }
+    });
+    
+    // Get pending live streams count
+    const pendingLiveStreams = 0; // Adjust if you have a Live model
+    
+    // Get reported content count
+    const reportedContent = await Video.countDocuments({ 
+      flagged: true,
+      isDeleted: { $ne: true }
+    });
+    
+    // Get today's stats
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const newUsersToday = await User.countDocuments({
+      createdAt: { $gte: today },
+      isDeleted: { $ne: true }
+    });
+    
+    const newVideosToday = await Video.countDocuments({
+      uploadedAt: { $gte: today },
+      isDeleted: { $ne: true }
+    });
+    
+    // Get approved videos count
+    const approvedVideos = await Video.countDocuments({ 
+      status: 'released',
+      approved: true,
+      isDeleted: { $ne: true }
+    });
+    
+    // Get rejected videos count
+    const rejectedVideos = await Video.countDocuments({ 
+      status: 'rejected',
+      isDeleted: { $ne: true }
+    });
+    
+    res.json({
+      success: true,
+      stats: {
+        totalUsers,
+        totalVideos,
+        totalAdmins,
+        pendingVideos,
+        pendingLiveStreams,
+        reportedContent,
+        newUsersToday,
+        newVideosToday,
+        approvedVideos,
+        rejectedVideos
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching platform stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch platform statistics' 
+    });
+  }
+});
 
 /* =====================================================
    VIDEO MODERATION ROUTES

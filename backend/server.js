@@ -4,6 +4,7 @@
  * FIXED: HLS static file serving for live streams on Windows
  * FIXED: HLS served BEFORE any auth middleware (public access)
  * FIXED: MongoDB connection with correct env variable
+ * FIXED: Socket.IO admin auth - checks User model first then Admin model
  */
 
 const express    = require('express');
@@ -54,7 +55,7 @@ const io = socketIO(server, {
 
 app.set('io', io);
 
-// ─── Socket Auth Middleware ───────────────────
+// ─── Socket Auth Middleware (FIXED - checks User model first) ───
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -71,21 +72,44 @@ io.use(async (socket, next) => {
     const adminRoles = ['superadmin', 'platformadmin', 'supportadmin'];
 
     if (adminRoles.includes(normalizedRole)) {
-      const admin = await Admin.findById(decoded.id).select('-password').lean();
-      if (!admin)                return next(new Error('Admin not found'));
-      if (admin.status === 'inactive') return next(new Error('Admin account inactive'));
+      // FIXED: Check User model FIRST (where admins are stored)
+      let admin = await User.findById(decoded.id).select('-password').lean();
+      
+      // If not found in User, try Admin model as fallback
+      if (!admin) {
+        admin = await Admin.findById(decoded.id).select('-password').lean();
+      }
+      
+      if (!admin) {
+        console.error(`[Socket] Admin not found for ID: ${decoded.id}`);
+        return next(new Error('Admin not found'));
+      }
+      
+      // Check if admin account is active
+      if (admin.status === 'inactive' || admin.isDeactivated === true) {
+        return next(new Error('Admin account inactive'));
+      }
 
       socket.actor = {
         id:    admin._id,
         model: 'Admin',
         role:  admin.role,
-        name:  admin.fullName || admin.email,
+        name:  admin.fullName || admin.username || admin.name || admin.email,
         avatar: admin.avatar || null,
       };
+      
+      console.log(`[Socket] Admin authenticated: ${socket.actor.name} (${socket.actor.role})`);
     } else {
+      // Regular user
       const user = await User.findById(decoded.id).select('-password').lean();
-      if (!user)         return next(new Error('User not found'));
-      if (user.isBanned) return next(new Error('Account banned'));
+      if (!user) {
+        console.error(`[Socket] User not found for ID: ${decoded.id}`);
+        return next(new Error('User not found'));
+      }
+      
+      if (user.isBanned) {
+        return next(new Error('Account banned'));
+      }
 
       if ((user.tokenVersion || 0) !== (decoded.tokenVersion || 0)) {
         return next(new Error('Session expired'));

@@ -46,6 +46,7 @@ function SuperBg() {
     </svg>
   );
 }
+
 function PlatformBg() {
   const traces = ["M0,180 H280 V130 H560 V180 H860 V90 H1440","M0,380 H180 V330 H480 V430 H780 V380 H1440","M0,580 H380 V530 H680 V630 H980 V580 H1440","M220,0 V180 H310 V490 H260 V900","M620,0 V140 H710 V390 H660 V900","M1080,0 V290 H1030 V590 H1130 V900"];
   const nodes = [[280,130],[560,180],[860,90],[180,330],[480,430],[380,530],[680,630]];
@@ -66,6 +67,7 @@ function PlatformBg() {
     </svg>
   );
 }
+
 function SupportBg() {
   const vines = ["M80,900 C100,700 60,590 130,440 C180,340 160,190 200,30","M380,900 C360,750 400,640 365,490 C340,370 390,240 350,0","M720,900 C700,780 755,675 715,545 C685,435 725,295 695,95","M1020,900 C1040,730 1000,620 1055,470 C1090,350 1030,210 1070,0","M1360,900 C1340,760 1395,655 1355,515 C1325,395 1370,230 1335,40"];
   const leaves = [[130,440],[365,490],[715,545],[1055,470],[1340,515],[200,30],[350,0],[695,95]];
@@ -107,6 +109,7 @@ const VideoModeration = () => {
   const [detailOpen, setDetailOpen] = useState(false);
   const [activeSeason, setActiveSeason] = useState(0);
   const [activeEpisode, setActiveEpisode] = useState(null);
+  const [descExpanded, setDescExpanded] = useState(false);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [videoToDelete, setVideoToDelete] = useState(null);
@@ -162,10 +165,22 @@ const VideoModeration = () => {
   useEffect(() => { if (token) loadData(); }, [token, mode]);
 
   useEffect(() => {
-    const esc = (e) => { if (e.key === 'Escape') { setShowDeleteModal(false); setShowReasonModal(false); setPlayerOpen(false); } };
+    const esc = (e) => { if (e.key === 'Escape') { setShowDeleteModal(false); setShowReasonModal(false); setPlayerOpen(false); setDetailOpen(false); } };
     window.addEventListener('keydown', esc);
     return () => window.removeEventListener('keydown', esc);
   }, []);
+
+  // Listen for closeVideoPanel event from sidebar
+  useEffect(() => {
+    const handleCloseVideoPanel = () => {
+      if (detailOpen) {
+        closeDetail();
+      }
+    };
+    
+    window.addEventListener('closeVideoPanel', handleCloseVideoPanel);
+    return () => window.removeEventListener('closeVideoPanel', handleCloseVideoPanel);
+  }, [detailOpen]);
 
   const loadData = async () => {
     setLoading(true); setError(null);
@@ -189,8 +204,22 @@ const VideoModeration = () => {
     return ms && mq;
   });
 
-  const openDetail = (video) => { setSelectedVideo(video); setDetailOpen(true); setActiveSeason(0); setActiveEpisode(null); };
-  const closeDetail = () => { setDetailOpen(false); setTimeout(() => setSelectedVideo(null), 350); };
+  const openDetail = (video) => { 
+    setSelectedVideo(video); 
+    setDetailOpen(true); 
+    setActiveSeason(0); 
+    setActiveEpisode(null);
+    setDescExpanded(false);
+    // Dispatch event to tell sidebar to close
+    window.dispatchEvent(new CustomEvent('closeSidebar'));
+    window.dispatchEvent(new CustomEvent('videoPanelStateChange', { detail: { isOpen: true } }));
+  };
+  
+  const closeDetail = () => { 
+    setDetailOpen(false); 
+    setTimeout(() => setSelectedVideo(null), 350);
+    window.dispatchEvent(new CustomEvent('videoPanelStateChange', { detail: { isOpen: false } }));
+  };
 
   const promptReason = (action, id) => { setPendingAction(action); setPendingVideoId(id); setReasonText(''); setReasonError(''); setShowReasonModal(true); };
 
@@ -428,11 +457,20 @@ const VideoModeration = () => {
               </div>
             </div>
 
-            {/* Description */}
-            {selectedVideo.description&&(
+            {/* Description with See More/Less */}
+            {selectedVideo.description && (
               <div className="vm-panel__sec">
                 <h4>Description</h4>
-                <p className="vm-panel__desc">{selectedVideo.description}</p>
+                <div className="vm-desc-wrapper">
+                  <p className={`vm-panel__desc ${descExpanded ? '' : 'vm-panel__desc--clamped'}`}>
+                    {selectedVideo.description}
+                  </p>
+                  {selectedVideo.description.length > 150 && (
+                    <button className="vm-desc-toggle" onClick={() => setDescExpanded(!descExpanded)}>
+                      {descExpanded ? 'Show less' : 'Show more'}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -497,32 +535,67 @@ const VideoModeration = () => {
               </div>
             )}
 
-            {/* Moderation Actions */}
+            {/* Moderation Actions - COMPACT HORIZONTAL BUTTONS */}
             <div className="vm-panel__sec">
               <h4>Moderation Actions</h4>
               <div className="vm-acts">
-                {selectedVideo.status!=='flagged'
-                  ? <button className="vm-act vm-act--flag" onClick={()=>handleAction('flag',selectedVideo._id)} disabled={!!actionLoading}><span className="vm-act__n">Flag</span><span className="vm-act__h">Mark for review — reason required</span></button>
-                  : <button className="vm-act vm-act--undo" onClick={()=>handleAction('removeFlag',selectedVideo._id)} disabled={!!actionLoading}><span className="vm-act__n">Remove Flag</span><span className="vm-act__h">Clear flag status</span></button>}
+                {selectedVideo.status !== 'flagged' ? (
+                  <button className="vm-act vm-act--flag" onClick={() => handleAction('flag', selectedVideo._id)} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Flag</span>
+                    <span className="vm-act__h">Review</span>
+                  </button>
+                ) : (
+                  <button className="vm-act vm-act--undo" onClick={() => handleAction('removeFlag', selectedVideo._id)} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Remove Flag</span>
+                    <span className="vm-act__h">Undo</span>
+                  </button>
+                )}
 
-                {selectedVideo.status!=='restricted'
-                  ? <button className="vm-act vm-act--restrict" onClick={()=>handleAction('restrict',selectedVideo._id)} disabled={!!actionLoading}><span className="vm-act__n">Restrict</span><span className="vm-act__h">Limit visibility — reason required</span></button>
-                  : <button className="vm-act vm-act--undo" onClick={()=>handleAction('removeRestriction',selectedVideo._id)} disabled={!!actionLoading}><span className="vm-act__n">Lift Restriction</span><span className="vm-act__h">Restore normal access</span></button>}
+                {selectedVideo.status !== 'restricted' ? (
+                  <button className="vm-act vm-act--restrict" onClick={() => handleAction('restrict', selectedVideo._id)} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Restrict</span>
+                    <span className="vm-act__h">Limit</span>
+                  </button>
+                ) : (
+                  <button className="vm-act vm-act--undo" onClick={() => handleAction('removeRestriction', selectedVideo._id)} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Lift Restrict</span>
+                    <span className="vm-act__h">Restore</span>
+                  </button>
+                )}
 
-                {selectedVideo.status!=='shadowBanned'
-                  ? <button className="vm-act vm-act--shadow" onClick={()=>handleAction('shadowBan',selectedVideo._id)} disabled={!!actionLoading}><span className="vm-act__n">Shadow Ban</span><span className="vm-act__h">Hide from feeds — reason required</span></button>
-                  : <button className="vm-act vm-act--undo" onClick={()=>handleAction('removeShadowBan',selectedVideo._id)} disabled={!!actionLoading}><span className="vm-act__n">Remove Shadow Ban</span><span className="vm-act__h">Restore feed visibility</span></button>}
+                {selectedVideo.status !== 'shadowBanned' ? (
+                  <button className="vm-act vm-act--shadow" onClick={() => handleAction('shadowBan', selectedVideo._id)} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Shadow Ban</span>
+                    <span className="vm-act__h">Hide</span>
+                  </button>
+                ) : (
+                  <button className="vm-act vm-act--undo" onClick={() => handleAction('removeShadowBan', selectedVideo._id)} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Remove Shadow</span>
+                    <span className="vm-act__h">Restore</span>
+                  </button>
+                )}
 
-                {selectedVideo.status!=='removed'
-                  ? <button className="vm-act vm-act--trash" onClick={()=>{setVideoToDelete(selectedVideo);setShowDeleteModal(true);}} disabled={!!actionLoading}><span className="vm-act__n">Move to Trash</span><span className="vm-act__h">Soft delete — restorable</span></button>
-                  : <button className="vm-act vm-act--restore" onClick={()=>handleRestore(selectedVideo._id)} disabled={!!actionLoading}><span className="vm-act__n">Restore</span><span className="vm-act__h">Recover from trash</span></button>}
+                {selectedVideo.status !== 'removed' ? (
+                  <button className="vm-act vm-act--trash" onClick={() => { setVideoToDelete(selectedVideo); setShowDeleteModal(true); }} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Trash</span>
+                    <span className="vm-act__h">Soft delete</span>
+                  </button>
+                ) : (
+                  <button className="vm-act vm-act--restore" onClick={() => handleRestore(selectedVideo._id)} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Restore</span>
+                    <span className="vm-act__h">Recover</span>
+                  </button>
+                )}
 
-                {user?.role==='superadmin'&&selectedVideo.status==='removed'&&(
-                  <button className="vm-act vm-act--perm" onClick={()=>{setVideoToDelete(selectedVideo);setShowDeleteModal(true);}} disabled={!!actionLoading}><span className="vm-act__n">Permanent Delete</span><span className="vm-act__h">Cannot be undone — superadmin only</span></button>
+                {user?.role === 'superadmin' && selectedVideo.status === 'removed' && (
+                  <button className="vm-act vm-act--perm" onClick={() => { setVideoToDelete(selectedVideo); setShowDeleteModal(true); }} disabled={!!actionLoading}>
+                    <span className="vm-act__n">Permanent</span>
+                    <span className="vm-act__h">Irreversible</span>
+                  </button>
                 )}
               </div>
-              {actionLoading===selectedVideo._id&&(
-                <div className="vm-proc"><div className="vm-ring vm-ring--sm"/>Processing&hellip;</div>
+              {actionLoading === selectedVideo._id && (
+                <div className="vm-proc"><div className="vm-ring vm-ring--sm" />Processing…</div>
               )}
             </div>
           </div>
