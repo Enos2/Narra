@@ -4,9 +4,11 @@
  * FILE: frontend/src/requests.js
  * Complete API requests for Narra platform
  * UPDATED: Fixed admin user endpoints, added admin user profile fetch
+ * FIXED: Uses VITE_API_URL environment variable for production, falls back to localhost for development
  */
 
-const API_BASE_URL = "http://localhost:5000/api";
+// Use environment variable for API URL, fallback to localhost for development
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 /*
  * AUTH_ROUTES — 401 on these means "wrong credentials", NOT "session expired".
