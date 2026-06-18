@@ -6,6 +6,7 @@
  * FIXED: MongoDB connection with correct env variable
  * FIXED: Socket.IO admin auth - checks User model first then Admin model
  * ADDED: Cron job for automatic cleanup of expired trashed videos (30-day retention)
+ * FIXED: Render deployment - added 0.0.0.0 binding and error handling
  */
 
 const express    = require('express');
@@ -532,14 +533,33 @@ if (cron) {
 }
 
 // ─────────────────────────────────────────────
-// START
+// START - FIXED FOR RENDER DEPLOYMENT
 // ─────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`\n🚀 Narra API  →  http://localhost:${PORT}`);
-  console.log(`🔌 WebSocket  →  ws://localhost:${PORT}`);
-  console.log(`📺 HLS Media  →  http://localhost:${PORT}/live`);
+
+// Add error handling for the server
+server.on('error', (err) => {
+  console.error('❌ Server error:', err);
+  process.exit(1);
+});
+
+// Bind to 0.0.0.0 for Render compatibility
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🚀 Narra API  →  http://0.0.0.0:${PORT}`);
+  console.log(`🔌 WebSocket  →  ws://0.0.0.0:${PORT}`);
+  console.log(`📺 HLS Media  →  http://0.0.0.0:${PORT}/live`);
   console.log(`📡 RTMP       →  rtmp://localhost:1935/live\n`);
+});
+
+// Handle uncaught errors gracefully
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  // Don't exit immediately - give the server a chance to log
+  setTimeout(() => process.exit(1), 1000);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 /**
