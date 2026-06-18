@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+const mongoose = require("mongoose");
 
 const AdminActionLogSchema = new mongoose.Schema(
   {
@@ -17,34 +17,23 @@ const AdminActionLogSchema = new mongoose.Schema(
     actionType: {
       type: String,
       enum: [
-        // VIDEO ACTIONS
         "VIDEO_APPROVED",
         "VIDEO_REJECTED",
         "VIDEO_SHADOW_BANNED",
         "VIDEO_UNSHADOW_BANNED",
         "VIDEO_FEATURED",
-
-        // USER ACTIONS
         "USER_BANNED",
         "USER_UNBANNED",
         "USER_SHADOW_BANNED",
         "USER_UNSHADOW_BANNED",
         "USER_VERIFIED",
-
-        // ADMIN MANAGEMENT
         "ADMIN_PROMOTED",
         "ADMIN_DEMOTED",
         "ADMIN_CREATED",
-
-        // LIVE STREAM
         "LIVE_STREAM_APPROVED",
         "LIVE_STREAM_REVOKED",
-
-        // CONTENT MODERATION
         "COMMENT_REMOVED",
         "RATING_FLAGGED",
-
-        // SYSTEM
         "SECURITY_OVERRIDE",
       ],
       required: true,
@@ -73,7 +62,7 @@ const AdminActionLogSchema = new mongoose.Schema(
 
     isPublic: {
       type: Boolean,
-      default: true, // transparency by default
+      default: true,
     },
 
     createdAt: {
@@ -84,4 +73,4 @@ const AdminActionLogSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export default mongoose.model("AdminActionLog", AdminActionLogSchema);
+module.exports = mongoose.model("AdminActionLog", AdminActionLogSchema);
