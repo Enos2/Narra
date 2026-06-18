@@ -5,10 +5,11 @@
  * Complete API requests for Narra platform
  * UPDATED: Fixed admin user endpoints, added admin user profile fetch
  * FIXED: Uses VITE_API_URL environment variable for production, falls back to localhost for development
+ * FIXED: Removed /api from base URL - backend routes already include /api prefix
  */
 
 // Use environment variable for API URL, fallback to localhost for development
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 /*
  * AUTH_ROUTES — 401 on these means "wrong credentials", NOT "session expired".
@@ -103,7 +104,7 @@ function isTokenValid(token) {
 function ensureAbsoluteAvatarUrl(avatarPath) {
   if (!avatarPath) return null;
   if (avatarPath.startsWith('http') || avatarPath.startsWith('data:')) return avatarPath;
-  const baseUrl = API_BASE_URL.replace('/api', '');
+  const baseUrl = API_BASE_URL;
   return `${baseUrl}${avatarPath.startsWith('/') ? avatarPath : '/' + avatarPath}`;
 }
 
@@ -112,7 +113,7 @@ function ensureAbsoluteAvatarUrl(avatarPath) {
 ====================================================== */
 
 export async function loginUser(email, password) {
-  const res = await fetch(`${API_BASE_URL}/auth/login`, {
+  const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -123,7 +124,7 @@ export async function loginUser(email, password) {
 }
 
 export async function loginAdminUser(email, password) {
-  const res = await fetch(`${API_BASE_URL}/auth/admin/login`, {
+  const res = await fetch(`${API_BASE_URL}/api/auth/admin/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -134,7 +135,7 @@ export async function loginAdminUser(email, password) {
 }
 
 export async function registerUser(firstName, lastName, middleName, username, email, password, dateOfBirth, gender) {
-  const res = await fetch(`${API_BASE_URL}/auth/register`, {
+  const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ firstName, lastName, middleName, username, email, password, dateOfBirth, gender }),
@@ -145,7 +146,7 @@ export async function registerUser(firstName, lastName, middleName, username, em
 }
 
 export async function logoutUser(token) {
-  const res = await fetch(`${API_BASE_URL}/auth/logout`, {
+  const res = await fetch(`${API_BASE_URL}/api/auth/logout`, {
     method: "POST",
     headers: getAuthHeaders(token),
   });
@@ -157,7 +158,7 @@ export async function logoutUser(token) {
 ====================================================== */
 
 export async function getUserProfile(token) {
-  const res = await fetch(`${API_BASE_URL}/users/me`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/users/me`, { headers: getAuthHeaders(token) });
   if (!res.ok) return null;
   const data = await res.json();
   if (data) {
@@ -169,7 +170,7 @@ export async function getUserProfile(token) {
 }
 
 export async function updateUserProfile(token, profileData) {
-  const res = await fetch(`${API_BASE_URL}/users/me`, {
+  const res = await fetch(`${API_BASE_URL}/api/users/me`, {
     method: "PUT",
     headers: getAuthHeaders(token),
     body: JSON.stringify(profileData),
@@ -181,7 +182,7 @@ export async function updateUserProfile(token, profileData) {
 
 export async function getUserById(token, userId) {
   // For admin routes, use the admin endpoint
-  const endpoint = `${API_BASE_URL}/admin/users/${userId}`;
+  const endpoint = `${API_BASE_URL}/api/admin/users/${userId}`;
   const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
   
   try {
@@ -203,7 +204,7 @@ export async function getUserById(token, userId) {
 }
 
 export async function checkUsername(token, username) {
-  const res = await fetch(`${API_BASE_URL}/users/check-username?username=${encodeURIComponent(username)}`, {
+  const res = await fetch(`${API_BASE_URL}/api/users/check-username?username=${encodeURIComponent(username)}`, {
     headers: token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' },
   });
   return await res.json();
@@ -236,7 +237,7 @@ export async function uploadAvatar(token, file, onProgress) {
       }
     });
     xhr.addEventListener('error', () => reject(new Error('Network error')));
-    xhr.open('POST', `${API_BASE_URL}/uploads/avatar`);
+    xhr.open('POST', `${API_BASE_URL}/api/uploads/avatar`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.send(formData);
   });
@@ -255,7 +256,7 @@ export async function uploadCoverImage(token, file, onProgress) {
       else { let msg = `Upload failed: ${xhr.status}`; try { msg = JSON.parse(xhr.responseText).message || msg; } catch {} reject(new Error(msg)); }
     });
     xhr.addEventListener('error', () => reject(new Error('Network error')));
-    xhr.open('POST', `${API_BASE_URL}/uploads/cover`);
+    xhr.open('POST', `${API_BASE_URL}/api/uploads/cover`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.send(formData);
   });
@@ -275,20 +276,20 @@ export async function uploadVerificationDocument(token, file, documentType, onPr
       else { let msg = `Upload failed: ${xhr.status}`; try { msg = JSON.parse(xhr.responseText).message || msg; } catch {} reject(new Error(msg)); }
     });
     xhr.addEventListener('error', () => reject(new Error('Network error')));
-    xhr.open('POST', `${API_BASE_URL}/uploads/document`);
+    xhr.open('POST', `${API_BASE_URL}/api/uploads/document`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.send(formData);
   });
 }
 
 export async function getUploadStatus(token) {
-  const res = await fetch(`${API_BASE_URL}/users/upload-status`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/users/upload-status`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, data: null };
   return await res.json();
 }
 
 export async function deleteFile(token, fileUrl) {
-  const res = await fetch(`${API_BASE_URL}/uploads/file`, {
+  const res = await fetch(`${API_BASE_URL}/api/uploads/file`, {
     method: 'DELETE',
     headers: getAuthHeaders(token),
     body: JSON.stringify({ fileUrl }),
@@ -301,17 +302,17 @@ export async function deleteFile(token, fileUrl) {
 ====================================================== */
 
 export async function followUser(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/follow`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/users/${userId}/follow`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function unfollowUser(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/follow`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/users/${userId}/follow`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function getFollowers(token, userId, page = 1, limit = 20) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/followers?page=${page}&limit=${limit}`, {
+  const res = await fetch(`${API_BASE_URL}/api/users/${userId}/followers?page=${page}&limit=${limit}`, {
     headers: token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' },
   });
   const data = await res.json();
@@ -321,7 +322,7 @@ export async function getFollowers(token, userId, page = 1, limit = 20) {
 }
 
 export async function getFollowing(token, userId, page = 1, limit = 20) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/following?page=${page}&limit=${limit}`, {
+  const res = await fetch(`${API_BASE_URL}/api/users/${userId}/following?page=${page}&limit=${limit}`, {
     headers: token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' },
   });
   const data = await res.json();
@@ -331,7 +332,7 @@ export async function getFollowing(token, userId, page = 1, limit = 20) {
 }
 
 export async function getTwins(token, userId, page = 1, limit = 20) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/twins?page=${page}&limit=${limit}`, {
+  const res = await fetch(`${API_BASE_URL}/api/users/${userId}/twins?page=${page}&limit=${limit}`, {
     headers: token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' },
   });
   const data = await res.json();
@@ -341,12 +342,12 @@ export async function getTwins(token, userId, page = 1, limit = 20) {
 }
 
 export async function checkFollowStatus(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/users/${userId}/follow-status`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/users/${userId}/follow-status`, { headers: getAuthHeaders(token) });
   return await res.json();
 }
 
 export async function getFollowSuggestions(token, limit = 10) {
-  const res = await fetch(`${API_BASE_URL}/users/suggestions?limit=${limit}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/users/suggestions?limit=${limit}`, { headers: getAuthHeaders(token) });
   const data = await res.json();
   if (data?.data && Array.isArray(data.data)) data.data = data.data.map(u => ({ ...u, avatar: ensureAbsoluteAvatarUrl(u.avatar) }));
   if (res.ok && data.success) return { success: true, data: data.data || [] };
@@ -359,7 +360,7 @@ export async function getFollowSuggestions(token, limit = 10) {
 
 export async function getVideos(token) {
   const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
-  const res = await fetch(`${API_BASE_URL}/videos`, { headers });
+  const res = await fetch(`${API_BASE_URL}/api/videos`, { headers });
   if (!res.ok) return [];
   const data = await res.json();
   const videos = Array.isArray(data) ? data : data.videos || [];
@@ -372,7 +373,7 @@ export async function getVideos(token) {
 
 export async function getVideoById(token, videoId) {
   const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}`, { headers });
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}`, { headers });
   if (!res.ok) return null;
   const data = await res.json();
   const video = data.video || data.data || data;
@@ -387,7 +388,7 @@ export async function getVideoById(token, videoId) {
 export async function getRecommendedVideos(token, currentVideoId, limit = 10) {
   try {
     const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
-    let url = `${API_BASE_URL}/videos/recommended?limit=${limit}`;
+    let url = `${API_BASE_URL}/api/videos/recommended?limit=${limit}`;
     if (currentVideoId && typeof currentVideoId === 'string' && currentVideoId.length > 0) {
       url += `&exclude=${encodeURIComponent(currentVideoId)}`;
     }
@@ -423,14 +424,14 @@ export async function uploadVideo(token, formData, onProgress) {
       }
     });
     xhr.addEventListener('error', () => reject(new Error('Network error')));
-    xhr.open('POST', `${API_BASE_URL}/uploads/video`);
+    xhr.open('POST', `${API_BASE_URL}/api/uploads/video`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.send(formData);
   });
 }
 
 export async function getVideosByStatus(token, status, userId = null) {
-  let url = `${API_BASE_URL}/videos/status/${status}`;
+  let url = `${API_BASE_URL}/api/videos/status/${status}`;
   if (userId) url += `?userId=${userId}`;
   const res = await fetch(url, { headers: getAuthHeaders(token) });
   const data = await res.json();
@@ -445,7 +446,7 @@ export async function getVideosByStatus(token, status, userId = null) {
 }
 
 export async function getApprovedForRelease(token, userId = null) {
-  let url = `${API_BASE_URL}/videos/creator/approved`;
+  let url = `${API_BASE_URL}/api/videos/creator/approved`;
   if (userId) url += `?userId=${userId}`;
   const res = await fetch(url, { headers: getAuthHeaders(token) });
   const data = await res.json();
@@ -460,21 +461,21 @@ export async function getApprovedForRelease(token, userId = null) {
 }
 
 export async function releaseVideo(token, videoId, price = 0, currency = 'USD', releaseAllEpisodes = false) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/release`, {
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/release`, {
     method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ price, currency, releaseAllEpisodes }),
   });
   return await handleResponse(res);
 }
 
 export async function releaseSeriesEpisode(token, videoId, seasonNumber, episodeNumber, price = 0) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/release-episode`, {
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/release-episode`, {
     method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ seasonNumber, episodeNumber, price }),
   });
   return await handleResponse(res);
 }
 
 export async function updateVideoStatus(token, videoId, status, rejectionReason = '', rejectionDetails = '') {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/admin/status`, {
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/admin/status`, {
     method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ status, rejectionReason, rejectionDetails }),
   });
   return await handleResponse(res);
@@ -482,7 +483,7 @@ export async function updateVideoStatus(token, videoId, status, rejectionReason 
 
 export async function checkVideoAccess(token, videoId) {
   const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/access`, { headers });
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/access`, { headers });
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) return { success: false, hasAccess: false, requiresAuth: true };
     return { success: false, hasAccess: false };
@@ -491,12 +492,12 @@ export async function checkVideoAccess(token, videoId) {
 }
 
 export async function purchaseVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/purchase`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/purchase`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function watchVideo(token, videoId, seasonNumber = null, episodeNumber = null) {
-  let url = `${API_BASE_URL}/videos/${videoId}/watch`;
+  let url = `${API_BASE_URL}/api/videos/${videoId}/watch`;
   const params = new URLSearchParams();
   if (seasonNumber) params.append('seasonNumber', seasonNumber);
   if (episodeNumber) params.append('episodeNumber', episodeNumber);
@@ -518,18 +519,18 @@ export async function watchVideo(token, videoId, seasonNumber = null, episodeNum
 ====================================================== */
 
 export async function likeVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/like`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/like`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function dislikeVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/dislike`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/dislike`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function getVideoInteractionStatus(token, videoId) {
   try {
-    const res = await fetch(`${API_BASE_URL}/videos/${videoId}/interaction-status`, { headers: getAuthHeaders(token) });
+    const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/interaction-status`, { headers: getAuthHeaders(token) });
     if (!res.ok) return { hasLiked: false, hasDisliked: false, likesCount: 0, dislikesCount: 0 };
     return await res.json();
   } catch (error) {
@@ -543,7 +544,7 @@ export async function getVideoInteractionStatus(token, videoId) {
 
 export async function recordWatchProgress(token, videoId, progress, duration, seasonNumber = null, episodeNumber = null) {
   try {
-    const res = await fetch(`${API_BASE_URL}/videos/${videoId}/progress`, {
+    const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/progress`, {
       method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ progress, duration, seasonNumber, episodeNumber }),
     });
     if (!res.ok) return { success: true };
@@ -555,7 +556,7 @@ export async function recordWatchProgress(token, videoId, progress, duration, se
 
 export async function getResumePosition(token, videoId, seasonNumber = null, episodeNumber = null) {
   try {
-    let url = `${API_BASE_URL}/videos/${videoId}/resume`;
+    let url = `${API_BASE_URL}/api/videos/${videoId}/resume`;
     const params = new URLSearchParams();
     if (seasonNumber !== null) params.append('seasonNumber', seasonNumber);
     if (episodeNumber !== null) params.append('episodeNumber', episodeNumber);
@@ -570,7 +571,7 @@ export async function getResumePosition(token, videoId, seasonNumber = null, epi
 
 export async function getContinueWatching(token, limit = 10) {
   try {
-    const res = await fetch(`${API_BASE_URL}/history/continue-watching?limit=${limit}`, { headers: getAuthHeaders(token) });
+    const res = await fetch(`${API_BASE_URL}/api/history/continue-watching?limit=${limit}`, { headers: getAuthHeaders(token) });
     if (!res.ok) return [];
     const data = await res.json();
     if (data.continueWatching && Array.isArray(data.continueWatching)) {
@@ -585,7 +586,7 @@ export async function getContinueWatching(token, limit = 10) {
 }
 
 export async function getWatchHistory(token, page = 1, limit = 20) {
-  const res = await fetch(`${API_BASE_URL}/history?page=${page}&limit=${limit}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/history?page=${page}&limit=${limit}`, { headers: getAuthHeaders(token) });
   if (!res.ok) throw new Error(`Failed to get watch history: ${res.status}`);
   const data = await res.json();
   if (data.watchHistory && Array.isArray(data.watchHistory)) {
@@ -597,12 +598,12 @@ export async function getWatchHistory(token, page = 1, limit = 20) {
 }
 
 export async function clearWatchHistory(token) {
-  const res = await fetch(`${API_BASE_URL}/history/clear`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/history/clear`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function deleteHistoryEntry(token, historyId) {
-  const res = await fetch(`${API_BASE_URL}/history/${historyId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/history/${historyId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
@@ -612,7 +613,7 @@ export async function deleteHistoryEntry(token, historyId) {
 
 export async function getUserPlaylists(token) {
   try {
-    const res = await fetch(`${API_BASE_URL}/playlists`, { headers: getAuthHeaders(token) });
+    const res = await fetch(`${API_BASE_URL}/api/playlists`, { headers: getAuthHeaders(token) });
     if (!res.ok) return [];
     const data = await res.json();
     return data.playlists || [];
@@ -622,33 +623,33 @@ export async function getUserPlaylists(token) {
 }
 
 export async function createPlaylist(token, name, description = '', isPublic = false) {
-  const res = await fetch(`${API_BASE_URL}/playlists`, {
+  const res = await fetch(`${API_BASE_URL}/api/playlists`, {
     method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ name, description, isPublic }),
   });
   return await handleResponse(res);
 }
 
 export async function updatePlaylist(token, playlistId, updates) {
-  const res = await fetch(`${API_BASE_URL}/playlists/${playlistId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/playlists/${playlistId}`, {
     method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify(updates),
   });
   return await handleResponse(res);
 }
 
 export async function deletePlaylist(token, playlistId) {
-  const res = await fetch(`${API_BASE_URL}/playlists/${playlistId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/playlists/${playlistId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function addVideoToPlaylist(token, videoId, playlistId = null, notes = '') {
-  const res = await fetch(`${API_BASE_URL}/playlists/add`, {
+  const res = await fetch(`${API_BASE_URL}/api/playlists/add`, {
     method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ playlistId, videoId, notes }),
   });
   return await handleResponse(res);
 }
 
 export async function removeVideoFromPlaylist(token, playlistId, videoId) {
-  const res = await fetch(`${API_BASE_URL}/playlists/${playlistId}/video/${videoId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/playlists/${playlistId}/video/${videoId}`, {
     method: 'DELETE', headers: getAuthHeaders(token),
   });
   return await handleResponse(res);
@@ -656,7 +657,7 @@ export async function removeVideoFromPlaylist(token, playlistId, videoId) {
 
 export async function checkVideoSaved(token, videoId) {
   try {
-    const res = await fetch(`${API_BASE_URL}/playlists/saved/${videoId}`, { headers: getAuthHeaders(token) });
+    const res = await fetch(`${API_BASE_URL}/api/playlists/saved/${videoId}`, { headers: getAuthHeaders(token) });
     if (!res.ok) return { saved: false, playlists: [] };
     return await res.json();
   } catch (error) {
@@ -665,7 +666,7 @@ export async function checkVideoSaved(token, videoId) {
 }
 
 export async function getPlaylistVideos(token, playlistId, page = 1, limit = 20) {
-  const res = await fetch(`${API_BASE_URL}/playlists/${playlistId}/videos?page=${page}&limit=${limit}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/playlists/${playlistId}/videos?page=${page}&limit=${limit}`, { headers: getAuthHeaders(token) });
   if (!res.ok) throw new Error(`Failed to get playlist videos: ${res.status}`);
   const data = await res.json();
   if (data.videos && Array.isArray(data.videos)) {
@@ -685,7 +686,7 @@ export async function getPlaylistVideos(token, playlistId, page = 1, limit = 20)
 export async function trackShare(token, videoId, platform) {
   try {
     const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
-    const res = await fetch(`${API_BASE_URL}/videos/${videoId}/share`, {
+    const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/share`, {
       method: 'POST', headers, body: JSON.stringify({ platform }),
     });
     if (!res.ok) console.warn(`Failed to track share: ${res.status}`);
@@ -701,7 +702,7 @@ export async function trackShare(token, videoId, platform) {
 
 export async function getVideoComments(videoId) {
   try {
-    const res = await fetch(`${API_BASE_URL}/comments/video/${videoId}`, {
+    const res = await fetch(`${API_BASE_URL}/api/comments/video/${videoId}`, {
       headers: { 'Content-Type': 'application/json' },
     });
     if (!res.ok) {
@@ -728,7 +729,7 @@ export async function addComment(token, videoId, content, parentCommentId = null
     body.replyToUserId = String(replyToUserId);
   }
 
-  const res = await fetch(`${API_BASE_URL}/comments/${videoId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/comments/${videoId}`, {
     method: 'POST',
     headers: getAuthHeaders(token),
     body: JSON.stringify(body),
@@ -738,7 +739,7 @@ export async function addComment(token, videoId, content, parentCommentId = null
 }
 
 export async function deleteComment(token, commentId) {
-  const res = await fetch(`${API_BASE_URL}/comments/${commentId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/comments/${commentId}`, {
     method: 'DELETE',
     headers: getAuthHeaders(token),
   });
@@ -746,7 +747,7 @@ export async function deleteComment(token, commentId) {
 }
 
 export async function likeComment(token, commentId) {
-  const res = await fetch(`${API_BASE_URL}/comments/${commentId}/like`, {
+  const res = await fetch(`${API_BASE_URL}/api/comments/${commentId}/like`, {
     method: 'POST',
     headers: getAuthHeaders(token),
   });
@@ -754,7 +755,7 @@ export async function likeComment(token, commentId) {
 }
 
 export async function dislikeComment(token, commentId) {
-  const res = await fetch(`${API_BASE_URL}/comments/${commentId}/dislike`, {
+  const res = await fetch(`${API_BASE_URL}/api/comments/${commentId}/dislike`, {
     method: 'POST',
     headers: getAuthHeaders(token),
   });
@@ -762,7 +763,7 @@ export async function dislikeComment(token, commentId) {
 }
 
 export async function editComment(token, commentId, content) {
-  const res = await fetch(`${API_BASE_URL}/comments/${commentId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/comments/${commentId}`, {
     method: 'PUT',
     headers: getAuthHeaders(token),
     body: JSON.stringify({ content }),
@@ -772,7 +773,7 @@ export async function editComment(token, commentId, content) {
 
 export async function getReplies(commentId) {
   try {
-    const res = await fetch(`${API_BASE_URL}/comments/replies/${commentId}`, {
+    const res = await fetch(`${API_BASE_URL}/api/comments/replies/${commentId}`, {
       headers: { 'Content-Type': 'application/json' },
     });
     if (!res.ok) return [];
@@ -788,12 +789,12 @@ export async function getReplies(commentId) {
 ====================================================== */
 
 export async function softDeleteVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/delete`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/delete`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function restoreVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/restore`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/restore`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
@@ -804,17 +805,17 @@ export async function removeVideo(token, videoId) { return softDeleteVideo(token
 ====================================================== */
 
 export async function adminSoftDeleteVideo(token, videoId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/remove`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/remove`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function adminRestoreVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/restore`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/restore`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function adminPermanentDeleteVideo(token, videoId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
@@ -827,7 +828,7 @@ export async function adminPermanentDelete(token, videoId, reason = '') { return
 
 export async function getTrashedVideos(token, filters = {}) {
   const { search = '', page = 1, limit = 20, sortBy = 'removedAt', sortOrder = 'desc' } = filters;
-  const url = buildUrl(`${API_BASE_URL}/admin/trash/videos`, { search, page, limit, sortBy, sortOrder });
+  const url = buildUrl(`${API_BASE_URL}/api/admin/trash/videos`, { search, page, limit, sortBy, sortOrder });
   const res = await fetch(url, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, videos: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
   const data = await res.json();
@@ -842,28 +843,28 @@ export async function getTrashedVideos(token, filters = {}) {
 }
 
 export async function getTrashStats(token) {
-  const res = await fetch(`${API_BASE_URL}/admin/trash/stats`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/trash/stats`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, stats: { total: 0, expiringSoon: 0, expired: 0 } };
   return await res.json();
 }
 
 export async function adminRestoreTrashedVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/${videoId}/restore`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/trash/videos/${videoId}/restore`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function adminPermanentDeleteTrashedVideo(token, videoId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/${videoId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/trash/videos/${videoId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function adminBulkRestoreTrashedVideos(token, videoIds) {
-  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/bulk-restore`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ videoIds }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/trash/videos/bulk-restore`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ videoIds }) });
   return await handleResponse(res);
 }
 
 export async function adminBulkDeleteTrashedVideos(token, videoIds, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/bulk-delete`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ videoIds, reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/trash/videos/bulk-delete`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ videoIds, reason }) });
   return await handleResponse(res);
 }
 
@@ -872,7 +873,7 @@ export async function adminBulkDeleteTrashedVideos(token, videoIds, reason = '')
 ====================================================== */
 
 export async function getUsers(token) {
-  const res = await fetch(`${API_BASE_URL}/admin/users`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users`, { headers: getAuthHeaders(token) });
   if (!res.ok) return [];
   const data = await res.json();
   let users = Array.isArray(data) ? data : (data.users || data.data || []);
@@ -880,52 +881,52 @@ export async function getUsers(token) {
 }
 
 export async function banUser(token, userId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function unbanUser(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/unban`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/unban`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function verifyUser(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/verify`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/verify`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function unverifyUser(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/unverify`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/unverify`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function deactivateUser(token, userId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/deactivate`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/deactivate`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function activateUser(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/activate`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/activate`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function deleteUser(token, userId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function permanentlyDeleteUser(token, userId, confirm = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/accounts/${userId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ confirm }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/accounts/${userId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ confirm }) });
   return await handleResponse(res);
 }
 
 export async function applyShadowBanUser(token, userId, reason = '', countries = [], continents = []) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason, countries, continents }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason, countries, continents }) });
   return await handleResponse(res);
 }
 
 export async function removeShadowBanUser(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/remove-shadow-ban`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/remove-shadow-ban`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
@@ -934,7 +935,7 @@ export async function removeShadowBanUser(token, userId) {
 ====================================================== */
 
 export async function getAdmins(token, params = {}) {
-  const url = buildUrl(`${API_BASE_URL}/admin/admins`, params);
+  const url = buildUrl(`${API_BASE_URL}/api/admin/admins`, params);
   const res = await fetch(url, { headers: getAuthHeaders(token) });
   if (!res.ok) return [];
   const data = await res.json();
@@ -943,29 +944,29 @@ export async function getAdmins(token, params = {}) {
 }
 
 export async function createAdmin(token, adminData) {
-  const res = await fetch(`${API_BASE_URL}/admin/admins`, { method: "POST", headers: getAuthHeaders(token), body: JSON.stringify(adminData) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/admins`, { method: "POST", headers: getAuthHeaders(token), body: JSON.stringify(adminData) });
   return await handleResponse(res);
 }
 
 export async function promoteToAdmin(token, userId, role) {
-  const res = await fetch(`${API_BASE_URL}/admin/roles/promote/${userId}`, { method: "PUT", headers: getAuthHeaders(token), body: JSON.stringify({ role }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/roles/promote/${userId}`, { method: "PUT", headers: getAuthHeaders(token), body: JSON.stringify({ role }) });
   return await handleResponse(res);
 }
 
 export async function demoteAdmin(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/admin/roles/demote/${userId}`, { method: "PUT", headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/roles/demote/${userId}`, { method: "PUT", headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function getInactiveAdmins(token) {
-  const res = await fetch(`${API_BASE_URL}/admin/admins/inactive`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/admins/inactive`, { headers: getAuthHeaders(token) });
   if (!res.ok) return [];
   const data = await res.json();
   return (data.admins || []).map(a => ({ ...a, avatar: ensureAbsoluteAvatarUrl(a.avatar) }));
 }
 
 export async function deactivateAdmin(token, adminId) {
-  const res = await fetch(`${API_BASE_URL}/admin/admins/${adminId}/deactivate`, {
+  const res = await fetch(`${API_BASE_URL}/api/admin/admins/${adminId}/deactivate`, {
     method: 'PUT',
     headers: getAuthHeaders(token),
   });
@@ -973,7 +974,7 @@ export async function deactivateAdmin(token, adminId) {
 }
 
 export async function updateAdminRole(token, adminId, newRole) {
-  const res = await fetch(`${API_BASE_URL}/admin/roles/promote/${adminId}`, {
+  const res = await fetch(`${API_BASE_URL}/api/admin/roles/promote/${adminId}`, {
     method: 'PUT',
     headers: getAuthHeaders(token),
     body: JSON.stringify({ role: newRole }),
@@ -982,7 +983,7 @@ export async function updateAdminRole(token, adminId, newRole) {
 }
 
 export async function updateUserRole(token, userId, newRole) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/role`, {
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/role`, {
     method: 'PUT',
     headers: getAuthHeaders(token),
     body: JSON.stringify({ role: newRole }),
@@ -991,7 +992,7 @@ export async function updateUserRole(token, userId, newRole) {
 }
 
 export async function getPendingVideos(token) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/moderation?status=pending`, {
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/moderation?status=pending`, {
     headers: getAuthHeaders(token),
   });
   if (!res.ok) return { success: false, videos: [] };
@@ -1008,7 +1009,7 @@ export async function getPendingVideos(token) {
 
 export async function getPlatformStats(token) {
   try {
-    const res = await fetch(`${API_BASE_URL}/admin/platform/stats`, {
+    const res = await fetch(`${API_BASE_URL}/api/admin/platform/stats`, {
       headers: getAuthHeaders(token),
     });
     if (res.ok) {
@@ -1020,7 +1021,7 @@ export async function getPlatformStats(token) {
   }
 
   try {
-    const res = await fetch(`${API_BASE_URL}/admin/stats`, {
+    const res = await fetch(`${API_BASE_URL}/api/admin/stats`, {
       headers: getAuthHeaders(token),
     });
     if (res.ok) {
@@ -1040,26 +1041,26 @@ export async function getPlatformStats(token) {
 ====================================================== */
 
 export async function getRecentAuditLogs(token, limit = 10) {
-  const res = await fetch(`${API_BASE_URL}/admin/audit/logs/recent?limit=${limit}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/audit/logs/recent?limit=${limit}`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, logs: [] };
   return await res.json();
 }
 
 export async function getAllAuditLogs(token, params = {}) {
-  const url = buildUrl(`${API_BASE_URL}/admin/audit/logs`, params);
+  const url = buildUrl(`${API_BASE_URL}/api/admin/audit/logs`, params);
   const res = await fetch(url, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, logs: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
   return await res.json();
 }
 
 export async function getAuditFilterOptions(token) {
-  const res = await fetch(`${API_BASE_URL}/admin/audit/filters`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/audit/filters`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, actionTypes: [], adminNames: [], targetTypes: [] };
   return await res.json();
 }
 
 export async function getAuditLogs(token, limit = 5) {
-  const res = await fetch(`${API_BASE_URL}/admin/audit-logs?limit=${limit}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/audit-logs?limit=${limit}`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, logs: [] };
   return await res.json();
 }
@@ -1069,7 +1070,7 @@ export async function getAuditLogs(token, limit = 5) {
 ====================================================== */
 
 export async function getVideosForModeration(token, status = 'pending') {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/moderation?status=${status}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/moderation?status=${status}`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, videos: [] };
   const data = await res.json();
   if (data?.videos && Array.isArray(data.videos)) {
@@ -1083,49 +1084,49 @@ export async function getVideosForModeration(token, status = 'pending') {
 }
 
 export async function getVideoModerationStats(token) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/statistics`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/statistics`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, stats: null };
   const data = await res.json();
   return { success: true, statistics: data.statistics || data.stats || {} };
 }
 
 export async function approveVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/approve`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/approve`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function rejectVideo(token, videoId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/reject`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/reject`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function restrictVideo(token, videoId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/restrict`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/restrict`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function removeVideoRestriction(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/remove-restriction`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/remove-restriction`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function flagVideo(token, videoId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/flag`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/flag`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function removeVideoFlag(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/remove-flag`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/remove-flag`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function shadowBanVideo(token, videoId, reason = '', countries = [], continents = []) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/shadow-ban`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason, countries, continents }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/shadow-ban`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason, countries, continents }) });
   return await handleResponse(res);
 }
 
 export async function removeShadowBanVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/admin/videos/${videoId}/remove-shadow-ban`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/videos/${videoId}/remove-shadow-ban`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
@@ -1140,12 +1141,12 @@ export async function getAds(token, filters = {}) {
   if (filters.search) params.append('search', filters.search);
   if (filters.page) params.append('page', filters.page);
   if (filters.limit) params.append('limit', filters.limit);
-  const res = await fetch(`${API_BASE_URL}/ads/admin/all?${params.toString()}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/all?${params.toString()}`, { headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function getAdById(token, adId) {
-  const res = await fetch(`${API_BASE_URL}/ads/admin/${adId}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/${adId}`, { headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
@@ -1158,7 +1159,7 @@ export async function createAd(token, formData, onProgress) {
       else { let msg = `Failed: ${xhr.status}`; try { msg = JSON.parse(xhr.responseText).message || msg; } catch {} reject(new Error(msg)); }
     });
     xhr.addEventListener('error', () => reject(new Error('Network error')));
-    xhr.open('POST', `${API_BASE_URL}/ads/admin/create`);
+    xhr.open('POST', `${API_BASE_URL}/api/ads/admin/create`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.send(formData);
   });
@@ -1173,52 +1174,52 @@ export async function updateAd(token, adId, formData, onProgress) {
       else { let msg = `Failed: ${xhr.status}`; try { msg = JSON.parse(xhr.responseText).message || msg; } catch {} reject(new Error(msg)); }
     });
     xhr.addEventListener('error', () => reject(new Error('Network error')));
-    xhr.open('PUT', `${API_BASE_URL}/ads/admin/${adId}`);
+    xhr.open('PUT', `${API_BASE_URL}/api/ads/admin/${adId}`);
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.send(formData);
   });
 }
 
 export async function approveAd(token, adId) {
-  const res = await fetch(`${API_BASE_URL}/ads/admin/${adId}/approve`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/${adId}/approve`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function rejectAd(token, adId, reason) {
-  const res = await fetch(`${API_BASE_URL}/ads/admin/${adId}/reject`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/${adId}/reject`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function pauseAd(token, adId) {
-  const res = await fetch(`${API_BASE_URL}/ads/admin/${adId}/pause`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/${adId}/pause`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function resumeAd(token, adId) {
-  const res = await fetch(`${API_BASE_URL}/ads/admin/${adId}/resume`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/${adId}/resume`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function deleteAd(token, adId) {
-  const res = await fetch(`${API_BASE_URL}/ads/admin/${adId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/${adId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function getAdStats(token) {
-  const res = await fetch(`${API_BASE_URL}/ads/admin/stats/summary`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/admin/stats/summary`, { headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function trackAdImpression(adId, data = {}) {
   const sessionId = localStorage.getItem('sessionId') || 'session_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
   if (!localStorage.getItem('sessionId')) localStorage.setItem('sessionId', sessionId);
-  const res = await fetch(`${API_BASE_URL}/ads/${adId}/impression`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId }, body: JSON.stringify({ ...data, sessionId }) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/${adId}/impression`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId }, body: JSON.stringify({ ...data, sessionId }) });
   return await res.json();
 }
 
 export async function trackAdClick(adId, data = {}) {
   const sessionId = localStorage.getItem('sessionId');
-  const res = await fetch(`${API_BASE_URL}/ads/${adId}/click`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId || '' }, body: JSON.stringify({ ...data, sessionId }) });
+  const res = await fetch(`${API_BASE_URL}/api/ads/${adId}/click`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId || '' }, body: JSON.stringify({ ...data, sessionId }) });
   return await res.json();
 }
 
@@ -1227,12 +1228,12 @@ export async function trackAdClick(adId, data = {}) {
 ====================================================== */
 
 export async function createLiveStream(token, liveData) {
-  const res = await fetch(`${API_BASE_URL}/lives`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify(liveData) });
+  const res = await fetch(`${API_BASE_URL}/api/lives`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify(liveData) });
   return await handleResponse(res);
 }
 
 export async function getLiveStreams(token) {
-  const res = await fetch(`${API_BASE_URL}/lives`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/lives`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, lives: [] };
   const data = await res.json();
   if (data?.lives && Array.isArray(data.lives)) {
@@ -1242,34 +1243,34 @@ export async function getLiveStreams(token) {
 }
 
 export async function joinLiveStream(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/lives/${liveId}/join`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/join`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function checkLiveAccess(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/lives/${liveId}/access`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/access`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, hasAccess: false };
   return await res.json();
 }
 
 export async function startLiveStream(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/lives/${liveId}/start`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/start`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function stopLiveStream(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/lives/${liveId}/stop`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/stop`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function getLiveStreamStatus(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/lives/${liveId}/status`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/status`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, isLive: false };
   return await res.json();
 }
 
 export async function purchaseLiveAccess(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/lives/${liveId}/purchase`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/purchase`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
@@ -1278,13 +1279,13 @@ export async function purchaseLiveAccess(token, liveId) {
 ====================================================== */
 
 export async function checkLiveQualification(token) {
-  const res = await fetch(`${API_BASE_URL}/live-qualification/my-qualification`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/live-qualification/my-qualification`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, qualified: false };
   return await res.json();
 }
 
 export async function getUserLiveDetails(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/live-qualification/user/${userId}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/live-qualification/user/${userId}`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, user: null };
   const data = await res.json();
   if (data?.user?.avatar) data.user.avatar = ensureAbsoluteAvatarUrl(data.user.avatar);
@@ -1292,17 +1293,17 @@ export async function getUserLiveDetails(token, userId) {
 }
 
 export async function setLivePrivilege(token, userId, canGoLive, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/live-qualification/privileges`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ userId, canGoLive, reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/live-qualification/privileges`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ userId, canGoLive, reason }) });
   return await handleResponse(res);
 }
 
 export async function addLiveStrike(token, userId, reason) {
-  const res = await fetch(`${API_BASE_URL}/live-qualification/strikes`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ userId, reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/live-qualification/strikes`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ userId, reason }) });
   return await handleResponse(res);
 }
 
 export async function getUsersNeedingLiveApproval(token) {
-  const res = await fetch(`${API_BASE_URL}/live-qualification/pending-approval`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/live-qualification/pending-approval`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, users: [] };
   const data = await res.json();
   if (data?.users && Array.isArray(data.users)) data.users = data.users.map(u => ({ ...u, avatar: ensureAbsoluteAvatarUrl(u.avatar) }));
@@ -1310,7 +1311,7 @@ export async function getUsersNeedingLiveApproval(token) {
 }
 
 export async function checkUserLivePrivilege(token, userId) {
-  const res = await fetch(`${API_BASE_URL}/live-qualification/user/${userId}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/live-qualification/user/${userId}`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, canGoLive: false };
   const data = await res.json();
   if (data?.user?.avatar) data.user.avatar = ensureAbsoluteAvatarUrl(data.user.avatar);
@@ -1322,7 +1323,7 @@ export async function checkUserLivePrivilege(token, userId) {
 ====================================================== */
 
 export async function getLiveStreamsForModeration(token, params = {}) {
-  const url = buildUrl(`${API_BASE_URL}/admin/live-streams`, params);
+  const url = buildUrl(`${API_BASE_URL}/api/admin/live-streams`, params);
   const res = await fetch(url, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, streams: [] };
   const data = await res.json();
@@ -1331,7 +1332,7 @@ export async function getLiveStreamsForModeration(token, params = {}) {
 }
 
 export async function getLiveStreamDetailsForModeration(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/live-streams/${liveId}`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, stream: null };
   const data = await res.json();
   if (data?.stream?.thumbnailUrl) data.stream.thumbnailUrl = ensureAbsoluteAvatarUrl(data.stream.thumbnailUrl);
@@ -1339,38 +1340,38 @@ export async function getLiveStreamDetailsForModeration(token, liveId) {
 }
 
 export async function endLiveStreamAdmin(token, liveId, reason) {
-  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}/end`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/live-streams/${liveId}/end`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function sendStreamWarning(token, liveId, warningData) {
-  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}/warning`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify(warningData) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/live-streams/${liveId}/warning`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify(warningData) });
   return await handleResponse(res);
 }
 
 export async function getLiveStreamReports(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}/reports`, { headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/live-streams/${liveId}/reports`, { headers: getAuthHeaders(token) });
   if (!res.ok) return { success: false, reports: [] };
   return await res.json();
 }
 
 export async function applyShadowBanToLive(token, liveId, reason) {
-  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}/shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/live-streams/${liveId}/shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
 export async function removeShadowBanFromLive(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}/remove-shadow-ban`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/live-streams/${liveId}/remove-shadow-ban`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function removeStrike(token, userId, strikeId) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/strikes/${strikeId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/strikes/${strikeId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function banUserFromStreaming(token, userId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/ban-streaming`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/ban-streaming`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
@@ -1379,12 +1380,12 @@ export async function banUserFromStreaming(token, userId, reason = '') {
 ====================================================== */
 
 export async function approveFundraiser(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/admin/fundraisers/${videoId}/approve`, { method: 'PUT', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/fundraisers/${videoId}/approve`, { method: 'PUT', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function rejectFundraiser(token, videoId, reason = '') {
-  const res = await fetch(`${API_BASE_URL}/admin/fundraisers/${videoId}/reject`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/fundraisers/${videoId}/reject`, { method: 'PUT', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
   return await handleResponse(res);
 }
 
@@ -1393,12 +1394,12 @@ export async function rejectFundraiser(token, videoId, reason = '') {
 ====================================================== */
 
 export async function applyShadowBanContent(token, contentId, targetType, reason = '', countries = [], continents = []) {
-  const res = await fetch(`${API_BASE_URL}/admin/content/${contentId}/shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ targetType, reason, countries, continents }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/content/${contentId}/shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ targetType, reason, countries, continents }) });
   return await handleResponse(res);
 }
 
 export async function removeShadowBanContent(token, contentId, targetType) {
-  const res = await fetch(`${API_BASE_URL}/admin/content/${contentId}/remove-shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ targetType }) });
+  const res = await fetch(`${API_BASE_URL}/api/admin/content/${contentId}/remove-shadow-ban`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ targetType }) });
   return await handleResponse(res);
 }
 
@@ -1407,13 +1408,13 @@ export async function removeShadowBanContent(token, contentId, targetType) {
 ====================================================== */
 
 export async function checkServerStatus() {
-  try { const res = await fetch(`${API_BASE_URL}/health`); return res.ok; }
+  try { const res = await fetch(`${API_BASE_URL}/api/health`); return res.ok; }
   catch { return false; }
 }
 
 export async function checkStreamingStatus() {
   try {
-    const res = await fetch(`${API_BASE_URL}/streaming/status`);
+    const res = await fetch(`${API_BASE_URL}/api/streaming/status`);
     if (!res.ok) return { success: false, streamingEnabled: false };
     return await res.json();
   } catch { return { success: false, streamingEnabled: false }; }
