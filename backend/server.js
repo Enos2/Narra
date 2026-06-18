@@ -5,6 +5,7 @@
  * FIXED: HLS served BEFORE any auth middleware (public access)
  * FIXED: MongoDB connection with correct env variable
  * FIXED: Socket.IO admin auth - checks User model first then Admin model
+ * ADDED: Cron job for automatic cleanup of expired trashed videos (30-day retention)
  */
 
 const express    = require('express');
@@ -16,6 +17,15 @@ const socketIO   = require('socket.io');
 const jwt        = require('jsonwebtoken');
 const fs         = require('fs');
 require('dotenv').config();
+
+// Import cron for scheduled tasks (optional - runs if installed)
+let cron;
+try {
+  cron = require('node-cron');
+} catch (err) {
+  console.warn('⚠️ node-cron not installed. Automatic trash cleanup disabled.');
+  console.warn('   To enable automatic cleanup, run: npm install node-cron');
+}
 
 const User  = require('./models/User');
 const Admin = require('./models/Admin');
@@ -495,6 +505,32 @@ app.use('/api/notifications',     notificationRoutes);
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
 app.use(errorHandler);
 
+// =====================================================
+// CRON JOB: Daily cleanup of expired trashed videos
+// Runs every day at 2:00 AM
+// =====================================================
+if (cron) {
+  const cleanupTrash = require('./scripts/cleanupTrash');
+  
+  // Schedule cleanup job - runs at 2:00 AM every day
+  cron.schedule('0 2 * * *', async () => {
+    console.log('🕐 Running scheduled trash cleanup...');
+    try {
+      await cleanupTrash();
+      console.log('✅ Trash cleanup completed successfully');
+    } catch (err) {
+      console.error('❌ Trash cleanup failed:', err.message);
+    }
+  }, {
+    timezone: "UTC"
+  });
+  
+  console.log('✅ Trash cleanup cron job scheduled (daily at 2:00 AM UTC)');
+} else {
+  console.log('⚠️ Cron job not scheduled - node-cron not installed');
+  console.log('   To enable automatic cleanup of expired videos, run: npm install node-cron');
+}
+
 // ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
@@ -505,3 +541,7 @@ server.listen(PORT, () => {
   console.log(`📺 HLS Media  →  http://localhost:${PORT}/live`);
   console.log(`📡 RTMP       →  rtmp://localhost:1935/live\n`);
 });
+
+/**
+ * END OF FILE: backend/server.js
+ */

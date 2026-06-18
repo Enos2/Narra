@@ -1,8 +1,9 @@
+/* eslint-disable react-hooks/immutability */
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable no-unused-vars */
 // FILE: frontend/src/pages/admin/SuperAdminDashboard.jsx
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link } from "react-router-dom"; // REMOVED Navigate import - using conditional redirect instead
 import { useAppContext } from "../../context/AppContext";
 import { useMessages } from "../../context/MessageContext";
 import "./SuperAdminDashboard.css";
@@ -31,13 +32,18 @@ function SuperBg() {
         <animate attributeName="rx" values="500;560;500" dur="8s" repeatCount="indefinite" />
         <animate attributeName="opacity" values="0.7;1;0.7" dur="8s" repeatCount="indefinite" />
       </ellipse>
-      {rays.map(({ x2, y2 }, i) => (
-        <line key={i} x1="720" y1="450" x2={x2} y2={y2}
-          stroke="#FFD700" strokeOpacity="0.04" strokeWidth="1">
-          <animate attributeName="stroke-opacity" values="0.04;0.1;0.04"
-            dur={`${4 + (i % 4)}s`} begin={`${i * 0.18}s`} repeatCount="indefinite" />
-        </line>
-      ))}
+      {Array.from({ length: 24 }, (_, i) => {
+        const a = (i * 360 / 24) * Math.PI / 180;
+        const x2 = 720 + Math.cos(a) * 950;
+        const y2 = 450 + Math.sin(a) * 950;
+        return (
+          <line key={i} x1="720" y1="450" x2={x2} y2={y2}
+            stroke="#FFD700" strokeOpacity="0.04" strokeWidth="1">
+            <animate attributeName="stroke-opacity" values="0.04;0.1;0.04"
+              dur={`${4 + (i % 4)}s`} begin={`${i * 0.18}s`} repeatCount="indefinite" />
+          </line>
+        );
+      })}
       {[110, 210, 330, 470, 620].map((r, i) => (
         <rect key={i}
           x={720 - r * 0.707} y={450 - r * 0.707}
@@ -50,15 +56,6 @@ function SuperBg() {
             from="45 720 450" to="90 720 450" dur={`${22 + i * 5}s`} repeatCount="indefinite" />
         </rect>
       ))}
-      {[[50, 50], [1390, 50], [50, 850], [1390, 850], [720, 30], [720, 870]].map(([x, y], i) => (
-        <g key={i}>
-          <line x1={x - 22} y1={y} x2={x + 22} y2={y} stroke="#FFD700" strokeOpacity="0.25" strokeWidth="1.5" />
-          <line x1={x} y1={y - 22} x2={x} y2={y + 22} stroke="#FFD700" strokeOpacity="0.25" strokeWidth="1.5" />
-          <circle cx={x} cy={y} r="3.5" fill="#FFD700" fillOpacity="0.35">
-            <animate attributeName="fill-opacity" values="0.35;0.8;0.35" dur="3s" begin={`${i * 0.7}s`} repeatCount="indefinite" />
-          </circle>
-        </g>
-      ))}
     </svg>
   );
 }
@@ -67,6 +64,7 @@ export default function SuperAdminDashboard() {
   const { user, token, isAuthReady } = useAppContext();
   const { conversations, fetchConversations } = useMessages();
   const initialFetchDone = useRef(false);
+  const messageStatsCalculated = useRef(false);
 
   const [stats, setStats] = useState({
     totalUsers: 0, approvedVideos: 0, totalLiveStreams: 0,
@@ -88,22 +86,43 @@ export default function SuperAdminDashboard() {
     };
   }, [conversations]);
 
+  // Update message stats when conversations change, but only once
   useEffect(() => {
-    if (!loading && conversations.length > 0) {
+    if (!loading && conversations.length > 0 && !messageStatsCalculated.current) {
       setStats(prev => ({ ...prev, ...calculateMessageStats() }));
+      messageStatsCalculated.current = true;
     }
   }, [conversations, loading, calculateMessageStats]);
 
+  // FIXED: Proper useEffect with correct dependencies to prevent infinite loop
   useEffect(() => {
-    document.title = "Narra | Super Admin";
-    if (!isAuthReady || !user || !token) return;
-    if (user.role?.toLowerCase() !== "superadmin") return;
-
+    // Don't run if auth is not ready or no user/token
+    if (!isAuthReady || !user || !token) {
+      if (!isAuthReady) {
+        // Still loading auth
+        return;
+      }
+      setLoading(false);
+      return;
+    }
+    
+    // Check if user is superadmin
+    if (user.role?.toLowerCase() !== "superadmin") {
+      setLoading(false);
+      return;
+    }
+    
+    // Prevent multiple fetches
+    if (initialFetchDone.current) {
+      setLoading(false);
+      return;
+    }
+    
     const fetchDashboardData = async () => {
-      if (initialFetchDone.current) return;
-      setLoading(true); setError(null);
+      setLoading(true);
+      setError(null);
       try {
-        const [users, allVideosResult, pendingVideosResult, lives, admins, inactiveAdmins, auditLogs, adStats] = await Promise.all([
+        const [users, allVideosResult, pendingVideosResult, lives, admins, inactiveAdminsList, auditLogs, adStats] = await Promise.all([
           getUsers(token),
           getVideosForModeration(token, 'all'),
           getVideosForModeration(token, 'pending'),
@@ -113,26 +132,28 @@ export default function SuperAdminDashboard() {
           getRecentAuditLogs(token, 5),
           getAdStats(token).catch(() => ({ stats: { total: 0, active: 0, pending: 0, todayImpressions: 0 } }))
         ]);
+        
+        // Fetch conversations without waiting
         fetchConversations().catch(() => {});
-
+        
         let approvedVideosCount = 0;
         if (allVideosResult?.success && allVideosResult.videos) {
           approvedVideosCount = allVideosResult.videos.filter(v => v.status === 'approved' || v.status === 'released').length;
         }
-
+        
         let pendingMoviesCount = 0, pendingSeriesCount = 0;
         if (pendingVideosResult?.success && pendingVideosResult.videos) {
           pendingMoviesCount = pendingVideosResult.videos.filter(v => v.type === 'movie').length;
           pendingSeriesCount = pendingVideosResult.videos.filter(v => v.type === 'series').length;
         }
-
+        
         setStats(prev => ({
           ...prev,
           totalUsers: users?.length || 0,
           approvedVideos: approvedVideosCount,
           totalLiveStreams: lives?.lives?.length || lives?.length || 0,
           totalAdmins: admins?.length || 0,
-          inactiveAdmins: inactiveAdmins?.length || 0,
+          inactiveAdmins: inactiveAdminsList?.length || 0,
           pendingMovies: pendingMoviesCount,
           pendingSeries: pendingSeriesCount,
           totalCampaigns: adStats?.stats?.total || 0,
@@ -140,20 +161,22 @@ export default function SuperAdminDashboard() {
           pendingCampaigns: adStats?.stats?.pending || 0,
           todayImpressions: adStats?.stats?.today?.impressions || 0
         }));
-
+        
         if (auditLogs?.logs) setRecentAuditLogs(auditLogs.logs);
         else if (Array.isArray(auditLogs)) setRecentAuditLogs(auditLogs);
         else setRecentAuditLogs([]);
-
+        
         initialFetchDone.current = true;
       } catch (err) {
+        console.error("Dashboard error:", err);
         setError("Failed to load dashboard data.");
       } finally {
         setLoading(false);
       }
     };
+    
     fetchDashboardData();
-  }, [isAuthReady, user, token, fetchConversations]);
+  }, [isAuthReady, user, token, fetchConversations]); // Proper dependencies
 
   const formatDate = (d) => {
     if (!d) return '—';
@@ -179,19 +202,32 @@ export default function SuperAdminDashboard() {
     return log.actionType.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
   };
 
-  if (isAuthReady && user && user.role?.toLowerCase() !== "superadmin") return <Navigate to="/login" replace />;
-  if (!isAuthReady || loading) return (
-    <div className="sd-loading sd-super">
-      <div className="sd-loading__ring" />
-      <p>Loading Super Admin Dashboard…</p>
-    </div>
-  );
-  if (error) return (
-    <div className="sd-loading sd-super">
-      <p>{error}</p>
-      <button onClick={() => window.location.reload()}>Retry</button>
-    </div>
-  );
+  // Handle redirect without Navigate component to prevent loops
+  if (isAuthReady && user && user.role?.toLowerCase() !== "superadmin") {
+    window.location.href = "/login";
+    return null;
+  }
+  
+  if (!isAuthReady || loading) {
+    return (
+      <div className="sd-loading sd-super">
+        <div className="sd-loading__ring" />
+        <p>Loading Super Admin Dashboard…</p>
+      </div>
+    );
+  }
+  
+  if (error) {
+    return (
+      <div className="sd-loading sd-super">
+        <p>{error}</p>
+        <button onClick={() => {
+          initialFetchDone.current = false;
+          window.location.reload();
+        }}>Retry</button>
+      </div>
+    );
+  }
 
   const msgStats = calculateMessageStats();
 
@@ -228,29 +264,24 @@ export default function SuperAdminDashboard() {
 
       {/* ── Stat Cards ── */}
       <section className="sd-grid">
-
-        {/* Users */}
         <Link to="/admin/users" className="sd-card sd-card--single" style={{ "--delay": "0s" }}>
           <div className="sd-card__label">Total Users</div>
           <div className="sd-card__value">{stats.totalUsers.toLocaleString()}</div>
           <div className="sd-card__bar" />
         </Link>
 
-        {/* Approved Videos */}
         <Link to="/admin/videos?status=approved" className="sd-card sd-card--single" style={{ "--delay": "0.05s" }}>
           <div className="sd-card__label">Approved Videos</div>
           <div className="sd-card__value">{stats.approvedVideos.toLocaleString()}</div>
           <div className="sd-card__bar" />
         </Link>
 
-        {/* Live Streams */}
-        <Link to="/admin/dashboard/live-moderation" className="sd-card sd-card--single" style={{ "--delay": "0.1s" }}>
+        <Link to="/admin/live-approvals" className="sd-card sd-card--single" style={{ "--delay": "0.1s" }}>
           <div className="sd-card__label">Live Streams</div>
           <div className="sd-card__value">{stats.totalLiveStreams.toLocaleString()}</div>
           <div className="sd-card__bar" />
         </Link>
 
-        {/* Admin Management */}
         <Link to="/admin/admins" className="sd-card sd-card--split" style={{ "--delay": "0.15s" }}>
           <div className="sd-card__label">Admin Management</div>
           <div className="sd-card__split-row">
@@ -267,7 +298,6 @@ export default function SuperAdminDashboard() {
           <div className="sd-card__bar" />
         </Link>
 
-        {/* Pending Videos — movies + series split */}
         <Link to="/admin/video-approvals" className="sd-card sd-card--pending" style={{ "--delay": "0.2s" }}>
           <div className="sd-card__label">Pending Approvals</div>
           <div className="sd-card__pending-row">
@@ -284,7 +314,6 @@ export default function SuperAdminDashboard() {
           <div className="sd-card__bar" />
         </Link>
 
-        {/* Messages */}
         <Link to="/admin/messages" className="sd-card sd-card--messages" style={{ "--delay": "0.25s" }}>
           <div className="sd-card__label">Messages</div>
           <div className="sd-card__msg-row">
@@ -304,8 +333,7 @@ export default function SuperAdminDashboard() {
           <div className="sd-card__bar" />
         </Link>
 
-        {/* Ad Campaigns */}
-        <Link to="/admin/dashboard/campaigns" className="sd-card sd-card--campaigns" style={{ "--delay": "0.3s" }}>
+        <Link to="/admin/campaigns" className="sd-card sd-card--campaigns" style={{ "--delay": "0.3s" }}>
           <div className="sd-card__label">Ad Campaigns</div>
           <div className="sd-card__msg-row">
             <div className="sd-card__msg-item">
@@ -327,7 +355,6 @@ export default function SuperAdminDashboard() {
           </div>
           <div className="sd-card__bar" />
         </Link>
-
       </section>
 
       {/* ── Quick Actions ── */}
@@ -339,15 +366,14 @@ export default function SuperAdminDashboard() {
             { to: "/admin/admins", label: "Admin Management" },
             { to: "/admin/videos?status=approved", label: "Approved Videos" },
             { to: "/admin/video-approvals", label: "Video Approvals" },
-            { to: "/admin/dashboard/live-moderation", label: "Live Moderation" },
             { to: "/admin/live-approvals", label: "Live Approvals" },
             { to: "/admin/messages", label: "Message Center" },
             { to: "/admin/chat", label: "Admin Chat" },
             { to: "/admin/message-moderation", label: "Message Moderation" },
             { to: "/admin/audit-logs", label: "Audit Logs" },
-            { to: "/admin/dashboard/campaigns", label: "All Campaigns" },
-            { to: "/admin/dashboard/campaigns/create", label: "Create Campaign" },
-            { to: "/admin/dashboard/campaigns/analytics", label: "Ad Analytics" },
+            { to: "/admin/campaigns", label: "All Campaigns" },
+            { to: "/admin/campaigns/create", label: "Create Campaign" },
+            { to: "/admin/campaigns/analytics", label: "Ad Analytics" },
           ].map(({ to, label }, i) => (
             <Link key={to} to={to} className="sd-action-link" style={{ animationDelay: `${i * 0.03}s` }}>
               <span>{label}</span>

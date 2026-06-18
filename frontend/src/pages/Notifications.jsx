@@ -1,10 +1,9 @@
-/* eslint-disable no-empty */
-/* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable react-hooks/exhaustive-deps */
+ 
+ /*src/pages/Notifications.jsx - Notifications page component for displaying user notifications with filtering and read/unread status.*/
+ 
 /* eslint-disable no-unused-vars */
 import { useState, useEffect } from "react";
 import { useAppContext } from "../context/AppContext";
-import { useMessages } from "../context/MessageContext";
 import { useTheme } from "../context/ThemeContext";
 import { Link } from "react-router-dom";
 import "./Notifications.css";
@@ -13,7 +12,6 @@ const TABS = ["All", "Admin", "Messages", "System"];
 
 export default function Notifications() {
   const { user, token } = useAppContext();
-  const { notifications: messageNotifications, fetchNotifications, markNotificationAsRead } = useMessages();
   const { theme } = useTheme();
 
   const accent    = theme.accent;
@@ -42,52 +40,80 @@ export default function Notifications() {
     return true;
   };
 
+  // Load notifications from API only (removed MessageContext dependency)
   useEffect(() => {
     if (!token) return;
+    
     const loadNotifications = async () => {
       setLoading(true);
       try {
-        await fetchNotifications();
-        const response = await fetch(`${API_BASE}/api/notifications/user`, { headers: { 'Authorization': `Bearer ${token}` } });
+        const response = await fetch(`${API_BASE}/api/notifications/user`, { 
+          headers: { 'Authorization': `Bearer ${token}` } 
+        });
+        
         if (response.ok) {
           const data = await response.json();
-          const allNotifications = [...(data.notifications || []), ...(messageNotifications || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-          setNotifications(allNotifications);
+          // Ensure we always have an array
+          const notificationsList = data.notifications || [];
+          setNotifications(notificationsList.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+        } else {
+          setNotifications([]);
         }
-      } catch (error) { console.error('Error loading notifications:', error); }
-      finally { setLoading(false); }
+      } catch (error) { 
+        console.error('Error loading notifications:', error);
+        setNotifications([]);
+      } finally { 
+        setLoading(false); 
+      }
     };
+    
     loadNotifications();
-  }, [token]);
+  }, [token, API_BASE]);
 
-  useEffect(() => {
-    if (messageNotifications.length > 0) {
-      setNotifications(prev => {
-        const combined = [...messageNotifications, ...prev];
-        const unique = combined.filter((item, index, self) => index === self.findIndex(t => t._id === item._id));
-        return unique.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      });
-    }
-  }, [messageNotifications]);
-
-  const handleToggleExpand = (notificationId) => {
+  const handleToggleExpand = async (notificationId) => {
     setExpandedId(expandedId === notificationId ? null : notificationId);
     const notification = notifications.find(n => n._id === notificationId);
-    if (notification && !notification.read && notification._id) markAsRead(notification._id);
+    if (notification && !notification.read && notification._id) {
+      await markAsRead(notificationId);
+    }
   };
 
   const markAsRead = async (notificationId) => {
     try {
-      await markNotificationAsRead(notificationId);
-      setNotifications(prev => prev.map(n => n._id === notificationId ? { ...n, read: true } : n));
-    } catch (error) {}
+      const response = await fetch(`${API_BASE}/api/notifications/${notificationId}/read`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        setNotifications(prev => prev.map(n => 
+          n._id === notificationId ? { ...n, read: true } : n
+        ));
+      }
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
   };
 
   const handleMarkAllAsRead = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/notifications/mark-all-read`, { method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } });
-      if (response.ok) setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    } catch (error) {}
+      const response = await fetch(`${API_BASE}/api/notifications/mark-all-read`, { 
+        method: 'PUT', 
+        headers: { 
+          'Authorization': `Bearer ${token}`, 
+          'Content-Type': 'application/json' 
+        } 
+      });
+      
+      if (response.ok) {
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      }
+    } catch (error) {
+      console.error('Error marking all as read:', error);
+    }
   };
 
   const formatTime = (timestamp) => {

@@ -4,7 +4,6 @@
 /**
  * File: frontend/src/pages/admin/AdminLiveApprovals.jsx
  * Description: Admin panel for managing live streaming approvals
- * Using AdminLayout wrapper
  */
 
 import React, { useState, useEffect } from 'react';
@@ -20,9 +19,146 @@ import {
 import LiveApprovalCard from '../../components/LiveApprovalCard';
 import './AdminLiveApprovals.css';
 
+// Animated background components
+function SuperBg() {
+  const rays = Array.from({ length: 24 }, (_, i) => {
+    const a = (i * 360 / 24) * Math.PI / 180;
+    return { x2: 720 + Math.cos(a) * 950, y2: 450 + Math.sin(a) * 950 };
+  });
+  return (
+    <svg className="ala-bg-svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="ala-sg1" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#FFD700" stopOpacity="0.13" />
+          <stop offset="100%" stopColor="#FFD700" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <ellipse cx="720" cy="450" rx="480" ry="320" fill="url(#ala-sg1)">
+        <animate attributeName="rx" values="480;530;480" dur="7s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="7s" repeatCount="indefinite" />
+      </ellipse>
+      {rays.map(({ x2, y2 }, i) => (
+        <line key={i} x1="720" y1="450" x2={x2} y2={y2} stroke="#FFD700" strokeOpacity="0.045" strokeWidth="1">
+          <animate attributeName="stroke-opacity" values="0.045;0.1;0.045" dur={`${4 + (i % 4)}s`} begin={`${i * 0.18}s`} repeatCount="indefinite" />
+        </line>
+      ))}
+      {[110, 200, 310, 440].map((r, i) => (
+        <rect key={i} x={720 - r * 0.707} y={450 - r * 0.707} width={r * 1.414} height={r * 1.414}
+          fill="none" stroke="#FFD700" strokeOpacity="0.07" strokeWidth="1" transform="rotate(45 720 450)">
+          <animate attributeName="stroke-opacity" values="0.07;0.16;0.07" dur={`${5 + i}s`} begin={`${i * 0.9}s`} repeatCount="indefinite" />
+          <animateTransform attributeName="transform" type="rotate" from="45 720 450" to="90 720 450" dur={`${18 + i * 5}s`} repeatCount="indefinite" />
+        </rect>
+      ))}
+    </svg>
+  );
+}
+
+function PlatformBg() {
+  const traces = [
+    "M0,180 H280 V130 H560 V180 H860 V90 H1440",
+    "M0,380 H180 V330 H480 V430 H780 V380 H1440",
+    "M0,580 H380 V530 H680 V630 H980 V580 H1440",
+    "M0,740 H90 V690 H380 V790 H680 V740 H1440",
+    "M220,0 V180 H310 V490 H260 V900",
+    "M620,0 V140 H710 V390 H660 V900",
+    "M1080,0 V290 H1030 V590 H1130 V900",
+  ];
+  const nodes = [[280, 130], [560, 180], [860, 90], [180, 330], [480, 430], [380, 530], [680, 630], [380, 690]];
+  return (
+    <svg className="ala-bg-svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="ala-pbg" width="34" height="34" patternUnits="userSpaceOnUse">
+          <path d="M34,0 L0,0 0,34" fill="none" stroke="#3B82F6" strokeOpacity="0.04" strokeWidth="0.5" />
+        </pattern>
+      </defs>
+      <rect width="1440" height="900" fill="url(#ala-pbg)">
+        <animate attributeName="opacity" values="0.5;1;0.5" dur="4s" repeatCount="indefinite" />
+      </rect>
+      {traces.map((d, i) => (
+        <path key={i} d={d} fill="none" stroke="#3B82F6" strokeOpacity="0.08" strokeWidth="1.5">
+          <animate attributeName="stroke-opacity" values="0.08;0.2;0.08" dur={`${3 + i * 0.7}s`} begin={`${i * 0.4}s`} repeatCount="indefinite" />
+        </path>
+      ))}
+      {nodes.map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r="4" fill="#3B82F6" fillOpacity="0.5">
+          <animate attributeName="r" values="4;9;4" dur={`${2 + i * 0.35}s`} begin={`${i * 0.55}s`} repeatCount="indefinite" />
+          <animate attributeName="fill-opacity" values="0.5;0;0.5" dur={`${2 + i * 0.35}s`} begin={`${i * 0.55}s`} repeatCount="indefinite" />
+        </circle>
+      ))}
+      <circle r="3.5" fill="#3B82F6" fillOpacity="0.9">
+        <animateMotion dur="9s" repeatCount="indefinite" path="M0,180 H280 V130 H560 V180 H860 V90 H1440" />
+      </circle>
+      <circle r="3.5" fill="#3B82F6" fillOpacity="0.9">
+        <animateMotion dur="12s" repeatCount="indefinite" begin="3s" path="M0,580 H380 V530 H680 V630 H980 V580 H1440" />
+      </circle>
+    </svg>
+  );
+}
+
+function SupportBg() {
+  const vines = [
+    "M80,900 C100,700 60,590 130,440 C180,340 160,190 200,30",
+    "M380,900 C360,750 400,640 365,490 C340,370 390,240 350,0",
+    "M720,900 C700,780 755,675 715,545 C685,435 725,295 695,95",
+    "M1020,900 C1040,730 1000,620 1055,470 C1090,350 1030,210 1070,0",
+    "M1360,900 C1340,760 1395,655 1355,515 C1325,395 1370,230 1335,40",
+  ];
+  const leaves = [[130, 440], [365, 490], [715, 545], [1055, 470], [1340, 515], [200, 30], [350, 0], [695, 95], [1070, 0], [1335, 40]];
+  return (
+    <svg className="ala-bg-svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="ala-sbg" cx="50%" cy="100%" r="60%">
+          <stop offset="0%" stopColor="#22c55e" stopOpacity="0.08" />
+          <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <rect width="1440" height="900" fill="url(#ala-sbg)" />
+      {vines.map((d, i) => (
+        <path key={i} d={d} fill="none" stroke="#22c55e" strokeOpacity="0.065" strokeWidth="1.5">
+          <animate attributeName="stroke-opacity" values="0.065;0.16;0.065" dur={`${5 + i}s`} begin={`${i * 0.9}s`} repeatCount="indefinite" />
+        </path>
+      ))}
+      {leaves.map(([x, y], i) => (
+        <ellipse key={i} cx={x} cy={y} rx="7" ry="3.5" fill="#22c55e" fillOpacity="0.14" transform={`rotate(${i * 37} ${x} ${y})`}>
+          <animate attributeName="fill-opacity" values="0.14;0.32;0.14" dur={`${3 + i * 0.6}s`} begin={`${i * 0.45}s`} repeatCount="indefinite" />
+          <animateTransform attributeName="transform" type="rotate" from={`0 ${x} ${y}`} to={`360 ${x} ${y}`} dur={`${14 + i * 2}s`} repeatCount="indefinite" />
+        </ellipse>
+      ))}
+      <circle r="2.5" fill="#22c55e" fillOpacity="0.9">
+        <animateMotion dur="13s" repeatCount="indefinite" path="M80,900 C100,700 60,590 130,440 C180,340 160,190 200,30" />
+      </circle>
+      <circle r="2.5" fill="#22c55e" fillOpacity="0.9">
+        <animateMotion dur="16s" repeatCount="indefinite" begin="5s" path="M720,900 C700,780 755,675 715,545 C685,435 725,295 695,95" />
+      </circle>
+    </svg>
+  );
+}
+
 const AdminLiveApprovals = () => {
   const { user, token } = useAppContext();
   const navigate = useNavigate();
+  
+  const role = user?.role || "superadmin";
+  
+  // Get role-specific theme color
+  const getThemeColor = () => {
+    switch(user?.role) {
+      case 'superadmin': return '#FFD700';
+      case 'platformadmin': return '#3B82F6';
+      case 'supportadmin': return '#22c55e';
+      default: return '#FFD700';
+    }
+  };
+
+  // Get role-specific gradient
+  const getThemeGradient = () => {
+    switch(user?.role) {
+      case 'superadmin': return 'linear-gradient(135deg, #FFD700, #FFA500)';
+      case 'platformadmin': return 'linear-gradient(135deg, #3B82F6, #1E3A8A)';
+      case 'supportadmin': return 'linear-gradient(135deg, #22c55e, #166534)';
+      default: return 'linear-gradient(135deg, #FFD700, #FFA500)';
+    }
+  };
   
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -48,37 +184,9 @@ const AdminLiveApprovals = () => {
     totalStrikes: 0
   });
 
-  // Get role-specific theme color
-  const getThemeColor = () => {
-    switch(user?.role) {
-      case 'superadmin':
-        return '#f8b305'; // Gold/Yellow
-      case 'platformadmin':
-        return '#043ede'; // Blue
-      case 'supportadmin':
-        return '#00a321'; // Green
-      default:
-        return '#f8b305';
-    }
-  };
-
-  // Get role-specific gradient
-  const getThemeGradient = () => {
-    switch(user?.role) {
-      case 'superadmin':
-        return 'linear-gradient(135deg, #f8b305 0%, #ffd966 100%)';
-      case 'platformadmin':
-        return 'linear-gradient(135deg, #043ede 0%, #4d7eff 100%)';
-      case 'supportadmin':
-        return 'linear-gradient(135deg, #00a321 0%, #4cd964 100%)';
-      default:
-        return 'linear-gradient(135deg, #f8b305 0%, #ffd966 100%)';
-    }
-  };
-
   // Debug logging
   useEffect(() => {
-    console.log('🔍 AdminLiveApprovals - Debug Info:');
+    console.log('AdminLiveApprovals - Debug Info:');
     console.log('   user:', user ? { id: user.id, role: user.role } : 'null');
     console.log('   token:', token ? `${token.substring(0, 30)}... (${token.length} chars)` : 'null');
   }, [user, token]);
@@ -119,7 +227,7 @@ const AdminLiveApprovals = () => {
     setMessage(null);
     
     try {
-      console.log('📡 Loading data with token:', token ? 'Present' : 'Missing');
+      console.log('Loading data with token:', token ? 'Present' : 'Missing');
       
       if (!token) {
         throw new Error('Not authenticated. Please login again.');
@@ -164,7 +272,7 @@ const AdminLiveApprovals = () => {
       setMessage({ type: 'success', text: 'Data refreshed successfully' });
       
     } catch (error) {
-      console.error('❌ Error loading data:', error);
+      console.error('Error loading data:', error);
       setError(error.message || 'Failed to load data. Please try again.');
       
       // If it's an authentication error, redirect to login
@@ -361,353 +469,383 @@ const AdminLiveApprovals = () => {
 
   if (loading) {
     return (
-      <div className="live-approvals-loading">
-        <div className="loading-spinner" style={{ borderTopColor: getThemeColor() }}></div>
-        <p>Loading live approval data...</p>
+      <div className={`ala-page ala-role-${role}`} style={{ "--theme-accent": getThemeColor() }}>
+        <div className="ala-bg" aria-hidden="true">
+          {role === "superadmin" && <SuperBg />}
+          {role === "platformadmin" && <PlatformBg />}
+          {role === "supportadmin" && <SupportBg />}
+        </div>
+        <div className="ala-grain" aria-hidden="true"></div>
+        <div className="ala-loading">
+          <div className="ala-loading__ring" style={{ borderTopColor: getThemeColor() }}></div>
+          <p>Loading live approval data...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="live-approvals-error">
-        <div className="error-icon">⚠️</div>
-        <h3>Error Loading Data</h3>
-        <p>{error}</p>
-        <div className="error-actions">
-          <button onClick={loadAllData} className="retry-btn" style={{ background: getThemeColor(), color: user?.role === 'superadmin' ? '#000' : '#fff' }}>
-            Retry
-          </button>
-          <button onClick={() => navigate('/login')} className="login-btn">
-            Login Again
-          </button>
+      <div className={`ala-page ala-role-${role}`} style={{ "--theme-accent": getThemeColor() }}>
+        <div className="ala-bg" aria-hidden="true">
+          {role === "superadmin" && <SuperBg />}
+          {role === "platformadmin" && <PlatformBg />}
+          {role === "supportadmin" && <SupportBg />}
+        </div>
+        <div className="ala-grain" aria-hidden="true"></div>
+        <div className="ala-error">
+          <div className="ala-error__icon"></div>
+          <h3>Error Loading Data</h3>
+          <p>{error}</p>
+          <div className="ala-error-actions">
+            <button onClick={loadAllData} className="ala-retry-btn" style={{ background: getThemeColor(), color: '#000000' }}>
+              Retry
+            </button>
+            <button onClick={() => navigate('/login')} className="ala-login-btn">
+              Login Again
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="live-approvals-container">
-      {/* Page Header */}
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">
-            Live Stream Management
-            <span className="role-badge" style={{ background: getThemeColor(), color: user?.role === 'superadmin' ? '#000' : '#fff' }}>
-              {user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'platformadmin' ? 'Platform Admin' : 'Support Admin'}
-            </span>
-          </h1>
-          <p className="page-description">Review and manage user permissions for live streaming</p>
-        </div>
-        <button 
-          onClick={handleRefresh} 
-          className={`refresh-btn ${refreshing ? 'refreshing' : ''}`}
-          disabled={actionLoading || refreshing}
-          style={{ '--theme-color': getThemeColor() }}
-        >
-          <span className={`refresh-icon ${refreshing ? 'spinning' : ''}`}>↻</span>
-          <span className="refresh-text">{refreshing ? 'Refreshing...' : 'Refresh'}</span>
-          {refreshing && (
-            <span className="refresh-particles">
-              <span className="particle" style={{ background: getThemeColor() }}></span>
-              <span className="particle" style={{ background: getThemeColor() }}></span>
-              <span className="particle" style={{ background: getThemeColor() }}></span>
-            </span>
-          )}
-        </button>
+    <div className={`ala-page ala-role-${role}`} style={{ "--theme-accent": getThemeColor() }}>
+      {/* Animated SVG background */}
+      <div className="ala-bg" aria-hidden="true">
+        {role === "superadmin" && <SuperBg />}
+        {role === "platformadmin" && <PlatformBg />}
+        {role === "supportadmin" && <SupportBg />}
       </div>
 
-      {/* Message Alert */}
-      {message && (
-        <div className={`message-banner ${message.type}`} style={{ borderLeftColor: getThemeColor() }}>
-          <span>{message.text}</span>
-          <button onClick={clearMessage} className="message-close">×</button>
-        </div>
-      )}
+      {/* Grain overlay */}
+      <div className="ala-grain" aria-hidden="true"></div>
 
-      {/* Stats Grid */}
-      <div className="stats-grid">
-        <div className="stat-card" style={{ '--stat-color': getThemeColor() }}>
-          <div className="stat-value">{stats.totalUsers}</div>
-          <div className="stat-label">Total Users</div>
+      <div className="ala-container">
+        {/* Page Header */}
+        <div className="ala-header">
+          <div>
+            <h1 className="ala-title">
+              Live Stream Management
+              <span className="ala-role-badge" style={{ background: getThemeColor(), color: '#000000' }}>
+                {user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'platformadmin' ? 'Platform Admin' : 'Support Admin'}
+              </span>
+            </h1>
+            <p className="ala-description">Review and manage user permissions for live streaming</p>
+          </div>
+          <button 
+            onClick={handleRefresh} 
+            className={`ala-refresh-btn ${refreshing ? 'refreshing' : ''}`}
+            disabled={actionLoading || refreshing}
+          >
+            <span className={`ala-refresh-icon ${refreshing ? 'spinning' : ''}`}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+            </span>
+            <span className="ala-refresh-text">{refreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
         </div>
-        <div className="stat-card" style={{ '--stat-color': getThemeColor() }}>
-          <div className="stat-value">{stats.approvedUsers}</div>
-          <div className="stat-label">Approved</div>
-          <div className="stat-breakdown">
-            {stats.autoQualified} auto · {stats.manuallyApproved} manual
+
+        {/* Message Alert */}
+        {message && (
+          <div className={`ala-message ${message.type}`} style={{ borderLeftColor: getThemeColor() }}>
+            <span>{message.text}</span>
+            <button onClick={clearMessage} className="ala-message-close">×</button>
+          </div>
+        )}
+
+        {/* Stats Grid */}
+        <div className="ala-stats-row">
+          <div className="ala-stat-box">
+            <span className="ala-stat-value">{stats.totalUsers}</span>
+            <span className="ala-stat-label">Total Users</span>
+          </div>
+          <div className="ala-stat-box">
+            <span className="ala-stat-value">{stats.approvedUsers}</span>
+            <span className="ala-stat-label">Approved</span>
+            <div className="ala-stat-breakdown">
+              {stats.autoQualified} auto · {stats.manuallyApproved} manual
+            </div>
+          </div>
+          <div className="ala-stat-box">
+            <span className="ala-stat-value">{stats.pendingUsers}</span>
+            <span className="ala-stat-label">Pending</span>
+          </div>
+          <div className="ala-stat-box">
+            <span className="ala-stat-value">{stats.revokedUsers}</span>
+            <span className="ala-stat-label">Revoked</span>
+          </div>
+          <div className="ala-stat-box">
+            <span className="ala-stat-value">{stats.totalStrikes}</span>
+            <span className="ala-stat-label">Strikes</span>
           </div>
         </div>
-        <div className="stat-card" style={{ '--stat-color': getThemeColor() }}>
-          <div className="stat-value">{stats.pendingUsers}</div>
-          <div className="stat-label">Pending</div>
-        </div>
-        <div className="stat-card" style={{ '--stat-color': getThemeColor() }}>
-          <div className="stat-value">{stats.revokedUsers}</div>
-          <div className="stat-label">Revoked</div>
-        </div>
-        <div className="stat-card" style={{ '--stat-color': getThemeColor() }}>
-          <div className="stat-value">{stats.totalStrikes}</div>
-          <div className="stat-label">Strikes</div>
-        </div>
-      </div>
 
-      {/* Search and Filter Bar */}
-      <div className="search-filter-container">
-        <div className="search-box">
-          <svg className="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search by name or email..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="search-input"
-            style={{ '--theme-color': getThemeColor() }}
-          />
-          {searchTerm && (
-            <button className="search-clear" onClick={() => setSearchTerm('')}>×</button>
-          )}
-        </div>
-        
-        <select 
-          value={filter} 
-          onChange={(e) => setFilter(e.target.value)}
-          className="filter-select"
-          style={{ '--theme-color': getThemeColor() }}
-        >
-          <option value="all">All Users</option>
-          <option value="approved">Approved</option>
-          <option value="pending">Pending</option>
-          <option value="auto-qualified">Auto-Qualified</option>
-          <option value="manual">Manually Approved</option>
-          <option value="revoked">Revoked</option>
-          <option value="strikes">Has Strikes</option>
-        </select>
-      </div>
-
-      {/* Results Count */}
-      <div className="results-count">
-        Showing <span className="results-highlight" style={{ color: getThemeColor() }}>{filteredUsers.length}</span> of <span className="results-highlight" style={{ color: getThemeColor() }}>{allUsers.length}</span> users
-      </div>
-
-      {/* Users Grid */}
-      <div className="users-grid">
-        {filteredUsers.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">📭</div>
-            <h3 className="empty-title">No users found</h3>
-            <p className="empty-description">Try adjusting your search or filter criteria</p>
-            {(searchTerm || filter !== 'all') && (
-              <button 
-                onClick={() => {
-                  setSearchTerm('');
-                  setFilter('all');
-                }}
-                className="empty-action"
-                style={{ '--theme-color': getThemeColor() }}
-              >
-                Clear Filters
-              </button>
+        {/* Search and Filter Bar */}
+        <div className="ala-controls">
+          <div className="ala-search-box">
+            <svg className="ala-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search by name or email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="ala-search-input"
+            />
+            {searchTerm && (
+              <button className="ala-search-clear" onClick={() => setSearchTerm('')}>×</button>
             )}
           </div>
-        ) : (
-          filteredUsers.map((user) => (
-            <LiveApprovalCard
-              key={user._id}
-              user={user}
-              adminUser={user}
-              onViewDetails={() => {
-                setSelectedUser(user);
-                loadUserDetails(user._id);
-              }}
-              onGrantPrivilege={() => handleGrantPrivilege(user._id, user.name || user.email)}
-              onRevokePrivilege={() => handleRevokePrivilege(user._id, user.name || user.email)}
-              onAddStrike={() => handleAddStrike(user._id, user.name || user.email)}
-              actionLoading={actionLoading}
-              themeColor={getThemeColor()}
-            />
-          ))
-        )}
-      </div>
+          
+          <select 
+            value={filter} 
+            onChange={(e) => setFilter(e.target.value)}
+            className="ala-filter-select"
+          >
+            <option value="all">All Users</option>
+            <option value="approved">Approved</option>
+            <option value="pending">Pending</option>
+            <option value="auto-qualified">Auto-Qualified</option>
+            <option value="manual">Manually Approved</option>
+            <option value="revoked">Revoked</option>
+            <option value="strikes">Has Strikes</option>
+          </select>
+        </div>
 
-      {/* User Details Modal */}
-      {showDetails && userDetails && (
-        <div className="modal-overlay" onClick={() => setShowDetails(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ '--theme-color': getThemeColor(), '--theme-gradient': getThemeGradient() }}>
-            <div className="modal-header">
-              <div className="modal-header-left">
-                <h2 className="modal-title">{userDetails.name || 'User Details'}</h2>
-                <span className={`status-badge ${userDetails.canGoLive ? 'active' : 'inactive'}`} 
-                      style={{ background: userDetails.canGoLive ? `rgba(${user?.role === 'superadmin' ? '248, 179, 5' : user?.role === 'platformadmin' ? '4, 62, 222' : '0, 163, 33'}, 0.1)` : 'rgba(239, 68, 68, 0.1)' }}>
-                  {userDetails.canGoLive ? 'Active' : 'Inactive'}
-                </span>
+        {/* Results Count */}
+        <div className="ala-results-count">
+          Showing <span className="ala-results-highlight" style={{ color: getThemeColor() }}>{filteredUsers.length}</span> of <span className="ala-results-highlight" style={{ color: getThemeColor() }}>{allUsers.length}</span> users
+        </div>
+
+        {/* Users Grid */}
+        <div className="ala-users-grid">
+          {filteredUsers.length === 0 ? (
+            <div className="ala-empty-state">
+              <div className="ala-empty-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
               </div>
-              <button className="modal-close" onClick={() => setShowDetails(false)}>×</button>
+              <h3 className="ala-empty-title">No users found</h3>
+              <p className="ala-empty-description">Try adjusting your search or filter criteria</p>
+              {(searchTerm || filter !== 'all') && (
+                <button 
+                  onClick={() => {
+                    setSearchTerm('');
+                    setFilter('all');
+                  }}
+                  className="ala-empty-action"
+                  style={{ '--accent': getThemeColor() }}
+                >
+                  Clear Filters
+                </button>
+              )}
             </div>
-            
-            <div className="modal-body">
-              {/* Basic Info */}
-              <div className="info-section">
-                <h3 className="info-title">Basic Information</h3>
-                <div className="info-grid">
-                  <div className="info-item">
-                    <span className="info-label">Email</span>
-                    <span className="info-value">{userDetails.email}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Joined</span>
-                    <span className="info-value">{new Date(userDetails.createdAt).toLocaleDateString()}</span>
-                  </div>
-                  <div className="info-item">
-                    <span className="info-label">Account Age</span>
-                    <span className="info-value">{userDetails.accountAgeDays || 0} days</span>
-                  </div>
-                </div>
-              </div>
+          ) : (
+            filteredUsers.map((userItem) => (
+              <LiveApprovalCard
+                key={userItem._id}
+                user={userItem}
+                adminUser={user}
+                onViewDetails={() => {
+                  setSelectedUser(userItem);
+                  loadUserDetails(userItem._id);
+                }}
+                onGrantPrivilege={() => handleGrantPrivilege(userItem._id, userItem.name || userItem.email)}
+                onRevokePrivilege={() => handleRevokePrivilege(userItem._id, userItem.name || userItem.email)}
+                onAddStrike={() => handleAddStrike(userItem._id, userItem.name || userItem.email)}
+                actionLoading={actionLoading}
+                themeColor={getThemeColor()}
+              />
+            ))
+          )}
+        </div>
 
-              {/* Status */}
-              <div className="info-section">
-                <h3 className="info-title">Live Status</h3>
-                <div className="info-grid">
-                  <div className="info-item">
-                    <span className="info-label">Status</span>
-                    <span className="info-value">{userDetails.canGoLive ? 'Approved' : 'Not Approved'}</span>
-                  </div>
-                  {userDetails.canGoLiveReason && (
-                    <div className="info-item">
-                      <span className="info-label">Reason</span>
-                      <span className="info-value">{userDetails.canGoLiveReason}</span>
-                    </div>
-                  )}
+        {/* User Details Modal */}
+        {showDetails && userDetails && (
+          <div className="ala-modal-overlay" onClick={() => setShowDetails(false)}>
+            <div className="ala-modal" onClick={e => e.stopPropagation()}>
+              <div className="ala-modal-header">
+                <div className="ala-modal-header-left">
+                  <h2 className="ala-modal-title">{userDetails.name || 'User Details'}</h2>
+                  <span className={`ala-status-badge ${userDetails.canGoLive ? 'active' : 'inactive'}`}
+                        style={{ background: userDetails.canGoLive ? `${getThemeColor()}20` : 'rgba(239, 68, 68, 0.1)',
+                                 color: userDetails.canGoLive ? getThemeColor() : '#ef4444' }}>
+                    {userDetails.canGoLive ? 'Active' : 'Inactive'}
+                  </span>
                 </div>
+                <button className="ala-modal-close" onClick={() => setShowDetails(false)}>×</button>
               </div>
-
-              {/* Requirements */}
-              <div className="info-section">
-                <h3 className="info-title">Requirements</h3>
-                <div className="requirements-list">
-                  <div className="requirement-item">
-                    <div className="requirement-header">
-                      <span className="requirement-label">Approved Videos</span>
-                      <span className={`requirement-value ${userDetails.approvedVideoCount >= 3 ? 'met' : ''}`} 
-                            style={userDetails.approvedVideoCount >= 3 ? { color: getThemeColor() } : {}}>
-                        {userDetails.approvedVideoCount || 0}/3
-                      </span>
+              
+              <div className="ala-modal-body">
+                {/* Basic Info */}
+                <div className="ala-info-section">
+                  <h3 className="ala-info-title">Basic Information</h3>
+                  <div className="ala-info-grid">
+                    <div className="ala-info-item">
+                      <span className="ala-info-label">Email</span>
+                      <span className="ala-info-value">{userDetails.email}</span>
                     </div>
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{
-                          width: `${Math.min(((userDetails.approvedVideoCount || 0) / 3) * 100, 100)}%`,
-                          background: getThemeGradient()
-                        }}
-                      />
+                    <div className="ala-info-item">
+                      <span className="ala-info-label">Joined</span>
+                      <span className="ala-info-value">{new Date(userDetails.createdAt).toLocaleDateString()}</span>
                     </div>
-                  </div>
-                  
-                  <div className="requirement-item">
-                    <div className="requirement-header">
-                      <span className="requirement-label">Total Views</span>
-                      <span className={`requirement-value ${userDetails.totalVideoViews >= 500 ? 'met' : ''}`}
-                            style={userDetails.totalVideoViews >= 500 ? { color: getThemeColor() } : {}}>
-                        {(userDetails.totalVideoViews || 0).toLocaleString()}/500
-                      </span>
-                    </div>
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{
-                          width: `${Math.min(((userDetails.totalVideoViews || 0) / 500) * 100, 100)}%`,
-                          background: getThemeGradient()
-                        }}
-                      />
-                    </div>
-                  </div>
-                  
-                  <div className="requirement-item">
-                    <div className="requirement-header">
-                      <span className="requirement-label">Account Age</span>
-                      <span className={`requirement-value ${userDetails.accountAgeDays >= 30 ? 'met' : ''}`}
-                            style={userDetails.accountAgeDays >= 30 ? { color: getThemeColor() } : {}}>
-                        {userDetails.accountAgeDays || 0}/30 days
-                      </span>
-                    </div>
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{
-                          width: `${Math.min(((userDetails.accountAgeDays || 0) / 30) * 100, 100)}%`,
-                          background: getThemeGradient()
-                        }}
-                      />
+                    <div className="ala-info-item">
+                      <span className="ala-info-label">Account Age</span>
+                      <span className="ala-info-value">{userDetails.accountAgeDays || 0} days</span>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Strikes */}
-              {userDetails.liveStrikes && userDetails.liveStrikes.length > 0 && (
-                <div className="info-section">
-                  <h3 className="info-title">Strikes ({userDetails.liveStrikes.length})</h3>
-                  <div className="strikes-list">
-                    {userDetails.liveStrikes.map((strike, index) => (
-                      <div key={index} className="strike-item">
-                        <span className="strike-reason">{strike.reason}</span>
-                        <span className="strike-date">{new Date(strike.date).toLocaleDateString()}</span>
+                {/* Status */}
+                <div className="ala-info-section">
+                  <h3 className="ala-info-title">Live Status</h3>
+                  <div className="ala-info-grid">
+                    <div className="ala-info-item">
+                      <span className="ala-info-label">Status</span>
+                      <span className="ala-info-value">{userDetails.canGoLive ? 'Approved' : 'Not Approved'}</span>
+                    </div>
+                    {userDetails.canGoLiveReason && (
+                      <div className="ala-info-item">
+                        <span className="ala-info-label">Reason</span>
+                        <span className="ala-info-value">{userDetails.canGoLiveReason}</span>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
-              )}
 
-              {/* Actions */}
-              {user.role !== 'supportadmin' && (
-                <div className="modal-actions">
-                  {!userDetails.canGoLive ? (
-                    <button
-                      onClick={() => {
-                        handleGrantPrivilege(userDetails._id, userDetails.name || userDetails.email);
-                        setShowDetails(false);
-                      }}
-                      className="action-btn grant"
-                      style={{ background: getThemeGradient(), color: user?.role === 'superadmin' ? '#000' : '#fff' }}
-                      disabled={actionLoading}
-                    >
-                      Grant Access
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        handleRevokePrivilege(userDetails._id, userDetails.name || userDetails.email);
-                        setShowDetails(false);
-                      }}
-                      className="action-btn revoke"
-                      style={{ borderColor: getThemeColor(), color: getThemeColor() }}
-                      disabled={actionLoading}
-                    >
-                      Revoke Access
-                    </button>
-                  )}
-                  
-                  <button
-                    onClick={() => {
-                      handleAddStrike(userDetails._id, userDetails.name || userDetails.email);
-                    }}
-                    className="action-btn strike"
-                    style={{ borderColor: getThemeColor(), color: getThemeColor() }}
-                    disabled={actionLoading}
-                  >
-                    Add Strike
-                  </button>
+                {/* Requirements */}
+                <div className="ala-info-section">
+                  <h3 className="ala-info-title">Requirements</h3>
+                  <div className="ala-requirements-list">
+                    <div className="ala-requirement-item">
+                      <div className="ala-requirement-header">
+                        <span className="ala-requirement-label">Approved Videos</span>
+                        <span className={`ala-requirement-value ${userDetails.approvedVideoCount >= 3 ? 'met' : ''}`}
+                              style={userDetails.approvedVideoCount >= 3 ? { color: getThemeColor() } : {}}>
+                          {userDetails.approvedVideoCount || 0}/3
+                        </span>
+                      </div>
+                      <div className="ala-progress-bar">
+                        <div 
+                          className="ala-progress-fill" 
+                          style={{
+                            width: `${Math.min(((userDetails.approvedVideoCount || 0) / 3) * 100, 100)}%`,
+                            background: getThemeGradient()
+                          }}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="ala-requirement-item">
+                      <div className="ala-requirement-header">
+                        <span className="ala-requirement-label">Total Views</span>
+                        <span className={`ala-requirement-value ${userDetails.totalVideoViews >= 500 ? 'met' : ''}`}
+                              style={userDetails.totalVideoViews >= 500 ? { color: getThemeColor() } : {}}>
+                          {(userDetails.totalVideoViews || 0).toLocaleString()}/500
+                        </span>
+                      </div>
+                      <div className="ala-progress-bar">
+                        <div 
+                          className="ala-progress-fill" 
+                          style={{
+                            width: `${Math.min(((userDetails.totalVideoViews || 0) / 500) * 100, 100)}%`,
+                            background: getThemeGradient()
+                          }}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="ala-requirement-item">
+                      <div className="ala-requirement-header">
+                        <span className="ala-requirement-label">Account Age</span>
+                        <span className={`ala-requirement-value ${userDetails.accountAgeDays >= 30 ? 'met' : ''}`}
+                              style={userDetails.accountAgeDays >= 30 ? { color: getThemeColor() } : {}}>
+                          {userDetails.accountAgeDays || 0}/30 days
+                        </span>
+                      </div>
+                      <div className="ala-progress-bar">
+                        <div 
+                          className="ala-progress-fill" 
+                          style={{
+                            width: `${Math.min(((userDetails.accountAgeDays || 0) / 30) * 100, 100)}%`,
+                            background: getThemeGradient()
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              )}
+
+                {/* Strikes */}
+                {userDetails.liveStrikes && userDetails.liveStrikes.length > 0 && (
+                  <div className="ala-info-section">
+                    <h3 className="ala-info-title">Strikes ({userDetails.liveStrikes.length})</h3>
+                    <div className="ala-strikes-list">
+                      {userDetails.liveStrikes.map((strike, index) => (
+                        <div key={index} className="ala-strike-item">
+                          <span className="ala-strike-reason">{strike.reason}</span>
+                          <span className="ala-strike-date">{new Date(strike.date).toLocaleDateString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                {user.role !== 'supportadmin' && (
+                  <div className="ala-modal-actions">
+                    {!userDetails.canGoLive ? (
+                      <button
+                        onClick={() => {
+                          handleGrantPrivilege(userDetails._id, userDetails.name || userDetails.email);
+                          setShowDetails(false);
+                        }}
+                        className="ala-action-btn ala-grant-btn"
+                        style={{ background: getThemeGradient(), color: '#000000' }}
+                        disabled={actionLoading}
+                      >
+                        Grant Access
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          handleRevokePrivilege(userDetails._id, userDetails.name || userDetails.email);
+                          setShowDetails(false);
+                        }}
+                        className="ala-action-btn ala-revoke-btn"
+                        style={{ borderColor: getThemeColor(), color: getThemeColor() }}
+                        disabled={actionLoading}
+                      >
+                        Revoke Access
+                      </button>
+                    )}
+                    
+                    <button
+                      onClick={() => {
+                        handleAddStrike(userDetails._id, userDetails.name || userDetails.email);
+                      }}
+                      className="ala-action-btn ala-strike-btn"
+                      style={{ borderColor: '#ef4444', color: '#ef4444' }}
+                      disabled={actionLoading}
+                    >
+                      Add Strike
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

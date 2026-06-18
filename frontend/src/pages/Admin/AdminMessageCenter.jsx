@@ -1,29 +1,22 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/set-state-in-effect */
 /**
  * pages/admin/AdminMessageCenter.jsx
  *
  * Platform admins + super admin can view user conversations (read-only).
- * Super admin also sees a tab for admin conversations.
+ * Admin conversation moderation moved to MessageModeration.jsx
  *
  * Themed to match AdminAuditLogs — black canvas, per-role accent, animated SVG bg.
- * New features: seen receipt display, close/leave conversation action.
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../../context/AppContext';
 import './AdminMessageCenter.css';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 /* ── Formatters ── */
-function formatDate(date) {
-  if (!date) return '—';
-  return new Date(date).toLocaleDateString([], {
-    year: 'numeric', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
-}
-
 function formatShortDate(date) {
   if (!date) return '—';
   const d = new Date(date);
@@ -96,24 +89,24 @@ function PlatformBg() {
     <svg className="amc-bg-svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <pattern id="amcpbg" width="34" height="34" patternUnits="userSpaceOnUse">
-          <path d="M34,0 L0,0 0,34" fill="none" stroke="#4f6ef7" strokeOpacity="0.04" strokeWidth="0.5" />
+          <path d="M34,0 L0,0 0,34" fill="none" stroke="#3B82F6" strokeOpacity="0.04" strokeWidth="0.5" />
         </pattern>
       </defs>
       <rect width="1440" height="900" fill="url(#amcpbg)">
         <animate attributeName="opacity" values="0.5;1;0.5" dur="4s" repeatCount="indefinite" />
       </rect>
       {traces.map((d, i) => (
-        <path key={i} d={d} fill="none" stroke="#4f6ef7" strokeOpacity="0.08" strokeWidth="1.5">
+        <path key={i} d={d} fill="none" stroke="#3B82F6" strokeOpacity="0.08" strokeWidth="1.5">
           <animate attributeName="stroke-opacity" values="0.08;0.2;0.08" dur={`${3 + i * 0.7}s`} begin={`${i * 0.4}s`} repeatCount="indefinite" />
         </path>
       ))}
       {nodes.map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r="4" fill="#4f6ef7" fillOpacity="0.5">
+        <circle key={i} cx={x} cy={y} r="4" fill="#3B82F6" fillOpacity="0.5">
           <animate attributeName="r" values="4;9;4" dur={`${2 + i * 0.35}s`} begin={`${i * 0.55}s`} repeatCount="indefinite" />
           <animate attributeName="fill-opacity" values="0.5;0;0.5" dur={`${2 + i * 0.35}s`} begin={`${i * 0.55}s`} repeatCount="indefinite" />
         </circle>
       ))}
-      <circle r="3.5" fill="#4f6ef7" fillOpacity="0.9">
+      <circle r="3.5" fill="#3B82F6" fillOpacity="0.9">
         <animateMotion dur="9s" repeatCount="indefinite" path="M0,180 H280 V130 H560 V180 H860 V90 H1440" />
       </circle>
     </svg>
@@ -153,177 +146,24 @@ function SupportBg() {
 }
 
 /* ══════════════════════════════════════
-   CONVERSATION MODAL
-══════════════════════════════════════ */
-function ConvModal({ convId, lane, onClose, token, accentRole }) {
-  const [loading, setLoading] = useState(true);
-  const [conv, setConv] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const feedRef = useRef(null);
-
-  const endpoint = lane === 'admin'
-    ? `${API_BASE}/messages/admin/admin-conversations/${convId}`
-    : `${API_BASE}/messages/admin/user-conversations/${convId}`;
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(endpoint, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        if (data.success) {
-          setConv(data.conversation);
-          setMessages(data.messages || []);
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-        setTimeout(() => {
-          if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-        }, 100);
-      }
-    })();
-  }, [convId, endpoint, token]);
-
-  const participantMap = {};
-  conv?.participantProfiles?.forEach((p) => {
-    if (p) participantMap[p._id?.toString() || p.id?.toString()] = p;
-  });
-
-  const getSenderName = (msg) => {
-    const profile = participantMap[msg.senderId?.toString()];
-    if (!profile) return 'Unknown';
-    return profile.displayName || profile.username || profile.fullName || 'Unknown';
-  };
-
-  /* Seen info: last message read receipts */
-  const getSeenBy = (msg, index) => {
-    if (!conv?.participants) return [];
-    const isLast = index === messages.length - 1;
-    if (!isLast) return [];
-    return conv.participants
-      .filter((p) => {
-        const lastRead = p.lastReadAt ? new Date(p.lastReadAt) : null;
-        const msgTime = new Date(msg.createdAt);
-        return lastRead && lastRead >= msgTime;
-      })
-      .map((p) => {
-        const profile = participantMap[p.participantId?.toString()];
-        return profile?.displayName || profile?.username || profile?.fullName || 'Someone';
-      });
-  };
-
-  const handleCloseConversation = async () => {
-    if (!window.confirm('Mark this conversation as closed?')) return;
-    try {
-      await fetch(`${API_BASE}/messages/admin/conversations/${convId}/close`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      });
-      onClose();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const participants = conv?.participantProfiles
-    ?.map((p) => p?.displayName || p?.fullName || p?.username || 'User')
-    .join(' — ');
-
-  return (
-    <div
-      className="amc-modal-overlay"
-      data-role={accentRole}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="amc-modal">
-        <div className="amc-modal__header">
-          <div>
-            <div className="amc-modal__title">{participants || 'Conversation'}</div>
-            <div className="amc-modal__sub">
-              {messages.length} messages · {lane === 'admin' ? 'Admin channel' : 'User conversation'}
-            </div>
-          </div>
-          <div className="amc-modal__header-actions">
-            <button
-              className="amc-modal__action-btn amc-modal__action-btn--close-conv"
-              onClick={handleCloseConversation}
-              title="Close / archive this conversation"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-              Close Chat
-            </button>
-            <button className="amc-modal__close" onClick={onClose} aria-label="Close">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div className="amc-modal__feed" ref={feedRef}>
-          {loading ? (
-            <div className="amc-loading">Loading messages…</div>
-          ) : messages.length === 0 ? (
-            <div className="amc-empty">No messages in this conversation.</div>
-          ) : (
-            messages.map((msg, index) => {
-              const seenBy = getSeenBy(msg, index);
-              return (
-                <div key={msg._id} className="amc-msg-row">
-                  <div className="amc-msg-row__sender">{getSenderName(msg)}</div>
-                  <div className={`amc-msg-row__bubble${msg.isDeleted ? ' amc-msg-row__bubble--deleted' : ''}`}>
-                    {msg.isDeleted ? '[deleted]' : msg.content}
-                  </div>
-                  <div className="amc-msg-row__footer">
-                    <span className="amc-msg-row__time">{formatDate(msg.createdAt)}</span>
-                    {seenBy.length > 0 && (
-                      <span className="amc-msg-row__seen">
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
-                        Seen by {seenBy.join(', ')}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
 export default function AdminMessageCenter() {
   const { user, token } = useAppContext();
+  const navigate = useNavigate();
   const role = user?.role || '';
-  const isSuperAdmin = role === 'superadmin' || role === 'super_admin';
   const normalizedRole = role.replace('_', '').toLowerCase();
 
-  const [activeTab, setActiveTab] = useState('user');
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [searchQ, setSearchQ] = useState('');
-  const [openConvId, setOpenConvId] = useState(null);
 
-  const fetchConversations = useCallback(async (tab, pg) => {
+  const fetchConversations = useCallback(async (pg) => {
     setLoading(true);
-    const endpoint = tab === 'admin'
-      ? `${API_BASE}/messages/admin/admin-conversations?page=${pg}&limit=20`
-      : `${API_BASE}/messages/admin/user-conversations?page=${pg}&limit=20`;
+    const endpoint = `${API_BASE}/messages/admin/user-conversations?page=${pg}&limit=20`;
 
     try {
       const res = await fetch(endpoint, {
@@ -343,13 +183,11 @@ export default function AdminMessageCenter() {
   }, [token]);
 
   useEffect(() => {
-    fetchConversations(activeTab, page);
-  }, [fetchConversations, activeTab, page]);
+    fetchConversations(page);
+  }, [fetchConversations, page]);
 
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-    setPage(1);
-    setSearchQ('');
+  const handleViewConversation = (convId) => {
+    navigate(`/admin/messages/user/${convId}`);
   };
 
   const filtered = searchQ.trim()
@@ -361,8 +199,20 @@ export default function AdminMessageCenter() {
       )
     : conversations;
 
+  // Get theme color for role-based styling
+  const getThemeColor = () => {
+    switch(normalizedRole) {
+      case 'superadmin': return '#FFD700';
+      case 'platformadmin': return '#3B82F6';
+      case 'supportadmin': return '#22c55e';
+      default: return '#FFD700';
+    }
+  };
+
+  const themeColor = getThemeColor();
+
   return (
-    <div className="amc-root" data-role={normalizedRole}>
+    <div className="amc-root" data-role={normalizedRole} style={{ '--accent': themeColor }}>
 
       {/* Animated background */}
       <div className="amc-bg" aria-hidden="true">
@@ -378,28 +228,10 @@ export default function AdminMessageCenter() {
       <header className="amc-header">
         <div className="amc-header__line" />
         <div className="amc-header__eyebrow">Moderation</div>
-        <h1 className="amc-header__title">Message Center</h1>
-        <p className="amc-header__sub">Read-only view of platform conversations</p>
+        <h1 className="amc-header__title">Users Message Center</h1>
+        <p className="amc-header__sub">View and manage user conversations</p>
         <div className="amc-header__line" />
       </header>
-
-      {/* Tabs */}
-      <div className="amc-tabs">
-        <button
-          className={`amc-tab${activeTab === 'user' ? ' amc-tab--active' : ''}`}
-          onClick={() => handleTabChange('user')}
-        >
-          User Conversations
-        </button>
-        {isSuperAdmin && (
-          <button
-            className={`amc-tab${activeTab === 'admin' ? ' amc-tab--active' : ''}`}
-            onClick={() => handleTabChange('admin')}
-          >
-            Admin Channels
-          </button>
-        )}
-      </div>
 
       {/* Toolbar */}
       <div className="amc-toolbar">
@@ -420,9 +252,17 @@ export default function AdminMessageCenter() {
 
       {/* Table */}
       {loading ? (
-        <div className="amc-loading">Loading conversations…</div>
+        <div className="amc-loading">
+          <div className="amc-loading__ring" style={{ borderTopColor: themeColor }}></div>
+          <p>Loading conversations...</p>
+        </div>
       ) : filtered.length === 0 ? (
-        <div className="amc-empty">No conversations found.</div>
+        <div className="amc-empty">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <p>No user conversations found.</p>
+        </div>
       ) : (
         <>
           <div className="amc-table__head">
@@ -442,8 +282,8 @@ export default function AdminMessageCenter() {
               return (
                 <div
                   key={conv._id}
-                  className={`amc-row${openConvId === conv._id ? ' amc-row--active' : ''}`}
-                  onClick={() => setOpenConvId(conv._id)}
+                  className="amc-row"
+                  onClick={() => handleViewConversation(conv._id)}
                 >
                   <div className="amc-row__participants">
                     {profiles.map((p, i) => p && (
@@ -452,8 +292,8 @@ export default function AdminMessageCenter() {
                           {p.displayName || p.username || p.fullName || 'Unknown'}
                         </div>
                         <div className="amc-row__participant-sub">
-                          <span className={`amc-role-tag amc-role-tag--${activeTab === 'admin' ? 'admin' : 'user'}`}>
-                            {activeTab === 'admin' ? roleLabel(p.role) : (p.username ? `@${p.username}` : 'user')}
+                          <span className="amc-role-tag amc-role-tag--user">
+                            {p.username ? `@${p.username}` : 'user'}
                           </span>
                         </div>
                       </div>
@@ -468,7 +308,7 @@ export default function AdminMessageCenter() {
                     {formatShortDate(lastMsg?.sentAt || conv.updatedAt)}
                   </div>
 
-                  <div className="amc-row__count">
+                  <div className="amc-row__status">
                     {isSeen
                       ? <span className="amc-seen-badge">Seen</span>
                       : <span className="amc-unseen-badge">Unread</span>
@@ -478,9 +318,13 @@ export default function AdminMessageCenter() {
                   <div className="amc-row__action">
                     <button
                       className="amc-row__view-btn"
-                      onClick={(e) => { e.stopPropagation(); setOpenConvId(conv._id); }}
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        handleViewConversation(conv._id);
+                      }}
+                      style={{ '--accent': themeColor }}
                     >
-                      view
+                      View
                     </button>
                   </div>
                 </div>
@@ -494,27 +338,20 @@ export default function AdminMessageCenter() {
                 className="amc-page-btn"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
-              >prev</button>
+              >
+                Previous
+              </button>
               <span>{page} / {totalPages}</span>
               <button
                 className="amc-page-btn"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}
-              >next</button>
+              >
+                Next
+              </button>
             </div>
           )}
         </>
-      )}
-
-      {/* Conversation modal */}
-      {openConvId && (
-        <ConvModal
-          convId={openConvId}
-          lane={activeTab}
-          token={token}
-          accentRole={normalizedRole}
-          onClose={() => setOpenConvId(null)}
-        />
       )}
     </div>
   );

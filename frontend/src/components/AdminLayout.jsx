@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 // FILE: src/components/AdminLayout.jsx
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
@@ -78,14 +77,17 @@ export default function AdminLayout() {
     return () => window.removeEventListener('videoPanelStateChange', handlePanelStateChange);
   }, [sidebarOpen]);
 
+  // CORRECTED: Fixed paths for all routes
   const navLinks = [
     { path: "/admin/dashboard", label: "Dashboard", show: true },
     { path: "/admin/users", label: "Users", show: true },
     { path: "/admin/video-approvals", label: "Video Approvals", show: isPlatformAdmin || isSuperAdmin },
+    { path: "/admin/video-moderation", label: "Video Moderation", show: isPlatformAdmin || isSuperAdmin || isSupportAdmin },
+    { path: "/admin/user-trash", label: "User Trash", show: isPlatformAdmin || isSuperAdmin || isSupportAdmin },
     { path: "/admin/live-approvals", label: "Live Approvals", show: isPlatformAdmin || isSuperAdmin },
     { path: "/admin/admins", label: "Admins", show: isSuperAdmin },
-    { path: "/admin/inactive-admins", label: "Inactive Admins", show: isSuperAdmin },
-    { path: "/admin/create-admin", label: "Create Admin", show: isSuperAdmin },
+    { path: "/admin/admins/inactive", label: "Inactive Admins", show: isSuperAdmin },
+    { path: "/admin/admins/create", label: "Create Admin", show: isSuperAdmin },
     { path: "/admin/audit-logs", label: "Audit Logs", show: isSuperAdmin },
     { path: "/admin/messages", label: "Messages", show: true },
     { path: "/admin/message-moderation", label: "Message Moderation", show: true },
@@ -93,6 +95,15 @@ export default function AdminLayout() {
     { path: "/admin/campaigns", label: "Campaigns", show: isPlatformAdmin || isSuperAdmin },
     { path: "/admin/profile", label: "Profile", show: true },
   ];
+
+  // Helper function to check if a link is active
+  const isLinkActive = (linkPath) => {
+    if (linkPath === "/admin/messages") {
+      // Messages tab should be active for /admin/messages AND any /admin/messages/:type/:convId
+      return location.pathname === linkPath || location.pathname.startsWith("/admin/messages/");
+    }
+    return location.pathname === linkPath;
+  };
 
   const getIconSvg = (label) => {
     switch(label) {
@@ -119,6 +130,24 @@ export default function AdminLayout() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="2" y="6" width="16" height="12" rx="2" />
             <path d="M22 8l-4 4 4 4" />
+          </svg>
+        );
+      case "Video Moderation":
+        return (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <circle cx="12" cy="16" r="0.5" fill="currentColor" />
+          </svg>
+        );
+      case "User Trash":
+        return (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 7h16" />
+            <path d="M10 11v6" />
+            <path d="M14 11v6" />
+            <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12" />
+            <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
           </svg>
         );
       case "Live Approvals":
@@ -168,9 +197,8 @@ export default function AdminLayout() {
       case "Message Moderation":
         return (
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <circle cx="12" cy="16" r="0.5" fill="currentColor" />
           </svg>
         );
       case "Live Chat":
@@ -206,7 +234,6 @@ export default function AdminLayout() {
   const toggleSidebar = () => {
     const newState = !sidebarOpen;
     setSidebarOpen(newState);
-    // If opening sidebar, dispatch event to close video panel
     if (newState) {
       window.dispatchEvent(new CustomEvent('closeVideoPanel'));
     }
@@ -239,23 +266,26 @@ export default function AdminLayout() {
         </div>
 
         <nav className="admin-nav">
-          {navLinks.filter(link => link.show).map((link) => (
-            <Link
-              key={link.path}
-              to={link.path}
-              className="admin-nav-link"
-              style={{
-                background: location.pathname === link.path ? `rgba(${accentRgb}, 0.1)` : "transparent",
-                borderLeft: location.pathname === link.path ? `3px solid ${accent}` : "3px solid transparent",
-                color: location.pathname === link.path ? accent : "rgba(255,255,255,0.7)"
-              }}
-            >
-              <span className="admin-nav-icon">
-                {getIconSvg(link.label)}
-              </span>
-              <span className="admin-nav-label">{link.label}</span>
-            </Link>
-          ))}
+          {navLinks.filter(link => link.show).map((link) => {
+            const isActive = isLinkActive(link.path);
+            return (
+              <Link
+                key={link.path}
+                to={link.path}
+                className="admin-nav-link"
+                style={{
+                  background: isActive ? `rgba(${accentRgb}, 0.1)` : "transparent",
+                  borderLeft: isActive ? `3px solid ${accent}` : "3px solid transparent",
+                  color: isActive ? accent : "rgba(255,255,255,0.7)"
+                }}
+              >
+                <span className="admin-nav-icon">
+                  {getIconSvg(link.label)}
+                </span>
+                <span className="admin-nav-label">{link.label}</span>
+              </Link>
+            );
+          })}
         </nav>
 
         <div className="admin-sidebar-footer" style={{ borderTop: `1px solid rgba(${accentRgb}, 0.15)` }}>
@@ -287,3 +317,7 @@ export default function AdminLayout() {
     </div>
   );
 }
+
+/**
+ * END OF FILE: frontend/src/components/AdminLayout.jsx
+ */

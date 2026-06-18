@@ -195,6 +195,9 @@
   flex: 1;
   margin-left: 260px;
   transition: margin-left 0.3s ease;
+  background: #000000;
+  position: relative;
+  z-index: 2;
 }
 
 .admin-sidebar.closed ~ .admin-main {
@@ -204,6 +207,9 @@
 .admin-content {
   padding: 24px;
   min-height: 100vh;
+  background: #000000;
+  position: relative;
+  z-index: 2;
 }
 
 /* Custom Scrollbar */
@@ -229,15 +235,15 @@
   .admin-sidebar {
     transform: translateX(-260px);
   }
-  
+
   .admin-sidebar.open {
     transform: translateX(0);
   }
-  
+
   .admin-main {
     margin-left: 0;
   }
-  
+
   .admin-sidebar-toggle {
     left: 20px;
   }

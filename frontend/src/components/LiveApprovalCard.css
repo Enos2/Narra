@@ -1,295 +1,324 @@
-/* File: /components/LiveApprovalCard.css */
-.live-approval-card {
-  background: rgb(0, 0, 0);
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e0e0e0;
-  transition: transform 0.2s, box-shadow 0.2s;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+/* ═══════════════════════════════════════════════════════════════════════════
+   LiveApprovalCard.css  ·  Pure Black Canvas  ·  Theme-aware component
+   ═══════════════════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400&display=swap');
+
+.lac-card {
+  --accent: #FFD700;
+  
+  background: #000000;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 1.2rem;
+  transition: all 0.3s ease;
+  font-family: 'DM Sans', sans-serif;
 }
 
-.live-approval-card:hover {
+.lac-card:hover {
+  border-color: var(--accent);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
-.card-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 8px;
-}
-
-.user-avatar {
-  width: 50px;
-  height: 50px;
-  background: #3498db;
-  color: white;
-  border-radius: 10px;
+/* Header */
+.lac-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: 600;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.lac-avatar-container {
+  position: relative;
+  width: 52px;
+  height: 52px;
   flex-shrink: 0;
 }
 
-.user-info {
+.lac-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--accent);
+}
+
+.lac-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: #000000;
+  font-family: 'Bebas Neue', sans-serif;
+  border: 2px solid var(--accent);
+}
+
+.lac-info {
   flex: 1;
   min-width: 0;
 }
 
-.user-name {
-  font-size: 16px;
-  font-weight: 600;
-  color: #2c3e50;
-  margin: 0 0 4px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.lac-name {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.2rem 0;
+  color: #FFFFFF;
 }
 
-.user-email {
-  font-size: 12px;
-  color: #666;
+.lac-email {
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.5);
+  font-family: 'DM Mono', monospace;
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
 }
 
-.status-badge {
-  display: flex;
+.lac-status-badge {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 0.3rem;
+  padding: 0.25rem 0.7rem;
   border-radius: 20px;
-  font-size: 11px;
+  font-size: 0.65rem;
   font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
   flex-shrink: 0;
 }
 
-.status-badge.pending {
-  background: #fff3cd;
-  color: #856404;
+.lac-status-text {
+  font-family: 'DM Sans', sans-serif;
 }
 
-.status-badge.auto-qualified {
-  background: #d1ecf1;
-  color: #0c5460;
-}
-
-.status-badge.manual-approved {
-  background: #d4edda;
-  color: #155724;
-}
-
-.status-badge.revoked {
-  background: #f8d7da;
-  color: #721c24;
-}
-
-.status-badge.unknown {
-  background: #e2e3e5;
-  color: #383d41;
-}
-
-.status-icon {
-  font-size: 12px;
-}
-
-.card-stats {
+/* Stats Grid */
+.lac-stats {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  background: #000000;
-  padding: 16px;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stat-label {
-  font-size: 11px;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 500;
-}
-
-.stat-value {
-  font-size: 14px;
-  font-weight: 600;
-  color: #2c3e50;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.stat-value.met {
-  color: #28a745;
-}
-
-.stat-value.met::before {
-  content: "✓";
-  font-size: 12px;
-}
-
-.stat-value.not-met {
-  color: #dc3545;
-}
-
-.stat-value.not-met::before {
-  content: "✗";
-  font-size: 12px;
-}
-
-.qualification-status {
-  padding: 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.auto-qualify-notice {
-  background: #d1ecf1;
-  color: #0c5460;
-  width: 100%;
-  padding: 10px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.missing-requirements {
-  background: #fff3cd;
-  color: #856404;
-  width: 100%;
-  padding: 10px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.approved-status {
-  background: #d4edda;
-  color: #155724;
-  width: 100%;
-  padding: 10px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.notice-icon,
-.missing-icon,
-.approved-icon {
-  font-size: 14px;
-}
-
-.card-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.card-actions button {
-  flex: 1;
-  min-width: 100px;
-  padding: 10px;
-  border: none;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
+.lac-stat-item {
   text-align: center;
 }
 
-.btn-details {
-  background: #6c757d;
-  color: white;
+.lac-stat-label {
+  font-size: 0.6rem;
+  color: rgba(255,255,255,0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.2rem;
 }
 
-.btn-details:hover:not(:disabled) {
-  background: #5a6268;
+.lac-stat-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: 'DM Mono', monospace;
 }
 
-.btn-approve {
-  background: #28a745;
-  color: white;
+/* Individual stat colors */
+.lac-stat-value.approved-videos {
+  color: #a855f7;
+}
+.lac-stat-value.approved-videos.met {
+  color: #c084fc;
+  text-shadow: 0 0 8px rgba(168, 85, 247, 0.3);
 }
 
-.btn-approve:hover:not(:disabled) {
-  background: #218838;
+.lac-stat-value.total-views {
+  color: #06b6d4;
+}
+.lac-stat-value.total-views.met {
+  color: #22d3ee;
+  text-shadow: 0 0 8px rgba(6, 182, 212, 0.3);
 }
 
-.btn-revoke {
-  background: #dc3545;
-  color: white;
+.lac-stat-value.account-age {
+  color: #f59e0b;
+}
+.lac-stat-value.account-age.met {
+  color: #fbbf24;
+  text-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
 }
 
-.btn-revoke:hover:not(:disabled) {
-  background: #c82333;
+.lac-stat-value.active-strikes {
+  color: #ef4444;
+}
+.lac-stat-value.active-strikes.met {
+  color: #22c55e;
+  text-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
 }
 
-.btn-strike {
-  background: #ffc107;
-  color: #212529;
+.lac-stat-value .stat-number {
+  font-size: 1rem;
+  font-weight: 700;
 }
 
-.btn-strike:hover:not(:disabled) {
-  background: #e0a800;
-}
-
-.btn-remove-strike {
-  background: #6c757d;
-  color: white;
-}
-
-.btn-remove-strike:hover:not(:disabled) {
-  background: #5a6268;
-}
-
-.card-actions button:disabled {
+.lac-stat-value .stat-max {
+  font-size: 0.7rem;
   opacity: 0.6;
+  margin-left: 0.2rem;
+}
+
+/* Qualification Status */
+.lac-qualification-status {
+  margin-bottom: 1rem;
+}
+
+.lac-auto-qualify-notice,
+.lac-missing-requirements,
+.lac-approved-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border: 1px solid;
+}
+
+.lac-notice-icon,
+.lac-missing-icon,
+.lac-approved-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.lac-auto-qualify-notice span,
+.lac-approved-status span {
+  color: rgba(255,255,255,0.8);
+}
+
+.lac-missing-requirements span {
+  color: #ef4444;
+}
+
+/* Actions */
+.lac-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lac-btn {
+  flex: 1;
+  min-width: 80px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.lac-btn:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-@media (max-width: 480px) {
-  .live-approval-card {
-    padding: 16px;
+.lac-btn-details {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #FFFFFF;
+}
+
+.lac-btn-details:hover:not(:disabled) {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.2);
+}
+
+.lac-btn-grant {
+  border: none;
+}
+
+.lac-btn-grant:hover:not(:disabled) {
+  opacity: 0.85;
+  transform: scale(0.98);
+}
+
+.lac-btn-revoke {
+  background: transparent;
+  border-width: 1px;
+  border-style: solid;
+}
+
+.lac-btn-revoke:hover:not(:disabled) {
+  background: var(--accent);
+  color: #000000 !important;
+}
+
+.lac-btn-strike {
+  background: transparent;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+}
+
+.lac-btn-strike:hover:not(:disabled) {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #ffffff !important;
+}
+
+.lac-btn-remove-strike {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  color: rgba(255,255,255,0.7);
+}
+
+.lac-btn-remove-strike:hover:not(:disabled) {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.3);
+}
+
+/* Responsive */
+@media (max-width: 500px) {
+  .lac-card {
+    padding: 1rem;
   }
   
-  .card-stats {
-    grid-template-columns: 1fr;
+  .lac-header {
+    flex-wrap: wrap;
   }
   
-  .card-actions {
+  .lac-status-badge {
+    margin-left: auto;
+  }
+  
+  .lac-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+  
+  .lac-actions {
+    gap: 0.4rem;
+  }
+  
+  .lac-btn {
+    font-size: 0.65rem;
+    padding: 0.4rem 0.6rem;
+    min-width: 70px;
+  }
+}
+
+@media (max-width: 400px) {
+  .lac-actions {
     flex-direction: column;
   }
   
-  .card-actions button {
-    min-width: auto;
+  .lac-btn {
+    width: 100%;
   }
 }

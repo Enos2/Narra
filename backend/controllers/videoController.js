@@ -1,10 +1,10 @@
 /**
- * File: backend/controllers/videoController.js
+ * FILE: backend/controllers/videoController.js
  * Description: Handles all video operations – upload, watch, purchase, edit,
  * admin moderation, shadow ban, RBAC enforcement, age restrictions, and paid access.
- * FULLY UPDATED: Added like/dislike, share tracking, and improved comment handling
- * UPDATED: Added getRecommendedVideos function and ObjectId validation
- * UPDATED: Added notification calls for upload, approval, rejection, removal, restore
+ * UPDATED: Added user trash system with 30-day retention, restore limits (3x/90days), 10-day cooldown
+ * UPDATED: Removed userPermanentDeleteVideo - users cannot permanently delete
+ * ADDED: Trash system methods using Video schema methods
  */
 
 const Video = require('../models/Video');
@@ -16,7 +16,7 @@ const NotificationService = require('../services/notificationService');
 
 /**
  * --------------------------
- * UPLOAD VIDEO (MOVIES & SERIES) - FIXED: Status explicitly set to pending
+ * UPLOAD VIDEO (MOVIES & SERIES)
  * --------------------------
  */
 const uploadVideo = async (req, res) => {
@@ -24,7 +24,6 @@ const uploadVideo = async (req, res) => {
   console.log('User ID:', req.user?._id);
   
   try {
-    // Check if user can upload
     if (!req.user || !req.user._id) {
       console.log('ERROR: No user found');
       return res.status(401).json({ success: false, message: 'Unauthorized - No user found' });
@@ -57,7 +56,6 @@ const uploadVideo = async (req, res) => {
 
     console.log('Parsing form data...');
     
-    // Parse JSON fields
     let parsedGenre, parsedTags, parsedSeasons, parsedSubtitles, parsedContentFlags;
     try {
       parsedGenre = genre ? JSON.parse(genre) : [];
@@ -73,7 +71,6 @@ const uploadVideo = async (req, res) => {
     } catch (parseErr) {
       console.error('Parse error:', parseErr);
       
-      // Send upload failure notification for parsing error
       await NotificationService.notifyUploadFailure(
         req.user._id,
         title || 'your video',
@@ -87,7 +84,6 @@ const uploadVideo = async (req, res) => {
       });
     }
 
-    // Validate required fields
     if (!title || !ageRating) {
       console.log('ERROR: Missing required fields');
       
@@ -104,7 +100,6 @@ const uploadVideo = async (req, res) => {
       });
     }
 
-    // Validate series structure
     if (type === 'series') {
       if (!parsedSeasons || !Array.isArray(parsedSeasons) || parsedSeasons.length === 0) {
         await NotificationService.notifyUploadFailure(
@@ -121,7 +116,6 @@ const uploadVideo = async (req, res) => {
       }
     }
 
-    // Check for required files
     if (!req.files || !req.files.thumbnail) {
       console.log('ERROR: No thumbnail file');
       
@@ -154,12 +148,10 @@ const uploadVideo = async (req, res) => {
       });
     }
 
-    // Handle thumbnail
     const thumbnailFile = req.files.thumbnail[0];
     const thumbnailUrl = `/uploads/thumbnails/${thumbnailFile.filename}`;
     console.log('Thumbnail URL:', thumbnailUrl);
 
-    // Create video document with status explicitly set to 'pending'
     const videoData = {
       title,
       description: description || title,
@@ -208,7 +200,6 @@ const uploadVideo = async (req, res) => {
 
     console.log(`✅ Video status set to: ${videoData.status}`);
 
-    // Handle movie video file
     if (type === 'movie' && req.files.video && req.files.video[0]) {
       const videoFile = req.files.video[0];
       videoData.videoUrl = `/uploads/videos/${videoFile.filename}`;
@@ -222,7 +213,6 @@ const uploadVideo = async (req, res) => {
       }
     }
 
-    // Process series files
     if (type === 'series' && parsedSeasons.length > 0) {
       console.log('Processing series files...');
       
@@ -289,7 +279,6 @@ const uploadVideo = async (req, res) => {
       console.log('   Video status:', video.status);
       console.log('   Creator ID:', video.creator);
       
-      // ✅ Send upload success notification
       await NotificationService.notifyUploadSuccess(
         req.user._id,
         video.title,
@@ -313,7 +302,6 @@ const uploadVideo = async (req, res) => {
         errorMessage = 'A video with this title already exists';
       }
       
-      // Send upload failure notification
       await NotificationService.notifyUploadFailure(
         req.user._id,
         title || 'your video',
@@ -358,7 +346,6 @@ const uploadVideo = async (req, res) => {
     console.error('Error message:', err.message);
     console.error('Full error:', err);
     
-    // Send upload failure notification for unexpected errors
     if (req.user && req.user._id) {
       await NotificationService.notifyUploadFailure(
         req.user._id,
@@ -390,7 +377,7 @@ const uploadVideo = async (req, res) => {
 
 /**
  * --------------------------
- * GET VIDEO FEED - FIXED: Strict filtering for unauthenticated users
+ * GET VIDEO FEED
  * --------------------------
  */
 const getVideoFeed = async (req, res) => {
@@ -406,14 +393,12 @@ const getVideoFeed = async (req, res) => {
       userId
     } = req.query;
 
-    // Base query for publicly accessible videos
     const query = { 
       status: 'released',
       isDeleted: false, 
       isShadowBanned: false
     };
 
-    // CRITICAL FIX: For unauthenticated users, only show free, public videos
     if (!req.user) {
       query.isPaid = false;
       query.isPrivate = false;
@@ -497,7 +482,7 @@ const getVideoFeed = async (req, res) => {
 
 /**
  * --------------------------
- * GET RECOMMENDED VIDEOS - NEW FUNCTION
+ * GET RECOMMENDED VIDEOS
  * --------------------------
  */
 const getRecommendedVideos = async (req, res) => {
@@ -881,7 +866,7 @@ const getResumePosition = async (req, res) => {
 
 /**
  * --------------------------
- * GET VIDEOS BY STATUS (for user dashboard)
+ * GET VIDEOS BY STATUS
  * --------------------------
  */
 const getVideosByStatus = async (req, res) => {
@@ -1678,7 +1663,7 @@ const editVideo = async (req, res) => {
 
 /**
  * --------------------------
- * ADMIN MODERATION
+ * ADMIN UPDATE VIDEO FLAGS
  * --------------------------
  */
 const adminUpdateVideoFlags = async (req, res) => {
@@ -1739,7 +1724,6 @@ const updateVideoStatus = async (req, res) => {
 
     await video.save();
     
-    // Send notification based on status
     if (status === 'approved') {
       await NotificationService.notifyVideoApproved(
         video.creator,
@@ -1804,7 +1788,7 @@ const shadowBanVideo = async (req, res) => {
 
 /**
  * --------------------------
- * DELETE VIDEO
+ * DELETE VIDEO (Admin soft delete)
  * --------------------------
  */
 const deleteVideo = async (req, res) => {
@@ -2095,7 +2079,7 @@ const getPendingVideosForAdmin = async (req, res) => {
 
 /**
  * --------------------------
- * GET VIDEOS FOR ADMIN MODERATION WITH SEARCH & FILTERS
+ * GET VIDEOS FOR ADMIN MODERATION
  * --------------------------
  */
 const getVideosForAdminModeration = async (req, res) => {
@@ -2159,7 +2143,6 @@ const getVideosForAdminModeration = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // FIXED: Populate creator with firstName and lastName
     const videos = await Video.find(query)
       .populate('creator', 'firstName lastName name email username avatar isVerified')
       .populate('approvedBy', 'name email')
@@ -2173,7 +2156,6 @@ const getVideosForAdminModeration = async (req, res) => {
 
     const total = await Video.countDocuments(query);
 
-    // FIXED: Format uploadedBy properly with firstName and lastName
     const formattedVideos = videos.map(video => ({
       _id: video._id,
       title: video.title,
@@ -2371,7 +2353,6 @@ const adminApproveVideo = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2385,7 +2366,6 @@ const adminApproveVideo = async (req, res) => {
       console.error('Failed to log admin action:', logErr);
     }
 
-    // ✅ Send notification to creator
     await NotificationService.notifyVideoApproved(
       video.creator,
       video.title,
@@ -2470,7 +2450,6 @@ const adminRejectVideo = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2484,7 +2463,6 @@ const adminRejectVideo = async (req, res) => {
       console.error('Failed to log admin action:', logErr);
     }
 
-    // ✅ Send notification to creator
     await NotificationService.notifyVideoRejected(
       video.creator,
       video.title,
@@ -2541,7 +2519,6 @@ const adminRemoveVideo = async (req, res) => {
       });
     }
 
-    // Soft delete
     video.isDeleted = true;
     video.status = 'removed';
     video.removedAt = new Date();
@@ -2549,7 +2526,6 @@ const adminRemoveVideo = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2563,7 +2539,6 @@ const adminRemoveVideo = async (req, res) => {
       console.error('Failed to log admin action:', logErr);
     }
 
-    // ✅ Send notification to creator
     await NotificationService.notifyVideoRemoved(
       video.creator,
       video.title,
@@ -2620,7 +2595,6 @@ const adminRestoreVideo = async (req, res) => {
       });
     }
 
-    // Restore
     video.isDeleted = false;
     video.status = 'pending';
     video.removedAt = null;
@@ -2628,7 +2602,6 @@ const adminRestoreVideo = async (req, res) => {
 
     await video.save();
 
-    // Log admin action
     try {
       const AdminActionLog = require('../models/AdminActionLog');
       await AdminActionLog.create({
@@ -2642,7 +2615,6 @@ const adminRestoreVideo = async (req, res) => {
       console.error('Failed to log admin action:', logErr);
     }
 
-    // ✅ Send notification to creator
     await NotificationService.notifyVideoRestored(
       video.creator,
       video.title,
@@ -3172,10 +3144,14 @@ const adminRemoveShadowBan = async (req, res) => {
 
 /**
  * ================================
- * USER DELETE FUNCTIONS
+ * USER TRASH FUNCTIONS
  * ================================
  */
 
+/**
+ * USER SOFT DELETE VIDEO (Move to Trash)
+ * Sets 30-day expiry, checks cooldown period
+ */
 const userSoftDeleteVideo = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -3201,24 +3177,39 @@ const userSoftDeleteVideo = async (req, res) => {
       });
     }
 
-    video.isDeleted = true;
-    video.removedAt = new Date();
-    video.previousStatus = video.status;
-    video.status = 'removed';
+    // Check cooldown period (10 days after restore)
+    const canDeleteCheck = video.canDelete();
+    if (!canDeleteCheck.canDelete) {
+      return res.status(400).json({
+        success: false,
+        message: canDeleteCheck.message
+      });
+    }
 
-    await video.save();
+    // Move to trash using schema method
+    await video.moveToTrash();
 
     console.log(`✅ User soft deleted video: ${video._id} by user: ${req.user._id}`);
 
+    // Send notification
+    await NotificationService.createNotification({
+      userId: video.creator,
+      type: 'video_deleted',
+      title: 'Video moved to trash',
+      message: `Your video "${video.title}" has been moved to trash. It will be automatically deleted in 30 days. You can restore it at any time during this period.`,
+      data: { videoId: video._id, videoTitle: video.title, expiresAt: video.trashExpiresAt }
+    });
+
     res.json({
       success: true,
-      message: 'Video moved to trash. It will be permanently deleted in 10 days.',
+      message: 'Video moved to trash. You can restore it within 30 days.',
       video: {
         _id: video._id,
         title: video.title,
         status: video.status,
         isDeleted: video.isDeleted,
-        removedAt: video.removedAt
+        removedAt: video.removedAt,
+        trashExpiresAt: video.trashExpiresAt
       }
     });
   } catch (err) {
@@ -3231,6 +3222,10 @@ const userSoftDeleteVideo = async (req, res) => {
   }
 };
 
+/**
+ * USER RESTORE VIDEO (Restore from Trash)
+ * Checks restore limits (max 3 in 90 days)
+ */
 const userRestoreVideo = async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -3256,23 +3251,49 @@ const userRestoreVideo = async (req, res) => {
       });
     }
 
-    video.isDeleted = false;
-    video.removedAt = null;
-    video.status = video.previousStatus || 'pending';
-    video.previousStatus = undefined;
+    // Check if expired in trash
+    if (video.isExpiredInTrash()) {
+      // Permanently delete expired video
+      await Video.findByIdAndDelete(video._id);
+      return res.status(400).json({
+        success: false,
+        message: 'This video has expired in trash and has been permanently deleted.'
+      });
+    }
 
-    await video.save();
+    // Restore using schema method (checks restore limits)
+    const restoreResult = await video.restoreFromTrash(req.user._id);
+    
+    if (!restoreResult.success) {
+      // If restore limit reached, permanently delete
+      await Video.findByIdAndDelete(video._id);
+      return res.status(400).json({
+        success: false,
+        message: restoreResult.message + ' The video has been permanently deleted.'
+      });
+    }
 
     console.log(`✅ User restored video: ${video._id} by user: ${req.user._id}`);
 
+    // Send notification
+    await NotificationService.createNotification({
+      userId: video.creator,
+      type: 'video_restored',
+      title: 'Video restored from trash',
+      message: `Your video "${video.title}" has been restored. You have ${restoreResult.restoresRemaining} restores remaining within 90 days. Note: You cannot delete this video for 10 days.`,
+      data: { videoId: video._id, videoTitle: video.title, restoresRemaining: restoreResult.restoresRemaining }
+    });
+
     res.json({
       success: true,
-      message: 'Video restored successfully',
+      message: restoreResult.message,
       video: {
         _id: video._id,
         title: video.title,
         status: video.status,
-        isDeleted: video.isDeleted
+        isDeleted: video.isDeleted,
+        restoresRemaining: restoreResult.restoresRemaining,
+        cooldownUntil: video.cooldownUntil
       }
     });
   } catch (err) {
@@ -3285,46 +3306,257 @@ const userRestoreVideo = async (req, res) => {
   }
 };
 
-const userPermanentDeleteVideo = async (req, res) => {
+/**
+ * USER PERMANENT DELETE VIDEO - REMOVED
+ * Users cannot permanently delete videos directly.
+ * Videos auto-delete after 30 days in trash, or when restore limit exceeded.
+ * Admins can permanently delete from admin panel.
+ */
+
+/**
+ * ================================
+ * TRASH SYSTEM HELPERS (for admin routes)
+ * ================================
+ */
+
+/**
+ * Get all trashed videos (admin only)
+ */
+const getTrashedVideos = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
-    
-    if (!video) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Video not found' 
-      });
+    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
     }
 
-    if (video.creator.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'You can only delete your own videos' 
-      });
+    const result = await Video.getTrashedVideos(req.query);
+    
+    res.json({
+      success: true,
+      videos: result.videos,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages
+      }
+    });
+  } catch (err) {
+    console.error('Get trashed videos error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch trashed videos' });
+  }
+};
+
+/**
+ * Get trash statistics (admin only)
+ */
+const getTrashStats = async (req, res) => {
+  try {
+    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
+
+    const stats = await Video.getTrashStats();
+    
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (err) {
+    console.error('Get trash stats error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch trash stats' });
+  }
+};
+
+/**
+ * Admin restore trashed video
+ */
+const adminRestoreTrashedVideo = async (req, res) => {
+  try {
+    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
+
+    const video = await Video.findById(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
     }
 
     if (!video.isDeleted) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Video must be moved to trash first. Use soft delete.' 
-      });
+      return res.status(400).json({ success: false, message: 'Video is not in trash' });
     }
 
-    await Video.findByIdAndDelete(req.params.id);
+    // Restore without checking user limits (admin override)
+    const originalStatus = video.previousStatus || 'pending';
+    video.status = originalStatus;
+    video.isDeleted = false;
+    video.removed = false;
+    video.removedAt = null;
+    video.trashExpiresAt = null;
+    video.permanentDeleteScheduledAt = null;
+    
+    // Reset cooldown and restore tracking
+    video.cooldownUntil = null;
+    
+    await video.save();
 
-    console.log(`✅ User permanently deleted video: ${req.params.id} by user: ${req.user._id}`);
+    // Log admin action
+    try {
+      const AdminActionLog = require('../models/AdminActionLog');
+      await AdminActionLog.create({
+        admin: req.user._id,
+        action: 'ADMIN_RESTORE_TRASHED_VIDEO',
+        targetType: 'Video',
+        targetId: video._id,
+        details: { title: video.title }
+      });
+    } catch (logErr) {
+      console.error('Failed to log admin action:', logErr);
+    }
+
+    // Notify user
+    await NotificationService.createNotification({
+      userId: video.creator,
+      type: 'video_restored',
+      title: 'Your video has been restored by admin',
+      message: `Your video "${video.title}" has been restored from trash by an administrator.`,
+      data: { videoId: video._id, videoTitle: video.title }
+    });
 
     res.json({
       success: true,
-      message: 'Video permanently deleted'
+      message: 'Video restored successfully',
+      video: {
+        _id: video._id,
+        title: video.title,
+        status: video.status,
+        isDeleted: video.isDeleted
+      }
     });
   } catch (err) {
-    console.error('User permanent delete video error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to permanently delete video', 
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    console.error('Admin restore trashed video error:', err);
+    res.status(500).json({ success: false, message: 'Failed to restore video' });
+  }
+};
+
+/**
+ * Admin permanent delete trashed video
+ */
+const adminPermanentDeleteTrashedVideo = async (req, res) => {
+  try {
+    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
+
+    const video = await Video.findById(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found' });
+    }
+
+    const videoInfo = { title: video.title, creator: video.creator };
+
+    await Video.findByIdAndDelete(req.params.id);
+
+    // Log admin action
+    try {
+      const AdminActionLog = require('../models/AdminActionLog');
+      await AdminActionLog.create({
+        admin: req.user._id,
+        action: 'ADMIN_PERMANENT_DELETE_TRASHED_VIDEO',
+        targetType: 'Video',
+        targetId: req.params.id,
+        details: videoInfo,
+        reason: req.body.reason || 'Permanently deleted from trash by admin'
+      });
+    } catch (logErr) {
+      console.error('Failed to log admin action:', logErr);
+    }
+
+    res.json({
+      success: true,
+      message: 'Video permanently deleted from trash'
     });
+  } catch (err) {
+    console.error('Admin permanent delete trashed video error:', err);
+    res.status(500).json({ success: false, message: 'Failed to permanently delete video' });
+  }
+};
+
+/**
+ * Admin bulk restore trashed videos
+ */
+const adminBulkRestoreTrashedVideos = async (req, res) => {
+  try {
+    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
+
+    const { videoIds } = req.body;
+    if (!videoIds || !Array.isArray(videoIds) || videoIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'No video IDs provided' });
+    }
+
+    const results = [];
+    for (const videoId of videoIds) {
+      const video = await Video.findById(videoId);
+      if (video && video.isDeleted) {
+        const originalStatus = video.previousStatus || 'pending';
+        video.status = originalStatus;
+        video.isDeleted = false;
+        video.removed = false;
+        video.removedAt = null;
+        video.trashExpiresAt = null;
+        video.cooldownUntil = null;
+        await video.save();
+        results.push({ id: videoId, success: true, title: video.title });
+      } else {
+        results.push({ id: videoId, success: false, reason: 'Not found or not in trash' });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Restored ${results.filter(r => r.success).length} videos`,
+      results
+    });
+  } catch (err) {
+    console.error('Admin bulk restore trashed videos error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk restore videos' });
+  }
+};
+
+/**
+ * Admin bulk permanent delete trashed videos
+ */
+const adminBulkDeleteTrashedVideos = async (req, res) => {
+  try {
+    if (!['superadmin', 'platformadmin', 'supportadmin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
+    }
+
+    const { videoIds, reason } = req.body;
+    if (!videoIds || !Array.isArray(videoIds) || videoIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'No video IDs provided' });
+    }
+
+    const results = [];
+    for (const videoId of videoIds) {
+      const video = await Video.findById(videoId);
+      if (video) {
+        await Video.findByIdAndDelete(videoId);
+        results.push({ id: videoId, success: true, title: video.title });
+      } else {
+        results.push({ id: videoId, success: false, reason: 'Not found' });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Permanently deleted ${results.filter(r => r.success).length} videos from trash`,
+      results
+    });
+  } catch (err) {
+    console.error('Admin bulk delete trashed videos error:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk delete videos' });
   }
 };
 
@@ -3382,8 +3614,20 @@ module.exports = {
   adminShadowBanVideo,
   adminRemoveShadowBan,
   
-  // User delete functions
+  // User trash functions (soft delete/restore only - no permanent delete for users)
   userSoftDeleteVideo,
   userRestoreVideo,
-  userPermanentDeleteVideo
+  // userPermanentDeleteVideo - REMOVED (users cannot permanently delete)
+  
+  // Admin trash management functions
+  getTrashedVideos,
+  getTrashStats,
+  adminRestoreTrashedVideo,
+  adminPermanentDeleteTrashedVideo,
+  adminBulkRestoreTrashedVideos,
+  adminBulkDeleteTrashedVideos
 };
+
+/**
+ * END OF FILE: backend/controllers/videoController.js
+ */

@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/immutability */
 /* eslint-disable react-hooks/preserve-manual-memoization */
-
+/* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/exhaustive-deps */
 /**
  * pages/admin/AdminChat.jsx
@@ -21,6 +21,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 /* ── helpers ── */
 function initials(name = '') {
+  if (!name) return '??';
   return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '??';
 }
 
@@ -153,11 +154,6 @@ function SupportBg() {
    MAIN COMPONENT
 ══════════════════════════════════════ */
 export default function AdminChat() {
-  /*
-   * CRITICAL FIX: token lives on useAppContext, NOT on the user object.
-   * The previous version did `const { token } = user || {}` which is wrong
-   * and caused the 500 / HMR failure.
-   */
   const { user, token } = useAppContext();
 
   const {
@@ -168,22 +164,10 @@ export default function AdminChat() {
     sendMessage,
     markAsRead,
     deleteMessage,
-    searchAdmins,  // may be undefined in some MessageContext builds — guarded below
-    searchUsers,   // fallback
+    searchAdmins,
     sendTyping,
     onSocketEvent,
   } = useMessages();
-
-  /*
-   * Guard: use whichever admin/user search function the context exposes.
-   * The original AdminChat used searchAdmins. If your MessageContext only
-   * has searchUsers (like in Messages.jsx), that is used as a fallback.
-   */
-  const doSearchAdmins = typeof searchAdmins === 'function'
-    ? searchAdmins
-    : typeof searchUsers === 'function'
-      ? searchUsers
-      : null;
 
   const myId           = user?._id || user?.id;
   const myRole         = user?.role || '';
@@ -201,12 +185,14 @@ export default function AdminChat() {
   const [searchQ, setSearchQ]             = useState('');
   const [searchRes, setSearchRes]         = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [showResults, setShowResults]     = useState(false);
   /* seen: conversationId -> { seenByName, seenAt } */
   const [seenMap, setSeenMap]             = useState({});
 
   const feedRef       = useRef(null);
   const typingTimeout = useRef(null);
   const searchTimeout = useRef(null);
+  const searchRef     = useRef(null);
 
   /* ── load conversations ── */
   useEffect(() => {
@@ -311,17 +297,27 @@ export default function AdminChat() {
   const handleSearch = (e) => {
     const q = e.target.value;
     setSearchQ(q);
+    setShowResults(q.trim().length > 0);
     clearTimeout(searchTimeout.current);
-    if (!q.trim()) { setSearchRes([]); return; }
-    if (!doSearchAdmins) {
-      console.warn('AdminChat: no search function available in MessageContext');
+    
+    if (!q.trim()) { 
+      setSearchRes([]); 
+      setShowResults(false);
+      return; 
+    }
+    
+    if (!searchAdmins) {
+      console.warn('AdminChat: searchAdmins not available in MessageContext');
       return;
     }
+    
     setSearchLoading(true);
     searchTimeout.current = setTimeout(async () => {
       try {
-        const res = await doSearchAdmins(q);
+        const res = await searchAdmins(q);
+        console.log('🔍 Search results:', res);
         setSearchRes(Array.isArray(res) ? res : []);
+        setShowResults(true);
       } catch (err) {
         console.error('Search admins error:', err);
         setSearchRes([]);
@@ -331,9 +327,21 @@ export default function AdminChat() {
     }, 300);
   };
 
+  // Click outside to close search results
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setShowResults(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleSelectAdmin = async (a) => {
     setSearchQ('');
     setSearchRes([]);
+    setShowResults(false);
     try {
       const conv = await startConversation(a._id || a.id);
       if (conv) openConversation(conv._id);
@@ -413,6 +421,21 @@ export default function AdminChat() {
     (c) => c.lane === 'admin' || c.participants?.every((p) => p.participantModel === 'Admin')
   );
 
+  // Get theme color for role-based styling
+  const getThemeColor = () => {
+    switch(normalizedRole) {
+      case 'superadmin': return '#FFD700';
+      case 'platformadmin': return '#3B82F6';
+      case 'supportadmin': return '#22c55e';
+      default: return '#FFD700';
+    }
+  };
+
+  const themeColor = getThemeColor();
+  const accentRgb = themeColor === '#FFD700' ? '255, 215, 0' : 
+                    themeColor === '#3B82F6' ? '59, 130, 246' : 
+                    '34, 197, 94';
+
   return (
     <div className="adchat-root" data-role={normalizedRole}>
 
@@ -431,7 +454,7 @@ export default function AdminChat() {
         <div className="adchat-sidebar__top">
           <p className="adchat-sidebar__label">Admin Channels</p>
 
-          <div className="adchat-search" style={{ position: 'relative' }}>
+          <div className="adchat-search" ref={searchRef} style={{ position: 'relative' }}>
             <svg className="adchat-search__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
             </svg>
@@ -441,14 +464,19 @@ export default function AdminChat() {
               placeholder="Find an admin…"
               value={searchQ}
               onChange={handleSearch}
+              onFocus={() => searchQ.trim() && setShowResults(true)}
               autoComplete="off"
             />
 
-            {(searchRes.length > 0 || searchLoading) && (
+            {showResults && (searchRes.length > 0 || searchLoading) && (
               <div className="adchat-search__results">
                 {searchLoading ? (
-                  <div className="adchat-search__result" style={{ color: 'var(--text-muted)', cursor: 'default' }}>
+                  <div className="adchat-search__result" style={{ color: 'rgba(255,255,255,0.5)', cursor: 'default' }}>
                     Searching…
+                  </div>
+                ) : searchRes.length === 0 ? (
+                  <div className="adchat-search__result" style={{ color: 'rgba(255,255,255,0.5)', cursor: 'default' }}>
+                    No admins found
                   </div>
                 ) : (
                   searchRes.map((a) => (
@@ -456,7 +484,7 @@ export default function AdminChat() {
                       <div className="adchat-search__result-name">
                         {a.fullName || a.displayName || a.username || 'Admin'}
                       </div>
-                      <div className="adchat-search__result-role">
+                      <div className="adchat-search__result-role" style={{ color: themeColor }}>
                         {roleLabel(a.role || '')}
                       </div>
                     </div>
@@ -549,11 +577,11 @@ export default function AdminChat() {
             {/* Feed */}
             <div className="adchat__feed" ref={feedRef}>
               {loadingChat ? (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-m)', fontSize: 11 }}>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-m)', fontSize: 11 }}>
                   Loading messages…
                 </div>
               ) : messages.length === 0 ? (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-m)', fontSize: 11 }}>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--font-m)', fontSize: 11 }}>
                   No messages. Start the conversation.
                 </div>
               ) : (

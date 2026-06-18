@@ -1,3 +1,10 @@
+/**
+ * FILE: frontend/src/pages/Dashboard.jsx
+ * Creator Studio Dashboard - Manage user videos
+ * UPDATED: Removed permanent delete, added 30-day trash retention
+ * FIXED: Closing tags for table rows
+ */
+
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable no-case-declarations */
 /* eslint-disable no-unused-vars */
@@ -121,19 +128,17 @@ function Dashboard() {
     try {
       const { softDeleteVideo } = await import('../requests');
       const result = await softDeleteVideo(token, video._id);
-      if (result?.success) { addNotification({ type: 'success', message: 'Video moved to trash' }); setIsSidebarOpen(false); ['pending', 'approved', 'released', 'rejected'].forEach(s => fetchVideosByStatus(s)); }
-    } catch (err) { addNotification({ type: 'error', message: 'Failed to delete video' }); }
-    finally { setActionLoading(null); }
-  };
-
-  const handlePermanentDelete = async (video) => {
-    if (!token || !video) return;
-    setActionLoading(video._id);
-    try {
-      const { permanentlyDeleteVideo } = await import('../requests');
-      const result = await permanentlyDeleteVideo(token, video._id);
-      if (result?.success) { addNotification({ type: 'success', message: 'Video permanently deleted!' }); setIsSidebarOpen(false); ['pending', 'approved', 'released', 'rejected'].forEach(s => fetchVideosByStatus(s)); }
-    } catch (err) { addNotification({ type: 'error', message: 'Failed to permanently delete' }); }
+      if (result?.success) { 
+        addNotification({ 
+          type: 'success', 
+          message: `"${video.title}" moved to trash. You can restore it within 30 days.` 
+        }); 
+        setIsSidebarOpen(false); 
+        ['pending', 'approved', 'released', 'rejected'].forEach(s => fetchVideosByStatus(s)); 
+      }
+    } catch (err) { 
+      addNotification({ type: 'error', message: 'Failed to delete video' }); 
+    }
     finally { setActionLoading(null); }
   };
 
@@ -143,8 +148,14 @@ function Dashboard() {
     try {
       const { restoreVideo } = await import('../requests');
       const result = await restoreVideo(token, videoId);
-      if (result?.success) { addNotification({ type: 'success', message: 'Video restored successfully!' }); setIsSidebarOpen(false); ['pending', 'approved', 'released', 'rejected'].forEach(s => fetchVideosByStatus(s)); }
-    } catch (err) { addNotification({ type: 'error', message: 'Failed to restore' }); }
+      if (result?.success) { 
+        addNotification({ type: 'success', message: 'Video restored successfully!' }); 
+        setIsSidebarOpen(false); 
+        ['pending', 'approved', 'released', 'rejected'].forEach(s => fetchVideosByStatus(s)); 
+      }
+    } catch (err) { 
+      addNotification({ type: 'error', message: 'Failed to restore' }); 
+    }
     finally { setActionLoading(null); }
   };
 
@@ -431,11 +442,10 @@ function Dashboard() {
                     <>
                       {activeTab === 'approved' && <button className="dash-action-btn dash-action-release" onClick={() => setShowReleaseModal(true)} disabled={actionLoading === selectedVideo._id}>🚀 Release Video</button>}
                       {activeTab === 'released' && <button className="dash-action-btn dash-action-view" onClick={() => window.open(`/video/${selectedVideo._id}`)} disabled={actionLoading === selectedVideo._id}>🌐 View Live</button>}
-                      <button className="dash-action-btn dash-action-trash" onClick={() => { if (window.confirm(`Move "${selectedVideo.title}" to trash?`)) handleSoftDelete(selectedVideo); }} disabled={actionLoading === selectedVideo._id}>🗑 Move to Trash</button>
-                      <button className="dash-action-btn dash-action-delete" onClick={() => { if (window.confirm(`PERMANENTLY DELETE "${selectedVideo.title}"?`)) handlePermanentDelete(selectedVideo); }} disabled={actionLoading === selectedVideo._id}>✕ Permanent Delete</button>
+                      <button className="dash-action-btn dash-action-trash" onClick={() => { if (window.confirm(`Move "${selectedVideo.title}" to trash? It will be automatically deleted after 30 days.`)) handleSoftDelete(selectedVideo); }} disabled={actionLoading === selectedVideo._id}>🗑 Move to Trash</button>
                     </>
                   ) : (
-                    <button className="dash-action-btn dash-action-restore" onClick={() => { if (window.confirm(`Restore "${selectedVideo.title}"?`)) handleRestore(selectedVideo._id); }} disabled={actionLoading === selectedVideo._id}>↩ Restore Video</button>
+                    <button className="dash-action-btn dash-action-restore" onClick={() => { if (window.confirm(`Restore "${selectedVideo.title}"? You have ${selectedVideo.restoreCount !== undefined ? (3 - selectedVideo.restoreCount) : 3} restores left in 90 days.`)) handleRestore(selectedVideo._id); }} disabled={actionLoading === selectedVideo._id}>↩ Restore Video</button>
                   )}
                   {isAdmin && activeTab === 'pending' && (
                     <>
@@ -492,7 +502,14 @@ function Dashboard() {
             </div>
             <div className="dash-reason-body">
               <p>Please provide a reason:</p>
-              <textarea className="dash-reason-textarea" value={reasonText} onChange={(e) => { setReasonText(e.target.value); setReasonError(''); }} rows={4} autoFocus style={{ borderColor: accent }} />
+              <textarea className="dash-reason-textarea" value={reasonText} onChange={(e) => { setReasonText(e.target.value); setReasonError(''); }} rows={4} autoFocus style={{ borderColor: accent }} 
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    executeActionWithReason();
+                  }
+                }}
+              />
               {reasonError && <div className="dash-reason-error">{reasonError}</div>}
               <div className="dash-reason-actions">
                 <button className="dash-reason-cancel" onClick={() => setShowReasonModal(false)}>Cancel</button>
@@ -507,3 +524,7 @@ function Dashboard() {
 }
 
 export default Dashboard;
+
+/**
+ * END OF FILE: frontend/src/pages/Dashboard.jsx
+ */

@@ -5,7 +5,11 @@
 /* eslint-disable react-refresh/only-export-components */
 
 /* AppContext.jsx - Manages user authentication and videos ONLY.
-   Admin functions moved to AdminContext.jsx */
+   Admin functions moved to AdminContext.jsx
+   FIXED: Added proper token validation before setting isAuthReady
+   FIXED: Added isTokenValid check from requests.js
+   FIXED: Function order to prevent TDZ error with logout
+*/
 
 import React, {
   createContext,
@@ -27,6 +31,7 @@ import {
   updateVideoStatus as _updateVideoStatus,
   getVideoById as _getVideoById,
   getUserProfile,
+  isTokenValid,
 } from "../requests";
 
 /* ======================================================
@@ -94,14 +99,6 @@ export function AppProvider({ children }) {
   const [notifications, setNotifications] = useState([]);
 
   /* -------------------------- HELPER FUNCTIONS -------------------------- */
-  const validateToken = useCallback((tok, userData) => {
-    if (!tok || !userData) return false;
-    if (typeof tok !== "string" || tok.length < 10) return false;
-    if (!userData.id && !userData._id) return false;
-    if (!userData.role) return false;
-    return true;
-  }, []);
-
   const clearSession = useCallback(() => {
     try {
       Object.keys(storage).forEach((key) => {
@@ -110,6 +107,33 @@ export function AppProvider({ children }) {
     } catch (error) {
       console.error("Error clearing session:", error);
     }
+  }, []);
+
+  /* -------------------------- LOGOUT (DEFINED FIRST) -------------------------- */
+  const logout = useCallback(() => {
+    clearSession();
+    setUser(null);
+    setToken(null);
+    setVideos([]);
+    setPendingVideos([]);
+    setApprovedVideos([]);
+    setReleasedVideos([]);
+    setRejectedVideos([]);
+  }, [clearSession]);
+
+  const validateToken = useCallback((tok, userData) => {
+    if (!tok || !userData) return false;
+    if (typeof tok !== "string" || tok.length < 10) return false;
+    if (!userData.id && !userData._id) return false;
+    if (!userData.role) return false;
+    
+    // Check if token is expired using isTokenValid from requests
+    if (!isTokenValid(tok)) {
+      console.warn('AppContext: Token expired or invalid');
+      return false;
+    }
+    
+    return true;
   }, []);
 
   /* -------------------------- LOAD SESSION -------------------------- */
@@ -135,10 +159,13 @@ export function AppProvider({ children }) {
         if (!parsedUser.status)
           parsedUser.status = "active";
 
-        if (validateToken(storedToken, parsedUser)) {
+        // Validate token before setting
+        if (validateToken(storedToken, parsedUser) && isTokenValid(storedToken)) {
           setUser(parsedUser);
           setToken(storedToken);
+          console.log('✅ AppContext: Session loaded with valid token');
         } else {
+          console.warn('⚠️ AppContext: Invalid token, clearing session');
           clearSession();
         }
       } else {
@@ -156,6 +183,12 @@ export function AppProvider({ children }) {
   const saveSession = useCallback((userData, tokenData) => {
     try {
       if (!userData || !tokenData) return false;
+      
+      // Validate token before saving
+      if (!isTokenValid(tokenData)) {
+        console.error('AppContext: Cannot save invalid token');
+        return false;
+      }
 
       const role = (userData.role || "user").toLowerCase();
       const keys = getStorageKeys(role);
@@ -210,6 +243,7 @@ export function AppProvider({ children }) {
 
       setUser(normalizedUser);
       setToken(tokenData);
+      console.log('✅ AppContext: Session saved successfully');
       return true;
     } catch (error) {
       console.error("Error saving session:", error);
@@ -220,6 +254,13 @@ export function AppProvider({ children }) {
   /* -------------------------- UPDATE USER DATA -------------------------- */
   const updateUserData = useCallback(async () => {
     if (!token) return null;
+    
+    // Check if token is still valid
+    if (!isTokenValid(token)) {
+      console.warn('AppContext: Token expired, logging out');
+      logout();
+      return null;
+    }
 
     try {
       const response = await getUserProfile(token);
@@ -260,19 +301,7 @@ export function AppProvider({ children }) {
       console.error("Failed to update user data:", err);
       return null;
     }
-  }, [token, user?.role]);
-
-  /* -------------------------- LOGOUT -------------------------- */
-  const logout = useCallback(() => {
-    clearSession();
-    setUser(null);
-    setToken(null);
-    setVideos([]);
-    setPendingVideos([]);
-    setApprovedVideos([]);
-    setReleasedVideos([]);
-    setRejectedVideos([]);
-  }, [clearSession]);
+  }, [token, user?.role, logout]);
 
   /* -------------------------- AUTH -------------------------- */
   const login = async (email, password) => {
@@ -315,6 +344,14 @@ export function AppProvider({ children }) {
   /* -------------------------- VIDEOS -------------------------- */
   const fetchVideos = useCallback(async () => {
     if (!token) return;
+    
+    // Check token validity before making request
+    if (!isTokenValid(token)) {
+      console.warn('AppContext: Token expired, cannot fetch videos');
+      logout();
+      return;
+    }
+    
     setLoadingVideos(true);
     try {
       const data = await _getVideos(token);
@@ -333,7 +370,9 @@ export function AppProvider({ children }) {
       }
     } catch (err) {
       console.error("fetchVideos error:", err);
-      if (err.message?.includes("401")) logout();
+      if (err.message?.includes("401") || err.message?.includes("SESSION_EXPIRED")) {
+        logout();
+      }
       setVideos([]);
     } finally {
       setLoadingVideos(false);
@@ -341,13 +380,21 @@ export function AppProvider({ children }) {
   }, [token, user?.id, user?._id, logout]);
 
   useEffect(() => {
-    if (token && isAuthReady) fetchVideos();
+    if (token && isAuthReady && isTokenValid(token)) {
+      fetchVideos();
+    }
   }, [fetchVideos, token, isAuthReady]);
 
   const uploadVideo = useCallback(async (formData, onProgress) => {
     if (!token) throw new Error("No token available. Please log in again.");
     if (!user) throw new Error("No user data available. Please log in again.");
     if (user.restrictions?.upload === true) throw new Error("Your account cannot upload videos");
+    
+    if (!isTokenValid(token)) {
+      logout();
+      throw new Error("Session expired. Please log in again.");
+    }
+    
     try {
       const result = await _uploadVideo(token, formData, onProgress);
       setTimeout(() => fetchVideos(), 1000);
@@ -355,11 +402,17 @@ export function AppProvider({ children }) {
     } catch (err) {
       throw err;
     }
-  }, [token, user, fetchVideos]);
+  }, [token, user, fetchVideos, logout]);
 
   const getVideosByStatus = useCallback(async (status) => {
     if (!token) return { success: false, videos: [] };
     if (!user?.id && !user?._id) return { success: false, videos: [] };
+    
+    if (!isTokenValid(token)) {
+      logout();
+      return { success: false, videos: [], message: "Session expired" };
+    }
+    
     try {
       const userId = user.id || user._id;
       const result = await _getVideosByStatus(token, status, userId);
@@ -377,11 +430,17 @@ export function AppProvider({ children }) {
       console.error(`getVideosByStatus error:`, err);
       return { success: false, videos: [], message: err.message };
     }
-  }, [token, user?.id, user?._id]);
+  }, [token, user?.id, user?._id, logout]);
 
   const getApprovedForRelease = useCallback(async () => {
     if (!token) return { success: false, videos: [] };
     if (!user?.id && !user?._id) return { success: false, videos: [] };
+    
+    if (!isTokenValid(token)) {
+      logout();
+      return { success: false, videos: [], message: "Session expired" };
+    }
+    
     try {
       const userId = user.id || user._id;
       const result = await _getApprovedForRelease(token, userId);
@@ -391,10 +450,16 @@ export function AppProvider({ children }) {
       console.error("getApprovedForRelease error:", err);
       return { success: false, videos: [], message: err.message };
     }
-  }, [token, user?.id, user?._id]);
+  }, [token, user?.id, user?._id, logout]);
 
   const releaseVideo = useCallback(async (videoId, price = 0, currency = "USD", releaseAllEpisodes = false) => {
     if (!token) throw new Error("Not authenticated");
+    
+    if (!isTokenValid(token)) {
+      logout();
+      throw new Error("Session expired. Please log in again.");
+    }
+    
     try {
       const result = await _releaseVideo(token, videoId, price, currency, releaseAllEpisodes);
       setTimeout(() => {
@@ -409,10 +474,16 @@ export function AppProvider({ children }) {
       console.error("releaseVideo error:", err);
       throw err;
     }
-  }, [token, fetchVideos, getVideosByStatus, user?.id, user?._id]);
+  }, [token, fetchVideos, getVideosByStatus, user?.id, user?._id, logout]);
 
   const updateVideoStatus = useCallback(async (videoId, status, rejectionReason = "", rejectionDetails = "") => {
     if (!token) throw new Error("Not authenticated");
+    
+    if (!isTokenValid(token)) {
+      logout();
+      throw new Error("Session expired. Please log in again.");
+    }
+    
     try {
       const result = await _updateVideoStatus(token, videoId, status, rejectionReason, rejectionDetails);
       setTimeout(() => fetchVideos(), 500);
@@ -421,17 +492,23 @@ export function AppProvider({ children }) {
       console.error("updateVideoStatus error:", err);
       throw err;
     }
-  }, [token, fetchVideos]);
+  }, [token, fetchVideos, logout]);
 
   const getVideoById = useCallback(async (videoId) => {
     if (!token) return null;
+    
+    if (!isTokenValid(token)) {
+      logout();
+      return null;
+    }
+    
     try {
       return await _getVideoById(token, videoId);
     } catch (err) {
       console.error("getVideoById error:", err);
       return null;
     }
-  }, [token]);
+  }, [token, logout]);
 
   /* -------------------------- PERMISSIONS -------------------------- */
   const isAdmin = ["supportadmin", "platformadmin", "superadmin"].includes(user?.role);
@@ -455,7 +532,7 @@ export function AppProvider({ children }) {
   };
 
   const refreshAllData = useCallback(() => {
-    if (token) {
+    if (token && isTokenValid(token)) {
       fetchVideos();
       updateUserData();
     }
@@ -469,6 +546,20 @@ export function AppProvider({ children }) {
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
   }, [logout]);
+
+  // Periodic token validation (every 60 seconds)
+  useEffect(() => {
+    if (!token) return;
+    
+    const interval = setInterval(() => {
+      if (!isTokenValid(token)) {
+        console.warn('AppContext: Token expired during periodic check');
+        logout();
+      }
+    }, 60000); // Check every minute
+    
+    return () => clearInterval(interval);
+  }, [token, logout]);
 
   /* -------------------------- CONTEXT VALUE -------------------------- */
   const contextValue = {
@@ -539,3 +630,7 @@ export function useAuth() {
   const { user, token, login, logout, adminLogin, register, updateUserData } = ctx;
   return { user, token, login, logout, adminLogin, register, updateUserData };
 }
+
+/**
+ * END OF FILE: frontend/src/context/AppContext.jsx
+ */

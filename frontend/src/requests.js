@@ -3,6 +3,7 @@
 /**
  * FILE: frontend/src/requests.js
  * Complete API requests for Narra platform
+ * UPDATED: Fixed admin user endpoints, added admin user profile fetch
  */
 
 const API_BASE_URL = "http://localhost:5000/api";
@@ -177,13 +178,16 @@ export async function updateUserProfile(token, profileData) {
 }
 
 export async function getUserById(token, userId) {
-  const endpoint = token ? `${API_BASE_URL}/users/${userId}` : `${API_BASE_URL}/users/${userId}/public`;
+  // For admin routes, use the admin endpoint
+  const endpoint = `${API_BASE_URL}/admin/users/${userId}`;
   const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+  
   try {
     const res = await fetch(endpoint, { headers });
     if (!res.ok) {
-      if (res.status === 403) return { success: false, message: 'This profile is private', user: null };
+      if (res.status === 403) return { success: false, message: 'Access denied', user: null };
       if (res.status === 404) return { success: false, message: 'User not found', user: null };
+      if (res.status === 401) return { success: false, message: 'Authentication required', user: null };
       return { success: false, message: `Error ${res.status}`, user: null };
     }
     const data = await res.json();
@@ -778,7 +782,7 @@ export async function getReplies(commentId) {
 }
 
 /* ======================================================
-   VIDEO MANAGEMENT
+   VIDEO MANAGEMENT (USER)
 ====================================================== */
 
 export async function softDeleteVideo(token, videoId) {
@@ -791,15 +795,10 @@ export async function restoreVideo(token, videoId) {
   return await handleResponse(res);
 }
 
-export async function permanentlyDeleteVideo(token, videoId) {
-  const res = await fetch(`${API_BASE_URL}/videos/${videoId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token) });
-  return await handleResponse(res);
-}
-
 export async function removeVideo(token, videoId) { return softDeleteVideo(token, videoId); }
 
 /* ======================================================
-   ADMIN VIDEO
+   ADMIN VIDEO MANAGEMENT
 ====================================================== */
 
 export async function adminSoftDeleteVideo(token, videoId, reason = '') {
@@ -819,6 +818,52 @@ export async function adminPermanentDeleteVideo(token, videoId, reason = '') {
 
 export async function adminRemoveVideo(token, videoId) { return adminSoftDeleteVideo(token, videoId); }
 export async function adminPermanentDelete(token, videoId, reason = '') { return adminPermanentDeleteVideo(token, videoId, reason); }
+
+/* ======================================================
+   ADMIN USER TRASH PAGE
+====================================================== */
+
+export async function getTrashedVideos(token, filters = {}) {
+  const { search = '', page = 1, limit = 20, sortBy = 'removedAt', sortOrder = 'desc' } = filters;
+  const url = buildUrl(`${API_BASE_URL}/admin/trash/videos`, { search, page, limit, sortBy, sortOrder });
+  const res = await fetch(url, { headers: getAuthHeaders(token) });
+  if (!res.ok) return { success: false, videos: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
+  const data = await res.json();
+  if (data?.videos && Array.isArray(data.videos)) {
+    data.videos = data.videos.map(v => ({
+      ...v,
+      thumbnailUrl: v.thumbnailUrl ? ensureAbsoluteAvatarUrl(v.thumbnailUrl) : null,
+      videoUrl: v.videoUrl ? ensureAbsoluteAvatarUrl(v.videoUrl) : null
+    }));
+  }
+  return data;
+}
+
+export async function getTrashStats(token) {
+  const res = await fetch(`${API_BASE_URL}/admin/trash/stats`, { headers: getAuthHeaders(token) });
+  if (!res.ok) return { success: false, stats: { total: 0, expiringSoon: 0, expired: 0 } };
+  return await res.json();
+}
+
+export async function adminRestoreTrashedVideo(token, videoId) {
+  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/${videoId}/restore`, { method: 'POST', headers: getAuthHeaders(token) });
+  return await handleResponse(res);
+}
+
+export async function adminPermanentDeleteTrashedVideo(token, videoId, reason = '') {
+  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/${videoId}/permanent`, { method: 'DELETE', headers: getAuthHeaders(token), body: JSON.stringify({ reason }) });
+  return await handleResponse(res);
+}
+
+export async function adminBulkRestoreTrashedVideos(token, videoIds) {
+  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/bulk-restore`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ videoIds }) });
+  return await handleResponse(res);
+}
+
+export async function adminBulkDeleteTrashedVideos(token, videoIds, reason = '') {
+  const res = await fetch(`${API_BASE_URL}/admin/trash/videos/bulk-delete`, { method: 'POST', headers: getAuthHeaders(token), body: JSON.stringify({ videoIds, reason }) });
+  return await handleResponse(res);
+}
 
 /* ======================================================
    ADMIN USERS
@@ -917,15 +962,6 @@ export async function getInactiveAdmins(token) {
   return (data.admins || []).map(a => ({ ...a, avatar: ensureAbsoluteAvatarUrl(a.avatar) }));
 }
 
-/* ======================================================
-   ADMIN MANAGEMENT — MISSING EXPORTS (were causing the crash)
-   These are used by AdminContext.jsx
-====================================================== */
-
-/**
- * Deactivate an admin account (Super Admin only).
- * Maps to: PUT /admin/admins/:adminId/deactivate
- */
 export async function deactivateAdmin(token, adminId) {
   const res = await fetch(`${API_BASE_URL}/admin/admins/${adminId}/deactivate`, {
     method: 'PUT',
@@ -934,10 +970,6 @@ export async function deactivateAdmin(token, adminId) {
   return await handleResponse(res);
 }
 
-/**
- * Update an admin's role (Super Admin only).
- * Maps to: PUT /admin/roles/promote/:adminId  (reuses promoteToAdmin)
- */
 export async function updateAdminRole(token, adminId, newRole) {
   const res = await fetch(`${API_BASE_URL}/admin/roles/promote/${adminId}`, {
     method: 'PUT',
@@ -947,10 +979,6 @@ export async function updateAdminRole(token, adminId, newRole) {
   return await handleResponse(res);
 }
 
-/**
- * Update a regular user's role (Super Admin only).
- * Maps to: PUT /admin/users/:userId/role
- */
 export async function updateUserRole(token, userId, newRole) {
   const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/role`, {
     method: 'PUT',
@@ -960,10 +988,6 @@ export async function updateUserRole(token, userId, newRole) {
   return await handleResponse(res);
 }
 
-/**
- * Fetch pending/queued videos for admin review.
- * Wraps getVideosForModeration with status='pending'.
- */
 export async function getPendingVideos(token) {
   const res = await fetch(`${API_BASE_URL}/admin/videos/moderation?status=pending`, {
     headers: getAuthHeaders(token),
@@ -980,13 +1004,7 @@ export async function getPendingVideos(token) {
   return data;
 }
 
-/**
- * Fetch platform-wide statistics (all admins).
- * FIXED: Tries the correct endpoint FIRST to avoid 404 errors
- * Maps to: GET /admin/platform/stats (primary) then /admin/stats (fallback)
- */
 export async function getPlatformStats(token) {
-  // FIXED: Try the correct endpoint FIRST
   try {
     const res = await fetch(`${API_BASE_URL}/admin/platform/stats`, {
       headers: getAuthHeaders(token),
@@ -999,7 +1017,6 @@ export async function getPlatformStats(token) {
     console.warn('Primary platform stats endpoint failed:', err.message);
   }
 
-  // Fallback to old endpoint for backward compatibility
   try {
     const res = await fetch(`${API_BASE_URL}/admin/stats`, {
       headers: getAuthHeaders(token),
@@ -1341,12 +1358,12 @@ export async function applyShadowBanToLive(token, liveId, reason) {
 }
 
 export async function removeShadowBanFromLive(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}/shadow-ban`, { method: 'DELETE', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/admin/live-streams/${liveId}/remove-shadow-ban`, { method: 'POST', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
 export async function removeStrike(token, userId, strikeId) {
-  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/strikes/${strikeId}/remove`, { method: 'POST', headers: getAuthHeaders(token) });
+  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/strikes/${strikeId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
   return await handleResponse(res);
 }
 
@@ -1415,12 +1432,12 @@ export default {
   getUserPlaylists, createPlaylist, updatePlaylist, deletePlaylist, addVideoToPlaylist, removeVideoFromPlaylist, checkVideoSaved, getPlaylistVideos,
   trackShare,
   getVideoComments, addComment, deleteComment, likeComment, dislikeComment, editComment, getReplies,
-  softDeleteVideo, restoreVideo, permanentlyDeleteVideo, removeVideo,
+  softDeleteVideo, restoreVideo, removeVideo,
   adminSoftDeleteVideo, adminRestoreVideo, adminPermanentDeleteVideo, adminRemoveVideo, adminPermanentDelete,
+  getTrashedVideos, getTrashStats, adminRestoreTrashedVideo, adminPermanentDeleteTrashedVideo, adminBulkRestoreTrashedVideos, adminBulkDeleteTrashedVideos,
   getUsers, banUser, unbanUser, verifyUser, unverifyUser, deactivateUser, activateUser, deleteUser,
   permanentlyDeleteUser, applyShadowBanUser, removeShadowBanUser,
   getAdmins, createAdmin, promoteToAdmin, demoteAdmin, getInactiveAdmins,
-  /* ↓ newly added — were missing and causing the crash */
   deactivateAdmin, updateAdminRole, updateUserRole, getPendingVideos, getPlatformStats,
   getRecentAuditLogs, getAllAuditLogs, getAuditFilterOptions, getAuditLogs,
   getVideosForModeration, getVideoModerationStats, approveVideo, rejectVideo,

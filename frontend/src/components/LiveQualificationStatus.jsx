@@ -6,7 +6,7 @@ const LiveQualificationStatus = ({ qualificationStatus, userStats, requirements,
   if (!qualificationStatus) return null;
 
   const getStatusColor = () => {
-    if (qualificationStatus.qualified) return '#10b981';
+    if (qualificationStatus.qualified) return '#00ff11';
     if (qualificationStatus.pending) return '#f59e0b';
     return '#ef4444';
   };

@@ -1,3 +1,14 @@
+/**
+ * FILE: backend/models/Video.js
+ * Video model for Narra platform - Movies & Series
+ * UPDATED: Added user trash system fields (30-day retention, restore limits, cooldown)
+ * - trashExpiresAt: Auto-permanent delete after 30 days
+ * - restoreCount: Track number of restores (max 3 in 90 days)
+ * - restoreHistory: Array of restore dates for limit calculation
+ * - cooldownUntil: 10-day cooldown after restore
+ * - permanentDeleteScheduledAt: Scheduled auto-deletion timestamp
+ */
+
 const mongoose = require('mongoose');
 
 const VideoSchema = new mongoose.Schema(
@@ -144,10 +155,10 @@ const VideoSchema = new mongoose.Schema(
         'approved', 
         'rejected', 
         'released',
-        'flagged',        // Added for flagging
-        'restricted',     // Added for restriction
-        'shadowBanned',   // Added for shadow ban/suppression
-        'removed'         // Added for soft delete
+        'flagged',
+        'restricted',
+        'shadowBanned',
+        'removed'
       ],
       default: 'pending'
     },
@@ -166,28 +177,44 @@ const VideoSchema = new mongoose.Schema(
     MODERATION FIELDS
     ========================================
     */
-    // Flag fields
     flagged: { type: Boolean, default: false },
     flaggedReason: { type: String },
     flaggedAt: { type: Date },
     flaggedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
-    // Restriction fields
     restricted: { type: Boolean, default: false },
     restrictedReason: { type: String },
     restrictedAt: { type: Date },
     restrictedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
-    // Shadow ban fields
     shadowBanned: { type: Boolean, default: false },
     shadowBanReason: { type: String },
     shadowBannedAt: { type: Date },
     shadowBannedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
-    // Removal fields
     removed: { type: Boolean, default: false },
     removedAt: { type: Date },
     removedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+    /*
+    ========================================
+    USER TRASH SYSTEM (30-day retention)
+    ========================================
+    - Users can soft-delete videos (move to trash)
+    - Videos stay in trash for 30 days, then auto-permanently deleted
+    - Users can restore videos, but limited to 3 restores within 90 days
+    - After restore, 10-day cooldown where user cannot delete again
+    */
+    trashExpiresAt: { type: Date },                    // When video will be auto-permanently deleted (30 days after soft delete)
+    restoreCount: { type: Number, default: 0 },        // Number of times restored (max 3 in 90 days)
+    restoreHistory: [{                                 // Track restore dates for 90-day limit calculation
+      restoredAt: { type: Date, default: Date.now },
+      restoredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+    }],
+    cooldownUntil: { type: Date },                     // 10-day cooldown after restore (user cannot delete again)
+    lastRestoreAt: { type: Date },                     // Last restore timestamp
+    permanentDeleteScheduledAt: { type: Date },        // Scheduled auto-permanent deletion timestamp
+    previousStatus: { type: String },                  // Store original status before soft delete
 
     /*
     ========================================
@@ -232,7 +259,7 @@ const VideoSchema = new mongoose.Schema(
     */
     blockedCountries: [{ type: String }],
     blockedContinents: [{ type: String }],
-    isShadowBanned: { type: Boolean, default: false }, // Kept for backward compatibility
+    isShadowBanned: { type: Boolean, default: false },
 
     /*
     ========================================
@@ -283,6 +310,30 @@ VideoSchema.virtual('releaseStatus').get(function () {
   return 'draft';
 });
 
+VideoSchema.virtual('canBeRestored').get(function () {
+  // Check if video can be restored by user (within 30 days, not expired)
+  if (!this.isDeleted) return false;
+  if (this.trashExpiresAt && new Date() > this.trashExpiresAt) return false;
+  return true;
+});
+
+VideoSchema.virtual('restoresRemaining').get(function () {
+  // Calculate remaining restores within 90-day window (max 3)
+  const ninetyDaysAgo = new Date();
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+  
+  const recentRestores = this.restoreHistory?.filter(
+    r => new Date(r.restoredAt) > ninetyDaysAgo
+  ) || [];
+  
+  return Math.max(0, 3 - recentRestores.length);
+});
+
+VideoSchema.virtual('isInCooldown').get(function () {
+  if (!this.cooldownUntil) return false;
+  return new Date() < this.cooldownUntil;
+});
+
 VideoSchema.virtual('seriesDuration').get(function () {
   if (this.type !== 'series') return this.duration || 0;
   
@@ -331,18 +382,16 @@ VideoSchema.virtual('totalEpisodesCount').get(function () {
 
 /*
 ========================================
-PRE SAVE HOOK - FIXED to prevent status override
+PRE SAVE HOOK
 ========================================
 */
 VideoSchema.pre('save', async function() {
   console.log('Video pre-save hook called for:', this.title);
   
-  // Set uploadedAt if not set
   if (!this.uploadedAt) {
     this.uploadedAt = new Date();
   }
 
-  // Calculate totals for series
   if (this.type === 'series') {
     this.totalSeasons = this.seasons?.length || 0;
     this.totalEpisodes = this.seasons?.reduce((total, season) => {
@@ -392,7 +441,7 @@ VideoSchema.pre('save', async function() {
     this.flagged = false;
     this.restricted = false;
     this.shadowBanned = true;
-    this.isShadowBanned = true; // Keep backward compatibility
+    this.isShadowBanned = true;
     this.removed = false;
     this.isDeleted = false;
   } else if (this.status === 'removed') {
@@ -405,13 +454,12 @@ VideoSchema.pre('save', async function() {
     this.isDeleted = true;
   }
 
-  // Handle released status - ensure consistency
   if (this.status === 'released') {
     this.released = true;
     this.releasedAt = this.releasedAt || new Date();
     this.releasedBy = this.releasedBy || this.creator;
     this.publishedAt = this.publishedAt || new Date();
-    this.approved = true; // Keep approved true for released videos
+    this.approved = true;
     this.rejected = false;
     this.flagged = false;
     this.restricted = false;
@@ -420,7 +468,6 @@ VideoSchema.pre('save', async function() {
     this.isDeleted = false;
   }
 
-  // If this is a new video and no status is set, default to pending
   if (this.isNew && !this.status) {
     this.status = 'pending';
     this.approved = false;
@@ -440,14 +487,12 @@ PRE VALIDATE HOOK
 VideoSchema.pre('validate', async function() {
   console.log('Video pre-validate hook called for:', this.title);
   
-  // Required fields for movies
   if (this.type === 'movie') {
     if (!this.videoUrl && !this.filePath) {
       throw new Error('Video URL or file path is required for movies');
     }
   }
   
-  // Series: unique season/episode numbers
   if (this.type === 'series' && Array.isArray(this.seasons)) {
     const seasonNumbers = this.seasons.map(s => s.seasonNumber);
     if (new Set(seasonNumbers).size !== seasonNumbers.length) {
@@ -550,6 +595,111 @@ VideoSchema.methods.releaseEpisode = function (seasonNumber, episodeNumber, pric
 
 /*
 ========================================
+TRASH SYSTEM METHODS
+========================================
+*/
+
+/**
+ * Move video to trash (soft delete)
+ * Sets 30-day expiry, updates status, stores original status
+ */
+VideoSchema.methods.moveToTrash = async function() {
+  const TRASH_RETENTION_DAYS = 30;
+  
+  this.previousStatus = this.status;
+  this.status = 'removed';
+  this.isDeleted = true;
+  this.removed = true;
+  this.removedAt = new Date();
+  
+  // Set expiration date: 30 days from now
+  const expiryDate = new Date();
+  expiryDate.setDate(expiryDate.getDate() + TRASH_RETENTION_DAYS);
+  this.trashExpiresAt = expiryDate;
+  this.permanentDeleteScheduledAt = expiryDate;
+  
+  await this.save();
+  return this;
+};
+
+/**
+ * Restore video from trash
+ * Checks restore limits (max 3 in 90 days) and cooldown period
+ * Returns object with success status and message
+ */
+VideoSchema.methods.restoreFromTrash = async function(restoredByUserId) {
+  const ninetyDaysAgo = new Date();
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+  
+  // Count restores in last 90 days
+  const recentRestores = this.restoreHistory?.filter(
+    r => new Date(r.restoredAt) > ninetyDaysAgo
+  ) || [];
+  
+  // Check restore limit (max 3 in 90 days)
+  if (recentRestores.length >= 3) {
+    return {
+      success: false,
+      message: 'This video has reached the maximum of 3 restores within 90 days. It will be permanently deleted.'
+    };
+  }
+  
+  // Restore the video
+  const originalStatus = this.previousStatus || 'pending';
+  this.status = originalStatus;
+  this.isDeleted = false;
+  this.removed = false;
+  this.removedAt = null;
+  this.trashExpiresAt = null;
+  this.permanentDeleteScheduledAt = null;
+  
+  // Update restore history
+  this.restoreCount = (this.restoreCount || 0) + 1;
+  this.restoreHistory = this.restoreHistory || [];
+  this.restoreHistory.push({
+    restoredAt: new Date(),
+    restoredBy: restoredByUserId
+  });
+  this.lastRestoreAt = new Date();
+  
+  // Set cooldown: 10 days from now (user cannot delete again during this period)
+  const cooldownDate = new Date();
+  cooldownDate.setDate(cooldownDate.getDate() + 10);
+  this.cooldownUntil = cooldownDate;
+  
+  await this.save();
+  return {
+    success: true,
+    message: `Video restored successfully. You have ${3 - (recentRestores.length + 1)} restores remaining in 90 days.`,
+    restoresRemaining: 3 - (recentRestores.length + 1)
+  };
+};
+
+/**
+ * Check if user can delete this video
+ * Returns false if in cooldown period
+ */
+VideoSchema.methods.canDelete = function() {
+  if (this.cooldownUntil && new Date() < this.cooldownUntil) {
+    const daysRemaining = Math.ceil((this.cooldownUntil - new Date()) / (1000 * 60 * 60 * 24));
+    return {
+      canDelete: false,
+      message: `This video was recently restored. You cannot delete it for ${daysRemaining} more days.`
+    };
+  }
+  return { canDelete: true, message: null };
+};
+
+/**
+ * Check if video has expired in trash (auto-delete after 30 days)
+ */
+VideoSchema.methods.isExpiredInTrash = function() {
+  if (!this.trashExpiresAt) return false;
+  return new Date() > this.trashExpiresAt;
+};
+
+/*
+========================================
 STATICS
 ========================================
 */
@@ -591,12 +741,10 @@ VideoSchema.statics.createVideo = async function(videoData) {
   try {
     console.log('Creating video with data:', videoData);
     
-    // Ensure required fields are present
     if (!videoData.title || !videoData.creator) {
       throw new Error('Title and creator are required');
     }
     
-    // Ensure status is set to pending
     videoData.status = 'pending';
     videoData.approved = false;
     videoData.rejected = false;
@@ -606,10 +754,7 @@ VideoSchema.statics.createVideo = async function(videoData) {
     videoData.shadowBanned = false;
     videoData.removed = false;
     
-    // Create the video
     const video = new this(videoData);
-    
-    // Save the video (this will trigger the pre-save hook)
     await video.save();
     
     console.log('Video created successfully:', video._id);
@@ -618,6 +763,78 @@ VideoSchema.statics.createVideo = async function(videoData) {
     console.error('Error creating video:', error);
     throw error;
   }
+};
+
+/**
+ * Get all trashed videos (soft-deleted by users)
+ * Used by Admin User Trash page
+ */
+VideoSchema.statics.getTrashedVideos = async function(filters = {}) {
+  const { search = '', page = 1, limit = 20, sortBy = 'removedAt', sortOrder = 'desc' } = filters;
+  
+  const query = {
+    isDeleted: true,
+    status: 'removed',
+    removed: true
+  };
+  
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    query.$or = [
+      { title: searchRegex },
+      { description: searchRegex }
+    ];
+  }
+  
+  const sortOptions = {};
+  sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+  
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  
+  const videos = await this.find(query)
+    .populate('creator', 'firstName lastName name email username avatar')
+    .sort(sortOptions)
+    .skip(skip)
+    .limit(parseInt(limit));
+  
+  const total = await this.countDocuments(query);
+  
+  return {
+    videos,
+    total,
+    page: parseInt(page),
+    limit: parseInt(limit),
+    totalPages: Math.ceil(total / parseInt(limit))
+  };
+};
+
+/**
+ * Get trash statistics for admin dashboard
+ */
+VideoSchema.statics.getTrashStats = async function() {
+  const now = new Date();
+  const thirtyDaysFromNow = new Date();
+  thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+  
+  const total = await this.countDocuments({ isDeleted: true, status: 'removed' });
+  
+  // Videos expiring in the next 7 days
+  const expiringSoonThreshold = new Date();
+  expiringSoonThreshold.setDate(expiringSoonThreshold.getDate() + 7);
+  const expiringSoon = await this.countDocuments({
+    isDeleted: true,
+    status: 'removed',
+    trashExpiresAt: { $lte: expiringSoonThreshold, $gt: now }
+  });
+  
+  // Already expired videos (past expiry date)
+  const expired = await this.countDocuments({
+    isDeleted: true,
+    status: 'removed',
+    trashExpiresAt: { $lt: now }
+  });
+  
+  return { total, expiringSoon, expired };
 };
 
 /*
@@ -634,7 +851,6 @@ VideoSchema.index({ uploadedAt: -1 });
 VideoSchema.index({ publishedAt: -1 });
 VideoSchema.index({ 'seasons.episodes.videoUrl': 1 });
 VideoSchema.index({ title: 'text', description: 'text' });
-// Add indexes for moderation fields
 VideoSchema.index({ flagged: 1 });
 VideoSchema.index({ restricted: 1 });
 VideoSchema.index({ shadowBanned: 1 });
@@ -643,5 +859,14 @@ VideoSchema.index({ flaggedBy: 1 });
 VideoSchema.index({ restrictedBy: 1 });
 VideoSchema.index({ shadowBannedBy: 1 });
 VideoSchema.index({ removedBy: 1 });
+// Indexes for trash system
+VideoSchema.index({ isDeleted: 1, status: 1 });
+VideoSchema.index({ trashExpiresAt: 1 });
+VideoSchema.index({ cooldownUntil: 1 });
+VideoSchema.index({ restoreCount: 1 });
 
 module.exports = mongoose.model('Video', VideoSchema);
+
+/**
+ * END OF FILE: backend/models/Video.js
+ */

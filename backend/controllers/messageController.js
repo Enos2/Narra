@@ -386,6 +386,10 @@ exports.searchUsers = async (req, res) => {
 /* ─────────────────────────────────────────────
    SEARCH ADMINS TO MESSAGE (admin lane)
    GET /api/messages/search-admins?q=
+   
+   FIXED: Only searches fields that exist in the Admin model:
+   - fullName
+   - email
 ───────────────────────────────────────────── */
 exports.searchAdmins = async (req, res) => {
   try {
@@ -394,13 +398,16 @@ exports.searchAdmins = async (req, res) => {
       return res.json({ success: true, admins: [] });
     }
 
-    const regex  = new RegExp(q.trim(), 'i');
+    const regex = new RegExp(q.trim(), 'i');
     const admins = await Admin.find({
       status: 'active',
       _id: { $ne: req.actor.id },
-      fullName: regex,
+      $or: [
+        { fullName: regex },
+        { email: regex },
+      ],
     })
-      .select('fullName role')
+      .select('fullName email role status')
       .limit(20)
       .lean();
 

@@ -1,9 +1,10 @@
 /**
- * File: backend/routes/adminRoutes.js
+ * FILE: backend/routes/adminRoutes.js
  * COMPLETE FIXED VERSION - ALL ROUTES INCLUDED WITH NOTIFICATIONS
  * UPDATED: Added remove strike route and fixed all audit logging
  * FIXED: Remove strike route now uses DELETE method (was POST)
  * ADDED: /platform/stats route for platform statistics
+ * ADDED: /trash routes for Admin User Trash page (30-day retention, restore limits)
  */
 
 const express = require('express');
@@ -82,7 +83,6 @@ const logAdminAction = async ({ admin, actionType, actionLabel, targetType, targ
 ===================================================== */
 router.get('/platform/stats', protect, requireAnyAdmin, async (req, res) => {
   try {
-    // Get platform statistics
     const totalUsers = await User.countDocuments({ isDeleted: { $ne: true } });
     const totalVideos = await Video.countDocuments({ isDeleted: { $ne: true } });
     const totalAdmins = await User.countDocuments({ 
@@ -90,23 +90,19 @@ router.get('/platform/stats', protect, requireAnyAdmin, async (req, res) => {
       isDeleted: { $ne: true }
     });
     
-    // Get pending videos count
     const pendingVideos = await Video.countDocuments({ 
       status: 'pending',
       approved: false,
       isDeleted: { $ne: true }
     });
     
-    // Get pending live streams count
-    const pendingLiveStreams = 0; // Adjust if you have a Live model
+    const pendingLiveStreams = 0;
     
-    // Get reported content count
     const reportedContent = await Video.countDocuments({ 
       flagged: true,
       isDeleted: { $ne: true }
     });
     
-    // Get today's stats
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const newUsersToday = await User.countDocuments({
@@ -119,14 +115,12 @@ router.get('/platform/stats', protect, requireAnyAdmin, async (req, res) => {
       isDeleted: { $ne: true }
     });
     
-    // Get approved videos count
     const approvedVideos = await Video.countDocuments({ 
       status: 'released',
       approved: true,
       isDeleted: { $ne: true }
     });
     
-    // Get rejected videos count
     const rejectedVideos = await Video.countDocuments({ 
       status: 'rejected',
       isDeleted: { $ne: true }
@@ -154,6 +148,76 @@ router.get('/platform/stats', protect, requireAnyAdmin, async (req, res) => {
       success: false, 
       message: 'Failed to fetch platform statistics' 
     });
+  }
+});
+
+/* =====================================================
+   ADMIN USER TRASH ROUTES (NEW - 30-day retention)
+===================================================== */
+
+// Get all trashed videos (soft-deleted by users)
+router.get('/trash/videos', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const videoController = require('../controllers/videoController');
+    await videoController.getTrashedVideos(req, res);
+  } catch (err) {
+    console.error('Error in trash videos route:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch trashed videos' });
+  }
+});
+
+// Get trash statistics
+router.get('/trash/stats', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const videoController = require('../controllers/videoController');
+    await videoController.getTrashStats(req, res);
+  } catch (err) {
+    console.error('Error in trash stats route:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch trash stats' });
+  }
+});
+
+// Restore a single trashed video
+router.post('/trash/videos/:id/restore', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const videoController = require('../controllers/videoController');
+    await videoController.adminRestoreTrashedVideo(req, res);
+  } catch (err) {
+    console.error('Error restoring trashed video:', err);
+    res.status(500).json({ success: false, message: 'Failed to restore video' });
+  }
+});
+
+// Permanently delete a single trashed video
+router.delete('/trash/videos/:id/permanent', protect, requireSuperOrPlatformAdmin, async (req, res) => {
+  try {
+    const videoController = require('../controllers/videoController');
+    await videoController.adminPermanentDeleteTrashedVideo(req, res);
+  } catch (err) {
+    console.error('Error permanently deleting trashed video:', err);
+    res.status(500).json({ success: false, message: 'Failed to permanently delete video' });
+  }
+});
+
+// Bulk restore multiple trashed videos
+router.post('/trash/videos/bulk-restore', protect, requireAnyAdmin, async (req, res) => {
+  try {
+    const videoController = require('../controllers/videoController');
+    await videoController.adminBulkRestoreTrashedVideos(req, res);
+  } catch (err) {
+    console.error('Error bulk restoring trashed videos:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk restore videos' });
+  }
+});
+
+// Bulk permanently delete multiple trashed videos
+router.post('/trash/videos/bulk-delete', protect, requireSuperOrPlatformAdmin, async (req, res) => {
+  try {
+    const videoController = require('../controllers/videoController');
+    await videoController.adminBulkDeleteTrashedVideos(req, res);
+  } catch (err) {
+    console.error('Error bulk deleting trashed videos:', err);
+    res.status(500).json({ success: false, message: 'Failed to bulk delete videos' });
   }
 });
 
@@ -641,7 +705,7 @@ router.put('/videos/:id/remove-shadow-ban', protect, requireSuperOrPlatformAdmin
   }
 });
 
-// REMOVE VIDEO (Soft Delete)
+// REMOVE VIDEO (Soft Delete by Admin)
 router.delete('/videos/:id/remove', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -686,7 +750,7 @@ router.delete('/videos/:id/remove', protect, requireAnyAdmin, async (req, res) =
   }
 });
 
-// RESTORE VIDEO
+// RESTORE VIDEO (Admin)
 router.put('/videos/:id/restore', protect, requireAnyAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -730,7 +794,7 @@ router.put('/videos/:id/restore', protect, requireAnyAdmin, async (req, res) => 
   }
 });
 
-// PERMANENTLY DELETE VIDEO
+// PERMANENTLY DELETE VIDEO (Admin)
 router.delete('/videos/:id/permanent', protect, requireSuperAdmin, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -780,7 +844,6 @@ router.post('/users/:id/ban-streaming', protect, requireSuperAdmin, liveControll
 /* =====================================================
    LIVE STRIKE ROUTES - FIXED: Using DELETE method
 ===================================================== */
-// REMOVE STRIKE FROM USER - DELETE method (not POST)
 router.delete('/users/:userId/strikes/:strikeId', protect, requireSuperOrPlatformAdmin, liveController.removeStrike);
 
 /* =====================================================
@@ -1006,3 +1069,7 @@ router.get('/debug/users-test', protect, requireAnyAdmin, async (req, res) => {
 });
 
 module.exports = router;
+
+/**
+ * END OF FILE: backend/routes/adminRoutes.js
+ */

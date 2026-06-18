@@ -10,9 +10,12 @@
    - Platform statistics
    
    This context ONLY loads when an admin is logged in.
+   FIXED: Added token validation before fetching data
+   FIXED: Added proper dependencies to useEffect
+   FIXED: Added loading state for token readiness
    ===================================================== */
 
-import React, { createContext, useContext, useCallback, useState, useEffect } from 'react';
+import React, { createContext, useContext, useCallback, useState, useEffect, useRef } from 'react';
 import { useAppContext } from './AppContext';
 import {
   getUsers as _getUsers,
@@ -28,6 +31,7 @@ import {
   banUser as _banUser,
   deleteUser as _deleteUser,
   updateUserRole as _updateUserRole,
+  isTokenValid,
 } from "../requests";
 
 export const AdminContext = createContext(null);
@@ -42,7 +46,7 @@ const ensureAbsoluteUrl = (path) => {
 };
 
 export function AdminProvider({ children }) {
-  const { token, user, isAdmin, isSuperAdmin } = useAppContext();
+  const { token, user, isAdmin, isSuperAdmin, isAuthReady } = useAppContext();
   
   // State
   const [users, setUsers] = useState([]);
@@ -55,16 +59,34 @@ export function AdminProvider({ children }) {
   const [pendingVideosLoading, setPendingVideosLoading] = useState(false);
   const [platformStats, setPlatformStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [isTokenReady, setIsTokenReady] = useState(false);
   
-  const shouldFetch = isAdmin && token;
+  // Use ref to track if initial fetch has been done
+  const initialFetchDone = useRef(false);
+  
+  // Validate token when it changes
+  useEffect(() => {
+    if (token && typeof token === 'string' && token.length > 20) {
+      // Check if token is valid format and not expired
+      const isValid = isTokenValid(token);
+      setIsTokenReady(isValid);
+      if (!isValid) {
+        console.warn('AdminContext: Token is invalid or expired');
+      }
+    } else {
+      setIsTokenReady(false);
+    }
+  }, [token]);
+  
+  const shouldFetch = isAdmin && token && isTokenReady && isAuthReady;
 
   /* ======================================================
      USER MANAGEMENT (All admins can do this)
   ===================================================== */
   
   const fetchUsers = useCallback(async () => {
-    if (!token || !isAdmin) {
-      console.log('AdminContext: Skipping fetchUsers - not admin');
+    if (!token || !isAdmin || !isTokenReady) {
+      console.log('AdminContext: Skipping fetchUsers - not ready');
       return [];
     }
     
@@ -89,15 +111,18 @@ export function AdminProvider({ children }) {
       return usersWithAbsoluteAvatars;
     } catch (err) {
       console.error("AdminContext fetchUsers error:", err);
-      setUsers([]);
+      // Don't clear users on 401 - token might have expired
+      if (err.message?.includes('401') || err.message?.includes('SESSION_EXPIRED')) {
+        console.warn('AdminContext: Session expired, will retry on next render');
+      }
       return [];
     } finally {
       setUsersLoading(false);
     }
-  }, [token, isAdmin]);
+  }, [token, isAdmin, isTokenReady]);
   
   const updateUserRole = useCallback(async (userId, newRole) => {
-    if (!token || !isSuperAdmin) {
+    if (!token || !isSuperAdmin || !isTokenReady) {
       throw new Error('Only Super Admin can change user roles');
     }
     
@@ -110,10 +135,10 @@ export function AdminProvider({ children }) {
       console.error('AdminContext updateUserRole error:', err);
       throw err;
     }
-  }, [token, isSuperAdmin, fetchUsers]);
+  }, [token, isSuperAdmin, isTokenReady, fetchUsers]);
   
   const banUser = useCallback(async (userId, reason, duration = 'permanent') => {
-    if (!token || !isAdmin) {
+    if (!token || !isAdmin || !isTokenReady) {
       throw new Error('Admin access required');
     }
     
@@ -126,10 +151,10 @@ export function AdminProvider({ children }) {
       console.error('AdminContext banUser error:', err);
       throw err;
     }
-  }, [token, isAdmin, fetchUsers]);
+  }, [token, isAdmin, isTokenReady, fetchUsers]);
   
   const deleteUser = useCallback(async (userId) => {
-    if (!token || !isSuperAdmin) {
+    if (!token || !isSuperAdmin || !isTokenReady) {
       throw new Error('Only Super Admin can delete users');
     }
     
@@ -142,15 +167,15 @@ export function AdminProvider({ children }) {
       console.error('AdminContext deleteUser error:', err);
       throw err;
     }
-  }, [token, isSuperAdmin, fetchUsers]);
+  }, [token, isSuperAdmin, isTokenReady, fetchUsers]);
 
   /* ======================================================
      ADMIN MANAGEMENT (Super Admin only)
   ===================================================== */
   
   const fetchAdmins = useCallback(async () => {
-    if (!token || !isSuperAdmin) {
-      console.log('AdminContext: Skipping fetchAdmins - not super admin');
+    if (!token || !isSuperAdmin || !isTokenReady) {
+      console.log('AdminContext: Skipping fetchAdmins - not super admin or not ready');
       return [];
     }
     
@@ -170,15 +195,14 @@ export function AdminProvider({ children }) {
       return adminsWithAbsoluteAvatars;
     } catch (err) {
       console.error("AdminContext fetchAdmins error:", err);
-      setAdmins([]);
       return [];
     } finally {
       setAdminsLoading(false);
     }
-  }, [token, isSuperAdmin]);
+  }, [token, isSuperAdmin, isTokenReady]);
   
   const createAdmin = useCallback(async (adminData) => {
-    if (!token || !isSuperAdmin) {
+    if (!token || !isSuperAdmin || !isTokenReady) {
       throw new Error('Only Super Admin can create new admins');
     }
     
@@ -191,10 +215,10 @@ export function AdminProvider({ children }) {
       console.error('AdminContext createAdmin error:', err);
       throw err;
     }
-  }, [token, isSuperAdmin, fetchAdmins]);
+  }, [token, isSuperAdmin, isTokenReady, fetchAdmins]);
   
   const updateAdminRole = useCallback(async (adminId, newRole) => {
-    if (!token || !isSuperAdmin) {
+    if (!token || !isSuperAdmin || !isTokenReady) {
       throw new Error('Only Super Admin can change admin roles');
     }
     
@@ -207,10 +231,10 @@ export function AdminProvider({ children }) {
       console.error('AdminContext updateAdminRole error:', err);
       throw err;
     }
-  }, [token, isSuperAdmin, fetchAdmins]);
+  }, [token, isSuperAdmin, isTokenReady, fetchAdmins]);
   
   const deactivateAdmin = useCallback(async (adminId) => {
-    if (!token || !isSuperAdmin) {
+    if (!token || !isSuperAdmin || !isTokenReady) {
       throw new Error('Only Super Admin can deactivate admins');
     }
     
@@ -223,15 +247,15 @@ export function AdminProvider({ children }) {
       console.error('AdminContext deactivateAdmin error:', err);
       throw err;
     }
-  }, [token, isSuperAdmin, fetchAdmins]);
+  }, [token, isSuperAdmin, isTokenReady, fetchAdmins]);
 
   /* ======================================================
      VIDEO APPROVALS (Platform Admin & Super Admin)
   ===================================================== */
   
   const fetchPendingVideos = useCallback(async () => {
-    if (!token || !isAdmin) {
-      console.log('AdminContext: Skipping fetchPendingVideos - not admin');
+    if (!token || !isAdmin || !isTokenReady) {
+      console.log('AdminContext: Skipping fetchPendingVideos - not admin or not ready');
       return [];
     }
     
@@ -246,15 +270,14 @@ export function AdminProvider({ children }) {
       return videoList;
     } catch (err) {
       console.error("AdminContext fetchPendingVideos error:", err);
-      setPendingVideos([]);
       return [];
     } finally {
       setPendingVideosLoading(false);
     }
-  }, [token, isAdmin]);
+  }, [token, isAdmin, isTokenReady]);
   
   const approveVideo = useCallback(async (videoId, releaseNow = false, price = 0) => {
-    if (!token || !isAdmin) {
+    if (!token || !isAdmin || !isTokenReady) {
       throw new Error('Admin access required');
     }
     
@@ -267,10 +290,10 @@ export function AdminProvider({ children }) {
       console.error('AdminContext approveVideo error:', err);
       throw err;
     }
-  }, [token, isAdmin, fetchPendingVideos]);
+  }, [token, isAdmin, isTokenReady, fetchPendingVideos]);
   
   const rejectVideo = useCallback(async (videoId, reason, details = '') => {
-    if (!token || !isAdmin) {
+    if (!token || !isAdmin || !isTokenReady) {
       throw new Error('Admin access required');
     }
     
@@ -283,15 +306,15 @@ export function AdminProvider({ children }) {
       console.error('AdminContext rejectVideo error:', err);
       throw err;
     }
-  }, [token, isAdmin, fetchPendingVideos]);
+  }, [token, isAdmin, isTokenReady, fetchPendingVideos]);
 
   /* ======================================================
      AUDIT LOGS (Super Admin only)
   ===================================================== */
   
   const fetchAuditLogs = useCallback(async (filters = {}) => {
-    if (!token || !isSuperAdmin) {
-      console.log('AdminContext: Skipping fetchAuditLogs - not super admin');
+    if (!token || !isSuperAdmin || !isTokenReady) {
+      console.log('AdminContext: Skipping fetchAuditLogs - not super admin or not ready');
       return [];
     }
     
@@ -306,20 +329,19 @@ export function AdminProvider({ children }) {
       return logs;
     } catch (err) {
       console.error("AdminContext fetchAuditLogs error:", err);
-      setAuditLogs([]);
       return [];
     } finally {
       setAuditLogsLoading(false);
     }
-  }, [token, isSuperAdmin]);
+  }, [token, isSuperAdmin, isTokenReady]);
 
   /* ======================================================
      PLATFORM STATISTICS (All admins)
   ===================================================== */
   
   const fetchPlatformStats = useCallback(async () => {
-    if (!token || !isAdmin) {
-      console.log('AdminContext: Skipping fetchPlatformStats - not admin');
+    if (!token || !isAdmin || !isTokenReady) {
+      console.log('AdminContext: Skipping fetchPlatformStats - not admin or not ready');
       return null;
     }
     
@@ -338,27 +360,42 @@ export function AdminProvider({ children }) {
     } finally {
       setStatsLoading(false);
     }
-  }, [token, isAdmin]);
+  }, [token, isAdmin, isTokenReady]);
 
   /* ======================================================
-     AUTO-FETCH WHEN ADMIN LOGS IN
+     AUTO-FETCH WHEN ADMIN LOGS IN - FIXED
+     Now waits for token to be ready and auth to be complete
   ===================================================== */
   
   useEffect(() => {
-    if (shouldFetch) {
+    // Only fetch if all conditions are met
+    if (shouldFetch && !initialFetchDone.current) {
       console.log('🔄 AdminContext: Auto-fetching admin data for', user?.role);
+      console.log('   Token ready:', isTokenReady);
+      console.log('   Auth ready:', isAuthReady);
       
-      // All admins can fetch these
-      fetchUsers();
-      fetchPendingVideos();
-      fetchPlatformStats();
+      // Mark that we've started fetching
+      initialFetchDone.current = true;
       
-      // Only Super Admin can fetch these
-      if (isSuperAdmin) {
-        fetchAdmins();
-        fetchAuditLogs();
-      }
-    } else {
+      // Use setTimeout to ensure token is fully propagated
+      const timer = setTimeout(() => {
+        // All admins can fetch these
+        fetchUsers();
+        fetchPendingVideos();
+        fetchPlatformStats();
+        
+        // Only Super Admin can fetch these
+        if (isSuperAdmin) {
+          fetchAdmins();
+          fetchAuditLogs();
+        }
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    } else if (!shouldFetch) {
+      // Reset fetch flag when conditions are not met
+      initialFetchDone.current = false;
+      
       // Clear data when not admin
       setUsers([]);
       setAdmins([]);
@@ -366,7 +403,7 @@ export function AdminProvider({ children }) {
       setAuditLogs([]);
       setPlatformStats(null);
     }
-  }, [shouldFetch, isSuperAdmin, user?.role, fetchUsers, fetchPendingVideos, fetchPlatformStats, fetchAdmins, fetchAuditLogs]);
+  }, [shouldFetch, isSuperAdmin, user?.role, fetchUsers, fetchPendingVideos, fetchPlatformStats, fetchAdmins, fetchAuditLogs, isTokenReady, isAuthReady]);
 
   /* ======================================================
      REFRESH ALL DATA
@@ -439,6 +476,7 @@ export function AdminProvider({ children }) {
     
     // Utility
     refreshAllAdminData,
+    isTokenReady, // Expose token ready state
   };
   
   console.log('📤 AdminContext: Provider ready', {
@@ -449,7 +487,9 @@ export function AdminProvider({ children }) {
     hasStats: !!platformStats,
     isSuperAdmin,
     isPlatformAdmin,
-    isSupportAdmin
+    isSupportAdmin,
+    isTokenReady,
+    isAuthReady
   });
   
   return (
@@ -469,3 +509,7 @@ export function useAdminContext() {
   }
   return ctx;
 }
+
+/**
+ * END OF FILE: frontend/src/context/AdminContext.jsx
+ */

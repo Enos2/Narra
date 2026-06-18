@@ -3,6 +3,7 @@
  * Description: Handles video-related endpoints with proper Express router
  * FULLY UPDATED: Added like/dislike, share tracking, and watch history routes
  * UPDATED: Added /recommended route before /:id to fix CastError
+ * FIXED: Removed userPermanentDeleteVideo - users cannot permanently delete
  */
 
 const express = require('express');
@@ -153,16 +154,24 @@ router.post('/:id/release-episode', protect, videoController.releaseSeriesEpisod
 
 /* ================================
    USER DELETE ROUTES - FOR REGULAR USERS (Require Authentication)
+   USERS CAN ONLY SOFT DELETE AND RESTORE - NO PERMANENT DELETE
 ================================ */
 
-// SOFT DELETE VIDEO (User can delete their own videos)
+// SOFT DELETE VIDEO (User can move their own videos to trash)
 router.delete('/:id/delete', protect, videoController.userSoftDeleteVideo);
 
-// RESTORE VIDEO (User can restore their own deleted videos)
+// RESTORE VIDEO (User can restore their own deleted videos from trash)
 router.put('/:id/restore', protect, videoController.userRestoreVideo);
 
-// PERMANENT DELETE (User can permanently delete their own videos that are in trash)
-router.delete('/:id/permanent', protect, videoController.userPermanentDeleteVideo);
+// PERMANENT DELETE - REMOVED (Users cannot permanently delete videos)
+// Videos auto-delete after 30 days in trash or when restore limit exceeded
+// Admins can permanently delete from admin panel
+router.delete('/:id/permanent', protect, (req, res) => {
+  res.status(403).json({ 
+    success: false, 
+    message: 'Users cannot permanently delete videos. Use soft delete (move to trash) instead. Videos in trash are automatically deleted after 30 days.' 
+  });
+});
 
 /* ================================
    UPLOAD ROUTES (Require Authentication)
@@ -256,3 +265,7 @@ router.get('/health', (req, res) => {
 });
 
 module.exports = router;
+
+/**
+ * END OF FILE: backend/routes/videoRoutes.js
+ */

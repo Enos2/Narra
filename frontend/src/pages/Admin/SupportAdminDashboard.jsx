@@ -1,7 +1,7 @@
+/* eslint-disable react-hooks/refs */
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable no-unused-vars */
 // FILE: frontend/src/pages/admin/SupportAdminDashboard.jsx
-/* eslint-disable react-hooks/exhaustive-deps */
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Link, Navigate } from "react-router-dom";
 import axios from "axios";
@@ -116,10 +116,15 @@ export default function SupportAdminDashboard() {
     }
   }, [conversations, loading, messageStats]);
 
-  const fetchStats = async () => {
-    if (!token || initialFetchDone.current) { setLoading(false); return; }
+  // FIXED: Wrap fetchStats in useCallback with proper dependencies
+  const fetchStats = useCallback(async () => {
+    if (!token || initialFetchDone.current) { 
+      setLoading(false); 
+      return; 
+    }
     try {
-      setLoading(true); setError(null);
+      setLoading(true); 
+      setError(null);
       const headers = { Authorization: `Bearer ${token}` };
       const base = "http://localhost:5000";
 
@@ -168,22 +173,31 @@ export default function SupportAdminDashboard() {
 
       initialFetchDone.current = true;
     } catch (err) {
+      console.error("Error fetching stats:", err);
       setError("Failed to load dashboard data");
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, fetchConversations]); // Added proper dependencies
 
-  useEffect(() => { if (token && isAuthReady) fetchStats(); }, [token, isAuthReady]);
+  // FIXED: Added fetchStats as dependency and check if already fetched
+  useEffect(() => { 
+    if (token && isAuthReady && !initialFetchDone.current) {
+      fetchStats(); 
+    }
+  }, [token, isAuthReady, fetchStats]);
 
   if (!isAuthReady) return <div className="spd-loading"><div className="spd-loading__ring"/><p>Loading…</p></div>;
   if (!user) return <Navigate to="/admin-login" replace />;
   if (user.role !== "supportadmin") return <Navigate to="/" replace />;
-  if (loading) return <div className="spd-loading"><div className="spd-loading__ring"/><p>Loading Support Admin Dashboard…</p></div>;
+  if (loading && !initialFetchDone.current) return <div className="spd-loading"><div className="spd-loading__ring"/><p>Loading Support Admin Dashboard…</p></div>;
   if (error) return (
     <div className="spd-loading">
       <p className="spd-error">{error}</p>
-      <button onClick={fetchStats} className="spd-retry">Retry</button>
+      <button onClick={() => {
+        initialFetchDone.current = false;
+        fetchStats();
+      }} className="spd-retry">Retry</button>
     </div>
   );
 

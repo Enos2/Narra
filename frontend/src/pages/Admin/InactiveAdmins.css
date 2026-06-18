@@ -1,363 +1,338 @@
-/* File: InactiveAdmins.css */
-.inactive-admins-wrapper {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 30px 20px;
-  background: #f5f7fa;
+/* ═══════════════════════════════════════════════════════════════════════════
+   InactiveAdmins.css  ·  Pure Black Canvas  ·  Per-role accent
+   ═══════════════════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400&display=swap');
+
+.ia-page {
+  --accent: #FFD700;
+  --bg: #000000;
+  --border: rgba(255,215,0,0.15);
+  --radius: 10px;
+  --radius-lg: 16px;
+  --font-d: 'Bebas Neue', sans-serif;
+  --font-b: 'DM Sans', sans-serif;
+  --font-m: 'DM Mono', monospace;
+
+  position: relative;
   min-height: 100vh;
+  background: #000000 !important;
+  color: #FFFFFF;
+  font-family: var(--font-b);
+  overflow-x: hidden;
 }
 
-.inactive-admins-header {
-  margin-bottom: 30px;
+.ia-role-superadmin    { --accent: #FFD700; --border: rgba(255,215,0,0.15); }
+.ia-role-platformadmin { --accent: #3B82F6; --border: rgba(59,130,246,0.15); }
+.ia-role-supportadmin  { --accent: #22c55e; --border: rgba(34,197,94,0.15); }
+
+/* ── Background ── */
+.ia-bg {
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  overflow: hidden;
+}
+.ia-bg-svg {
+  width: 100%; height: 100%;
+  position: absolute; inset: 0;
+}
+.ia-grain {
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 1;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+  opacity: 0.3;
 }
 
-.inactive-admins-header h1 {
-  font-size: 28px;
-  color: #333;
-  margin-bottom: 8px;
+/* ── Shell ── */
+.ia-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2.5rem 3rem 5rem;
+  position: relative;
+  z-index: 10;
 }
 
-.inactive-admins-header p {
-  color: #666;
-  font-size: 14px;
-}
-
-/* Alert Styles */
-.alert {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-  animation: slideIn 0.3s ease;
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.alert-error {
-  background: #f8d7da;
-  border: 1px solid #f5c6cb;
-  color: #721c24;
-}
-
-.alert-success {
-  background: #d4edda;
-  border: 1px solid #c3e6cb;
-  color: #155724;
-}
-
-.alert-icon {
-  font-size: 18px;
-  margin-right: 12px;
-}
-
-.alert-message {
-  flex: 1;
-  font-size: 14px;
-}
-
-.alert-close {
-  background: none;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  color: inherit;
-  opacity: 0.6;
-  transition: opacity 0.3s ease;
-}
-
-.alert-close:hover {
-  opacity: 1;
-}
-
-/* Stats Card */
-.inactive-admins-stats {
-  margin-bottom: 30px;
-}
-
-.stat-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 12px;
-  padding: 20px;
+/* ── Header ── */
+.ia-header {
+  margin-bottom: 2rem;
   text-align: center;
-  color: white;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+.ia-title {
+  font-family: var(--font-d);
+  font-size: 2.5rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.5rem 0;
+  background: linear-gradient(135deg, var(--accent), #ffffff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.ia-description {
+  color: rgba(255,255,255,0.6);
+  font-size: 0.9rem;
+  margin: 0;
 }
 
-.stat-number {
-  font-size: 36px;
-  font-weight: bold;
-  margin-bottom: 5px;
-}
-
-.stat-label {
-  font-size: 14px;
-  opacity: 0.9;
-}
-
-/* Table Styles */
-.inactive-admins-table-container {
-  background: white;
-  border-radius: 12px;
-  overflow-x: auto;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-  margin-bottom: 30px;
-}
-
-.inactive-admins-table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 800px;
-}
-
-.inactive-admins-table thead {
-  background: #f8f9fa;
-  border-bottom: 2px solid #e9ecef;
-}
-
-.inactive-admins-table th {
-  padding: 15px 20px;
-  text-align: left;
-  font-weight: 600;
-  color: #495057;
-  font-size: 14px;
-}
-
-.inactive-admins-table td {
-  padding: 15px 20px;
-  border-bottom: 1px solid #e9ecef;
-  font-size: 14px;
-  color: #555;
-}
-
-.inactive-admins-table tbody tr:hover {
-  background: #f8f9fa;
-}
-
-/* Admin Name Cell */
-.admin-name {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.admin-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: bold;
-  font-size: 16px;
-}
-
-.admin-email {
-  color: #666;
-  font-size: 13px;
-}
-
-.admin-date {
-  color: #666;
-  font-size: 13px;
-}
-
-.admin-reason {
-  max-width: 250px;
-  color: #888;
-  font-size: 13px;
-  word-break: break-word;
-}
-
-/* Role Badges */
-.role-badge {
-  display: inline-block;
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.role-badge.superadmin {
-  background: #dc3545;
-  color: white;
-}
-
-.role-badge.platformadmin {
-  background: #007bff;
-  color: white;
-}
-
-.role-badge.supportadmin {
-  background: #28a745;
-  color: white;
-}
-
-/* Action Buttons */
-.admin-actions {
-  white-space: nowrap;
-}
-
-.btn-reactivate {
-  background: #28a745;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-reactivate:hover:not(:disabled) {
-  background: #218838;
-  transform: translateY(-1px);
-}
-
-.btn-reactivate:disabled {
-  background: #6c757d;
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
-/* Empty State */
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-  background: white;
-  border-radius: 12px;
-  margin-bottom: 30px;
-}
-
-.empty-state-icon {
-  font-size: 64px;
-  margin-bottom: 16px;
-}
-
-.empty-state h3 {
-  font-size: 20px;
-  color: #333;
-  margin-bottom: 8px;
-}
-
-.empty-state p {
-  color: #666;
-  font-size: 14px;
-}
-
-/* Loading State */
-.loading-container {
+/* ── Loading ── */
+.ia-loading {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
-  background: white;
-  border-radius: 12px;
+  min-height: 60vh;
+  gap: 1.5rem;
+  position: relative;
+  z-index: 10;
 }
-
-.loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #667eea;
+.ia-loading__ring {
+  width: 50px; height: 50px;
+  border: 3px solid rgba(255,255,255,0.06);
+  border-top: 3px solid var(--accent);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 16px;
+  animation: ia-spin 0.8s linear infinite;
+}
+@keyframes ia-spin { to { transform: rotate(360deg); } }
+
+/* ── Stats Row ── */
+.ia-stats-row {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+.ia-stat-box {
+  background: #000 !important;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem 3rem;
+  text-align: center;
+  transition: border-color 0.2s;
+  position: relative;
+  z-index: 10;
+}
+.ia-stat-box:hover {
+  border-color: var(--accent);
+}
+.ia-stat-value {
+  display: block;
+  font-family: var(--font-d);
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1.2;
+}
+.ia-stat-label {
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: var(--font-m);
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.spinner-small {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid #f3f3f3;
-  border-top: 2px solid white;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-.loading-container p {
-  color: #666;
-  font-size: 14px;
-}
-
-/* Info Note */
-.info-note {
-  background: #e7f3ff;
-  border-left: 4px solid #2196f3;
-  padding: 15px 20px;
+/* ── Alerts ── */
+.ia-alert {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
   border-radius: 8px;
-  margin-top: 20px;
+  font-size: 0.85rem;
+  position: relative;
+  z-index: 10;
+}
+.ia-alert-success {
+  background: rgba(34,197,94,0.1);
+  border-left: 3px solid #22c55e;
+  color: #22c55e;
+}
+.ia-alert-error {
+  background: rgba(239,68,68,0.1);
+  border-left: 3px solid #ef4444;
+  color: #ef4444;
+}
+.ia-alert-icon { flex-shrink: 0; }
+.ia-alert-message { flex: 1; }
+.ia-alert-close {
+  background: none; border: none;
+  font-size: 1.2rem; cursor: pointer; color: inherit;
+}
+.ia-alert-btn {
+  background: var(--accent);
+  border: none;
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  color: #000000;
+  cursor: pointer;
+  font-family: var(--font-b);
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
 }
 
-.info-note p {
-  margin: 0;
-  font-size: 14px;
-  color: #0056b3;
+/* ── Table ── */
+.ia-table-wrapper {
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+  position: relative;
+  z-index: 10;
+  background: #000 !important;
+}
+.ia-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #000000 !important;
+  min-width: 800px;
+}
+.ia-table thead {
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid var(--border);
+}
+.ia-table th {
+  text-align: left;
+  padding: 1rem;
+  font-family: var(--font-d);
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  font-weight: 500;
+}
+.ia-table td {
+  padding: 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  vertical-align: middle;
+  background: #000000 !important;
+}
+.ia-table tbody tr:hover td {
+  background: rgba(255,255,255,0.02) !important;
 }
 
-/* Responsive Design */
-@media (max-width: 1024px) {
-  .inactive-admins-wrapper {
-    padding: 20px 15px;
-  }
-  
-  .inactive-admins-table th,
-  .inactive-admins-table td {
-    padding: 12px 15px;
-  }
+/* ── Name Cell ── */
+.ia-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 180px;
+}
+.ia-avatar-container {
+  width: 40px; height: 40px; flex-shrink: 0;
+}
+.ia-avatar-img {
+  width: 100%; height: 100%;
+  border-radius: 50%; object-fit: cover;
+  border: 2px solid var(--accent);
+}
+.ia-avatar-fallback {
+  width: 100%; height: 100%;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; font-weight: 600;
+  color: #000000; font-family: var(--font-d);
+}
+.ia-name-info { display: flex; flex-direction: column; }
+.ia-admin-name { font-weight: 600; color: #FFFFFF; font-size: 0.9rem; }
+
+/* ── Table Cells ── */
+.ia-email-cell {
+  color: rgba(255,255,255,0.8);
+  font-family: var(--font-m);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.ia-date-cell, .ia-reason-cell {
+  font-family: var(--font-m);
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.6);
+}
+.ia-reason-cell { max-width: 250px; word-break: break-word; }
+
+/* ── Role Badges ── */
+.ia-role-badge {
+  display: inline-block;
+  padding: 0.25rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  min-width: 110px;
+  text-align: center;
+}
+.ia-superadmin    { background: rgba(255,215,0,0.15);   color: #FFD700; border: 1px solid rgba(255,215,0,0.3); }
+.ia-platformadmin { background: rgba(59,130,246,0.15);  color: #3B82F6; border: 1px solid rgba(59,130,246,0.3); }
+.ia-supportadmin  { background: rgba(34,197,94,0.15);   color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
+
+/* ── Action Buttons ── */
+.ia-actions-cell { white-space: nowrap; }
+.ia-btn {
+  padding: 0.4rem 1rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-family: var(--font-b);
+  cursor: pointer;
+  transition: all 0.2s;
+  background: transparent;
+  border: 1px solid;
+}
+.ia-btn-reactivate { border-color: var(--accent); color: var(--accent); }
+.ia-btn-reactivate:hover:not(:disabled) { background: var(--accent); color: #000000; }
+.ia-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ia-spinner-small {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ia-spin 0.6s linear infinite;
+  margin-right: 0.3rem;
 }
 
-@media (max-width: 768px) {
-  .inactive-admins-header h1 {
-    font-size: 24px;
+/* ── Empty State ── */
+.ia-empty-state {
+  text-align: center;
+  padding: 4rem 2rem;
+  background: #000 !important;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-top: 2rem;
+  position: relative;
+  z-index: 10;
+}
+.ia-empty-icon    { margin-bottom: 1rem; opacity: 0.5; }
+.ia-empty-title   { font-family: var(--font-d); font-size: 1.3rem; margin: 0.5rem 0; color: var(--accent); }
+.ia-empty-description { color: rgba(255,255,255,0.5); }
+
+/* ── Info Note ── */
+.ia-info-note {
+  display: block;
+  text-align: center;
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.4);
+  margin-top: 1.5rem;
+  padding: 0;
+  background: transparent !important;
+  border: none;
+}
+.ia-info-note svg { display: none; }
+.ia-info-note p { margin: 0; }
+.ia-info-note strong { color: var(--accent); }
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .ia-container {
+    padding: 1.5rem 1.5rem 3rem;
   }
-  
-  .stat-number {
-    font-size: 28px;
-  }
-  
-  .admin-avatar {
-    width: 30px;
-    height: 30px;
-    font-size: 14px;
-  }
+  .ia-title { font-size: 1.8rem; }
+  .ia-stat-box { padding: 1.2rem 2rem; }
+  .ia-table th, .ia-table td { padding: 0.75rem; }
+  .ia-role-badge { min-width: 90px; font-size: 0.65rem; }
+  .ia-name-cell { min-width: 160px; }
 }
 
-@media (max-width: 640px) {
-  .inactive-admins-table th,
-  .inactive-admins-table td {
-    padding: 10px 12px;
-    font-size: 12px;
-  }
-  
-  .admin-reason {
-    max-width: 150px;
-  }
-  
-  .btn-reactivate {
-    padding: 6px 12px;
-    font-size: 12px;
-  }
+@media (max-width: 600px) {
+  .ia-container { padding: 1.5rem 1rem 3rem; }
+  .ia-role-badge { min-width: 80px; font-size: 0.6rem; }
+  .ia-avatar-container { width: 32px; height: 32px; }
 }

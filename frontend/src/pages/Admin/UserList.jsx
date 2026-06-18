@@ -109,6 +109,9 @@ const UserList = () => {
 
   const [showActionSidebar, setShowActionSidebar] = useState(false);
   const [activeUser, setActiveUser] = useState(null);
+  
+  // Track avatar image errors per user
+  const [avatarErrors, setAvatarErrors] = useState({});
 
   const baseUrl = "http://localhost:5000";
   const currentRole = user?.role || 'superadmin';
@@ -144,7 +147,7 @@ const UserList = () => {
       const [p,a,r,rej] = await Promise.all([getVideosByStatus(token,'pending',userId),getVideosByStatus(token,'approved',userId),getVideosByStatus(token,'released',userId),getVideosByStatus(token,'rejected',userId)]);
       const all = [...(p.videos||[]),...(a.videos||[]),...(r.videos||[]),...(rej.videos||[])];
       setUserVideos(all.filter((v,i,s)=>i===s.findIndex(x=>x._id===v._id)));
-    } catch(e){ setMessage({type:"error",text:"Failed to load videos"}); }
+    } catch(e){ setMessage({ type:"error",text:"Failed to load videos"}); }
     finally{ setLoadingVideos(false); }
   };
 
@@ -243,6 +246,24 @@ const UserList = () => {
   const openActionSidebar = (u) => { setActiveUser(u); setShowActionSidebar(true); };
   const closeActionSidebar = () => { setShowActionSidebar(false); setActiveUser(null); };
 
+  // Helper function to get user avatar URL
+  const getAvatarUrl = (user) => {
+    if (!user?.avatar) return null;
+    if (user.avatar.startsWith('http')) return user.avatar;
+    return `${baseUrl}${user.avatar}`;
+  };
+
+  // Helper to get initials from user name
+  const getInitials = (user) => {
+    const name = displayName(user);
+    if (!name) return 'U';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name[0].toUpperCase();
+  };
+
   useEffect(() => {
     let result = [...allUsers];
     if (searchTerm.trim()) {
@@ -275,7 +296,6 @@ const UserList = () => {
 
   const roleBadge = { superadmin:'ul-rb-super', platformadmin:'ul-rb-platform', supportadmin:'ul-rb-support', user:'ul-rb-user', creator:'ul-rb-creator' };
   const displayName = (u) => u.firstName&&u.lastName ? `${u.firstName} ${u.lastName}` : u.name || u.username || u.email;
-  const initials = (u) => (displayName(u)||'U')[0].toUpperCase();
 
   if (!user || !canManage) {
     return (
@@ -338,56 +358,96 @@ const UserList = () => {
         </div>
       )}
 
-      {/* Action Sidebar */}
+      {/* Action Sidebar - Updated to match Video Moderation style */}
       {showActionSidebar && activeUser && (
         <div className="ul-overlay" onClick={closeActionSidebar}>
           <aside className="ul-sidebar" onClick={e=>e.stopPropagation()}>
-            <div className="ul-sidebar__top"/>
+            <div className="ul-sidebar__topbar"/>
             <div className="ul-sidebar__hd">
-              <h3>Moderate User</h3>
-              <button onClick={closeActionSidebar}>&#215;</button>
+              <div>
+                <h3 className="ul-sidebar__title">Moderate User</h3>
+                <p className="ul-sidebar__sub">{activeUser.email}</p>
+              </div>
+              <button className="ul-sidebar__close" onClick={closeActionSidebar}>&#215;</button>
             </div>
-            <div className="ul-sidebar__user">
-              <div className="ul-sidebar__avatar">{initials(activeUser)}</div>
-              <div className="ul-sidebar__userinfo">
-                <strong>{displayName(activeUser)}</strong>
-                <span>{activeUser.email}</span>
-                <span className={`ul-rb ${roleBadge[activeUser.role]||'ul-rb-user'}`}>{activeUser.role}</span>
+            
+            <div className="ul-sidebar__scroll">
+              {/* User Info */}
+              <div className="ul-sidebar__user">
+                <div className="ul-sidebar__avatar">
+                  {(() => {
+                    const avatarUrl = getAvatarUrl(activeUser);
+                    const hasError = avatarErrors[activeUser._id];
+                    if (avatarUrl && !hasError) {
+                      return (
+                        <img 
+                          src={avatarUrl} 
+                          alt={displayName(activeUser)}
+                          onError={() => setAvatarErrors(prev => ({ ...prev, [activeUser._id]: true }))}
+                          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                        />
+                      );
+                    }
+                    return getInitials(activeUser);
+                  })()}
+                </div>
+                <div className="ul-sidebar__userinfo">
+                  <strong>{displayName(activeUser)}</strong>
+                  <span className="ul-sidebar__role">{activeUser.role}</span>
+                  <span className="ul-sidebar__status">
+                    {activeUser.isBanned ? 'Banned' : activeUser.isDeactivated ? 'Deactivated' : 'Active'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons - Horizontal style matching Video Moderation */}
+              <div className="ul-sidebar__sec">
+                <h4>Moderation Actions</h4>
+                <div className="ul-acts">
+                  <button className={`ul-act ${activeUser.isBanned ? 'ul-act--unban' : 'ul-act--ban'}`}
+                    onClick={()=>handleBanToggle(activeUser)} disabled={actionLoadingId===activeUser._id}>
+                    <span className="ul-act__n">{activeUser.isBanned ? 'Unban' : 'Ban'}</span>
+                    <span className="ul-act__h">{activeUser.isBanned ? 'Restore' : 'Block'}</span>
+                  </button>
+
+                  <button className={`ul-act ${activeUser.isVerified ? 'ul-act--unverify' : 'ul-act--verify'}`}
+                    onClick={()=>handleVerifyToggle(activeUser)} disabled={actionLoadingId===activeUser._id}>
+                    <span className="ul-act__n">{activeUser.isVerified ? 'Unverify' : 'Verify'}</span>
+                    <span className="ul-act__h">{activeUser.isVerified ? 'Remove' : 'Grant'}</span>
+                  </button>
+
+                  {isSuperAdmin && (
+                    <button className={`ul-act ${activeUser.isDeactivated ? 'ul-act--act' : 'ul-act--deact'}`}
+                      onClick={() => activeUser.isDeactivated ? handleActivateUser(activeUser._id) : handleDeactivateUser(activeUser._id)} 
+                      disabled={actionLoadingId===activeUser._id}>
+                      <span className="ul-act__n">{activeUser.isDeactivated ? 'Activate' : 'Deactivate'}</span>
+                      <span className="ul-act__h">{activeUser.isDeactivated ? 'Enable' : 'Disable'}</span>
+                    </button>
+                  )}
+
+                  {isSuperAdmin && activeUser._id !== user?._id && (
+                    <>
+                      <button className="ul-act ul-act--trash" 
+                        onClick={()=>{closeActionSidebar();handleUserDeleteClick(activeUser,"soft");}} 
+                        disabled={actionLoadingId===activeUser._id}>
+                        <span className="ul-act__n">Trash</span>
+                        <span className="ul-act__h">Soft delete</span>
+                      </button>
+                      <button className="ul-act ul-act--perm" 
+                        onClick={()=>{closeActionSidebar();handleUserDeleteClick(activeUser,"permanent");}} 
+                        disabled={actionLoadingId===activeUser._id}>
+                        <span className="ul-act__n">Permanent</span>
+                        <span className="ul-act__h">Irreversible</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+                {actionLoadingId === activeUser._id && (
+                  <div className="ul-proc"><div className="ul-ring ul-ring--sm" />Processing…</div>
+                )}
               </div>
             </div>
-            <div className="ul-sidebar__acts">
-              <button className={`ul-sact ${activeUser.isBanned?'ul-sact--unban':'ul-sact--ban'}`}
-                onClick={()=>handleBanToggle(activeUser)} disabled={actionLoadingId===activeUser._id}>
-                <span className="ul-sact__n">{activeUser.isBanned?'Unban User':'Ban User'}</span>
-                <span className="ul-sact__h">{activeUser.isBanned?'Restore user access':'Block user from platform'}</span>
-              </button>
-              <button className={`ul-sact ${activeUser.isVerified?'ul-sact--unverify':'ul-sact--verify'}`}
-                onClick={()=>handleVerifyToggle(activeUser)} disabled={actionLoadingId===activeUser._id}>
-                <span className="ul-sact__n">{activeUser.isVerified?'Unverify User':'Verify User'}</span>
-                <span className="ul-sact__h">{activeUser.isVerified?'Remove verification badge':'Grant verified status'}</span>
-              </button>
-              {isSuperAdmin && (!activeUser.isDeactivated ? (
-                <button className="ul-sact ul-sact--deact" onClick={()=>handleDeactivateUser(activeUser._id)} disabled={actionLoadingId===activeUser._id}>
-                  <span className="ul-sact__n">Deactivate Account</span>
-                  <span className="ul-sact__h">Temporarily disable login</span>
-                </button>
-              ) : (
-                <button className="ul-sact ul-sact--act" onClick={()=>handleActivateUser(activeUser._id)} disabled={actionLoadingId===activeUser._id}>
-                  <span className="ul-sact__n">Activate Account</span>
-                  <span className="ul-sact__h">Re-enable login access</span>
-                </button>
-              ))}
-              {isSuperAdmin && activeUser._id !== user?._id && (<>
-                <button className="ul-sact ul-sact--trash" onClick={()=>{closeActionSidebar();handleUserDeleteClick(activeUser,"soft");}} disabled={actionLoadingId===activeUser._id}>
-                  <span className="ul-sact__n">Move to Trash</span>
-                  <span className="ul-sact__h">Soft delete — recoverable</span>
-                </button>
-                <button className="ul-sact ul-sact--perm" onClick={()=>{closeActionSidebar();handleUserDeleteClick(activeUser,"permanent");}} disabled={actionLoadingId===activeUser._id}>
-                  <span className="ul-sact__n">Permanent Delete</span>
-                  <span className="ul-sact__h">Cannot be undone</span>
-                </button>
-              </>)}
-            </div>
+
             <div className="ul-sidebar__ft">
               <button className="ul-btn ul-btn--ghost ul-sidebar__cancel" onClick={closeActionSidebar}>Cancel</button>
             </div>
@@ -522,34 +582,54 @@ const UserList = () => {
           </div>
         ) : (
           <div className="ul-user-grid">
-            {filteredUsers.map((u, idx) => (
-              <div key={u._id} className="ul-ucard" style={{animationDelay:`${idx*0.03}s`}}>
-                <div className="ul-ucard__top">
-                  <div className="ul-ucard__avatar">{initials(u)}</div>
-                  <div className="ul-ucard__id">···{u._id.slice(-6)}</div>
-                </div>
-                <div className="ul-ucard__bd">
-                  <h3 className="ul-ucard__name">{displayName(u)}</h3>
-                  <p className="ul-ucard__email">{u.email}</p>
-                  <div className="ul-ucard__chips">
-                    <span className={`ul-rb ${roleBadge[u.role]||'ul-rb-user'}`}>{u.role}</span>
-                    {u.isVerified&&<span className="ul-fl ul-fl--verified">Verified</span>}
-                    {u.isBanned&&<span className="ul-fl ul-fl--banned">Banned</span>}
-                    {u.isDeactivated&&<span className="ul-fl ul-fl--deact">Deactivated</span>}
-                    {!u.isBanned&&!u.isDeactivated&&<span className="ul-fl ul-fl--active">Active</span>}
+            {filteredUsers.map((u, idx) => {
+              const avatarUrl = getAvatarUrl(u);
+              const hasAvatarError = avatarErrors[u._id];
+              const userInitials = getInitials(u);
+              
+              return (
+                <div key={u._id} className="ul-ucard" style={{animationDelay:`${idx*0.03}s`}}>
+                  <div className="ul-ucard__top">
+                    <div className="ul-ucard__avatar">
+                      {avatarUrl && !hasAvatarError ? (
+                        <img 
+                          src={avatarUrl} 
+                          alt={displayName(u)}
+                          onError={() => setAvatarErrors(prev => ({ ...prev, [u._id]: true }))}
+                          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        userInitials
+                      )}
+                    </div>
+                    <div className="ul-ucard__id">···{u._id.slice(-6)}</div>
                   </div>
-                  <div className="ul-ucard__stats">
-                    <span>Joined {new Date(u.createdAt).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</span>
-                    {u.balance!==undefined&&<span>${u.balance||0} balance</span>}
+                  <div className="ul-ucard__bd">
+                    {/* Using test route for profile page */}
+                    <Link to={`/admin/users-test/${u._id}`} style={{ textDecoration: 'none' }}>
+                      <h3 className="ul-ucard__name">{displayName(u)}</h3>
+                    </Link>
+                    <p className="ul-ucard__email">{u.email}</p>
+                    <div className="ul-ucard__chips">
+                      <span className={`ul-rb ${roleBadge[u.role]||'ul-rb-user'}`}>{u.role}</span>
+                      {u.isVerified&&<span className="ul-fl ul-fl--verified">Verified</span>}
+                      {u.isBanned&&<span className="ul-fl ul-fl--banned">Banned</span>}
+                      {u.isDeactivated&&<span className="ul-fl ul-fl--deact">Deactivated</span>}
+                      {!u.isBanned&&!u.isDeactivated&&<span className="ul-fl ul-fl--active">Active</span>}
+                    </div>
+                    <div className="ul-ucard__stats">
+                      <span>Joined {new Date(u.createdAt).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</span>
+                      {u.balance!==undefined&&<span>${u.balance||0} balance</span>}
+                    </div>
+                  </div>
+                  <div className="ul-ucard__ft">
+                    {/* Using test route for profile page */}
+                    <Link to={`/admin/users-test/${u._id}`} className="ul-ucard__profilebtn">View Profile</Link>
+                    <button className="ul-ucard__modbtn" onClick={()=>openActionSidebar(u)}>Moderate</button>
                   </div>
                 </div>
-                <div className="ul-ucard__ft">
-                  <Link to={`/admin/users/${u._id}`} className="ul-ucard__profilebtn">View Profile</Link>
-                  <button className="ul-ucard__vidbtn" onClick={()=>handleViewUserVideos(u)}>Videos</button>
-                  <button className="ul-ucard__modbtn" onClick={()=>openActionSidebar(u)}>Moderate</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
