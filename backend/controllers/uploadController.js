@@ -1,125 +1,141 @@
 /**
  * File: backend/controllers/uploadController.js
- * FIXED: req.files is a flat array when using upload.any() — must use
- *        getFile()/getFiles() helpers instead of req.files.fieldName
- * ADDED: Optional per-episode thumbnail support
+ * UPDATED: Now uses Cloudinary for all file uploads (videos, images, thumbnails)
+ * This prevents files from being deleted on Render redeploy
  */
 
+const cloudinary = require('cloudinary').v2;
 const Video = require('../models/Video');
 const User = require('../models/User');
 const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream');
 
-let sharp;
-try {
-  sharp = require('sharp');
-  console.log('✅ Sharp image processing loaded');
-} catch (err) {
-  console.warn('⚠️ Sharp not installed, using fallback for image uploads');
-  sharp = null;
-}
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'daxfuucyp',
+  api_key: process.env.CLOUDINARY_API_KEY || '778746539387572',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'VVsU04cBcDbTH5MvKUdMLEPPW3c'
+});
+
+// Or use the full URL if you prefer:
+// cloudinary.config({
+//   url: process.env.CLOUDINARY_URL
+// });
+
+console.log('✅ Cloudinary configured');
 
 /*
 ========================================
-HELPERS
+HELPERS - CLOUDINARY UPLOAD
 ========================================
 */
 
-const ensureDir = (dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-    console.log(`📁 Created directory: ${dir}`);
+/**
+ * Upload a file buffer to Cloudinary
+ * @param {Buffer} buffer - File buffer from multer
+ * @param {Object} options - Cloudinary upload options
+ * @returns {Promise<Object>} Cloudinary upload result
+ */
+const uploadToCloudinary = (buffer, options = {}) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'auto',
+        folder: 'narra',
+        ...options
+      },
+      (error, result) => {
+        if (error) {
+          console.error('Cloudinary upload error:', error);
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      }
+    );
+    
+    const readable = new Readable();
+    readable._read = () => {};
+    readable.push(buffer);
+    readable.push(null);
+    readable.pipe(uploadStream);
+  });
+};
+
+/**
+ * Upload a video to Cloudinary
+ * @param {Buffer} buffer - Video file buffer
+ * @param {Object} options - Additional options
+ * @returns {Promise<Object>} Cloudinary upload result
+ */
+const uploadVideoToCloudinary = async (buffer, options = {}) => {
+  try {
+    const result = await uploadToCloudinary(buffer, {
+      resource_type: 'video',
+      folder: 'narra/videos',
+      ...options
+    });
+    return {
+      success: true,
+      url: result.secure_url,
+      publicId: result.public_id,
+      duration: result.duration || 0,
+      format: result.format,
+      fileSize: result.bytes
+    };
+  } catch (error) {
+    console.error('Video upload error:', error);
+    throw new Error('Failed to upload video to Cloudinary: ' + error.message);
   }
 };
 
 /**
- * When multer uses upload.any(), req.files is a FLAT ARRAY:
- *   [{ fieldname: 'thumbnail', buffer, ... }, { fieldname: 'season-0-episode-0-video', ... }]
- *
- * These helpers replace the broken req.files.fieldName pattern.
+ * Upload an image to Cloudinary
+ * @param {Buffer} buffer - Image file buffer
+ * @param {Object} options - Additional options (width, height, quality)
+ * @returns {Promise<Object>} Cloudinary upload result
  */
-const getFile = (files, fieldname) => {
-  if (!files || !Array.isArray(files)) return null;
-  return files.find(f => f.fieldname === fieldname) || null;
-};
-
-const getFiles = (files, fieldname) => {
-  if (!files || !Array.isArray(files)) return [];
-  return files.filter(f => f.fieldname === fieldname);
-};
-
-const saveFile = (file, folder) => {
-  if (!file) return null;
-
-  const uploadDir = path.join(__dirname, '..', 'uploads', folder);
-  ensureDir(uploadDir);
-
-  const safeName = file.originalname
-    .replace(/\s+/g, '_')
-    .replace(/[^a-zA-Z0-9._-]/g, '');
-
-  const fileName = `${Date.now()}-${safeName}`;
-  const filePath = path.join(uploadDir, fileName);
-
+const uploadImageToCloudinary = async (buffer, options = {}) => {
   try {
-    fs.writeFileSync(filePath, file.buffer);
-    const stats = fs.statSync(filePath);
-    console.log(`✅ File saved: ${fileName} (${stats.size} bytes)`);
-    return {
-      filePath,
-      url: `/uploads/${folder}/${fileName}`,
-      fileName,
-      fileSize: stats.size,
-      mimeType: file.mimetype,
-    };
-  } catch (err) {
-    console.error('Error saving file:', err);
-    return null;
-  }
-};
-
-const optimizeImage = async (file, folder, options = {}) => {
-  if (!file) return null;
-
-  const { width = 400, height = 400, quality = 80 } = options;
-  const uploadDir = path.join(__dirname, '..', 'uploads', folder);
-  ensureDir(uploadDir);
-
-  const safeName = file.originalname
-    .replace(/\s+/g, '_')
-    .replace(/[^a-zA-Z0-9._-]/g, '');
-
-  const ext = path.extname(safeName) || '.jpg';
-  const baseName = path.basename(safeName, ext);
-  const fileName = `${Date.now()}-${baseName}.jpg`;
-  const filePath = path.join(uploadDir, fileName);
-
-  try {
-    if (sharp) {
-      await sharp(file.buffer)
-        .resize(width, height, { fit: 'cover', position: 'centre' })
-        .jpeg({ quality })
-        .toFile(filePath);
-      console.log(`✅ Image optimized: ${fileName}`);
+    const { width, height, quality = 85, folder = 'narra/images' } = options;
+    
+    let transformation = {};
+    if (width && height) {
+      transformation = { width, height, crop: 'fill', quality };
     } else {
-      fs.writeFileSync(filePath, file.buffer);
-      console.log(`✅ Image saved (no optimization): ${fileName}`);
+      transformation = { quality };
     }
-
-    const stats = fs.statSync(filePath);
+    
+    const result = await uploadToCloudinary(buffer, {
+      resource_type: 'image',
+      folder,
+      transformation: [transformation]
+    });
+    
     return {
-      filePath,
-      url: `/uploads/${folder}/${fileName}`,
-      fileName,
-      fileSize: stats.size,
-      mimeType: 'image/jpeg',
-      dimensions: { width, height },
+      success: true,
+      url: result.secure_url,
+      publicId: result.public_id,
+      format: result.format,
+      fileSize: result.bytes,
+      width: result.width,
+      height: result.height
     };
-  } catch (err) {
-    console.error('Error optimizing image:', err);
-    return saveFile(file, folder);
+  } catch (error) {
+    console.error('Image upload error:', error);
+    throw new Error('Failed to upload image to Cloudinary: ' + error.message);
   }
 };
+
+/*
+========================================
+HELPERS - FILE VALIDATION
+========================================
+*/
+
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
 
 const validateFileType = (file, allowedTypes) => {
   if (!file) return false;
@@ -131,28 +147,19 @@ const validateFileSize = (file, maxSizeMB) => {
   return file.size <= maxSizeMB * 1024 * 1024;
 };
 
-const deleteFileFromDisk = (filePath) => {
-  if (filePath && fs.existsSync(filePath)) {
-    try {
-      fs.unlinkSync(filePath);
-      console.log(`🗑️ File deleted: ${filePath}`);
-      return true;
-    } catch (err) {
-      console.error('Error deleting file:', err);
-      return false;
-    }
-  }
-  return false;
+const getFile = (files, fieldname) => {
+  if (!files || !Array.isArray(files)) return null;
+  return files.find(f => f.fieldname === fieldname) || null;
 };
 
-const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
+const getFiles = (files, fieldname) => {
+  if (!files || !Array.isArray(files)) return [];
+  return files.filter(f => f.fieldname === fieldname);
+};
 
 /*
 ========================================
 UPLOAD VIDEO (CREATOR)
-FIXED: use getFile() / getFiles() instead of req.files.fieldName
-ADDED: optional per-episode thumbnail
 ========================================
 */
 exports.uploadVideo = async (req, res) => {
@@ -163,7 +170,6 @@ exports.uploadVideo = async (req, res) => {
 
     const files = req.files; // flat array from upload.any()
 
-    // Debug: log what files arrived
     console.log('📦 Received files:', files ? files.map(f => `${f.fieldname} (${f.size} bytes)`) : 'none');
     console.log('📦 Received body fields:', Object.keys(req.body));
 
@@ -199,7 +205,7 @@ exports.uploadVideo = async (req, res) => {
       });
     }
 
-    // ── Thumbnail validation (FIXED: use getFile() not req.files.thumbnail) ──
+    // ── Thumbnail validation ──────────────────────────────────────────────
     const thumbnailFile = getFile(files, 'thumbnail');
     if (!thumbnailFile) {
       return res.status(400).json({
@@ -313,105 +319,124 @@ exports.uploadVideo = async (req, res) => {
       uploadedAt: new Date(),
     });
 
-    // ── Save thumbnail ─────────────────────────────────────────────────────
+    // ── Upload thumbnail to Cloudinary ─────────────────────────────────────
     try {
-      const savedThumbnail = await optimizeImage(thumbnailFile, 'thumbnails', {
+      const result = await uploadImageToCloudinary(thumbnailFile.buffer, {
         width: 1280,
         height: 720,
         quality: 85,
+        folder: 'narra/thumbnails'
       });
-      videoDoc.thumbnailUrl = savedThumbnail.url;
-      videoDoc.thumbnailPath = savedThumbnail.filePath;
+      videoDoc.thumbnailUrl = result.url;
+      videoDoc.thumbnailPath = result.publicId;
+      console.log(`✅ Thumbnail uploaded to Cloudinary: ${result.publicId}`);
     } catch (err) {
-      console.error('Thumbnail optimization error:', err);
-      const savedThumbnail = saveFile(thumbnailFile, 'thumbnails');
-      if (!savedThumbnail) {
-        return res.status(500).json({ success: false, message: 'Failed to save thumbnail' });
-      }
-      videoDoc.thumbnailUrl = savedThumbnail.url;
-      videoDoc.thumbnailPath = savedThumbnail.filePath;
+      console.error('Thumbnail upload error:', err);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Failed to upload thumbnail: ' + err.message 
+      });
     }
 
-    // ── Movie: save main video + optional trailer ──────────────────────────
+    // ── Movie: upload main video + optional trailer ──────────────────────
     if (type === 'movie') {
       const videoFile = getFile(files, 'video');
-      const savedVideo = saveFile(videoFile, 'videos');
-      if (!savedVideo) {
-        return res.status(500).json({ success: false, message: 'Failed to save video file' });
+      try {
+        const result = await uploadVideoToCloudinary(videoFile.buffer, {
+          folder: 'narra/videos'
+        });
+        videoDoc.videoUrl = result.url;
+        videoDoc.filePath = result.publicId;
+        videoDoc.fileSize = result.fileSize;
+        console.log(`✅ Video uploaded to Cloudinary: ${result.publicId}`);
+      } catch (err) {
+        console.error('Video upload error:', err);
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Failed to upload video: ' + err.message 
+        });
       }
-      videoDoc.videoUrl = savedVideo.url;
-      videoDoc.filePath = savedVideo.filePath;
-      videoDoc.fileSize = savedVideo.fileSize;
 
+      // Upload trailer if present
       const trailerFile = getFile(files, 'trailer');
       if (trailerFile && validateFileType(trailerFile, VIDEO_TYPES)) {
-        const savedTrailer = saveFile(trailerFile, 'trailers');
-        if (savedTrailer) {
-          videoDoc.trailerUrl = savedTrailer.url;
-          videoDoc.trailerPath = savedTrailer.filePath;
+        try {
+          const result = await uploadVideoToCloudinary(trailerFile.buffer, {
+            folder: 'narra/trailers'
+          });
+          videoDoc.trailerUrl = result.url;
+          videoDoc.trailerPath = result.publicId;
+          console.log(`✅ Trailer uploaded to Cloudinary: ${result.publicId}`);
+        } catch (err) {
+          console.warn('Trailer upload failed:', err.message);
         }
       }
     }
 
-    // ── Series: save season trailers + episode videos/trailers/thumbnails ──
+    // ── Series: upload season trailers + episode videos/trailers/thumbnails ──
     if (type === 'series' && parsedSeasons.length > 0) {
       for (let s = 0; s < parsedSeasons.length; s++) {
-
         // Season trailer (optional)
         const seasonTrailerFile = getFile(files, `season-${s}-trailer`);
         if (seasonTrailerFile && validateFileType(seasonTrailerFile, VIDEO_TYPES)) {
-          const saved = saveFile(seasonTrailerFile, 'trailers');
-          if (saved) {
-            parsedSeasons[s].trailerUrl = saved.url;
-            parsedSeasons[s].trailerPath = saved.filePath;
+          try {
+            const result = await uploadVideoToCloudinary(seasonTrailerFile.buffer, {
+              folder: 'narra/trailers'
+            });
+            parsedSeasons[s].trailerUrl = result.url;
+            parsedSeasons[s].trailerPath = result.publicId;
+          } catch (err) {
+            console.warn(`Season ${s} trailer upload failed:`, err.message);
           }
         }
 
         if (parsedSeasons[s].episodes) {
           for (let e = 0; e < parsedSeasons[s].episodes.length; e++) {
-
-            // Episode video (required per episode)
+            // Episode video
             const episodeVideoFile = getFile(files, `season-${s}-episode-${e}-video`);
             if (episodeVideoFile && validateFileType(episodeVideoFile, VIDEO_TYPES)) {
-              const saved = saveFile(episodeVideoFile, 'videos');
-              if (saved) {
-                parsedSeasons[s].episodes[e].videoUrl = saved.url;
-                parsedSeasons[s].episodes[e].filePath = saved.filePath;
-                parsedSeasons[s].episodes[e].fileSize = saved.fileSize;
+              try {
+                const result = await uploadVideoToCloudinary(episodeVideoFile.buffer, {
+                  folder: 'narra/videos'
+                });
+                parsedSeasons[s].episodes[e].videoUrl = result.url;
+                parsedSeasons[s].episodes[e].filePath = result.publicId;
+                parsedSeasons[s].episodes[e].fileSize = result.fileSize;
+                console.log(`✅ Episode ${s}-${e} uploaded to Cloudinary: ${result.publicId}`);
+              } catch (err) {
+                console.error(`Episode ${s}-${e} upload error:`, err.message);
               }
             }
 
             // Episode trailer (optional)
             const episodeTrailerFile = getFile(files, `season-${s}-episode-${e}-trailer`);
             if (episodeTrailerFile && validateFileType(episodeTrailerFile, VIDEO_TYPES)) {
-              const saved = saveFile(episodeTrailerFile, 'trailers');
-              if (saved) {
-                parsedSeasons[s].episodes[e].trailerUrl = saved.url;
-                parsedSeasons[s].episodes[e].trailerPath = saved.filePath;
+              try {
+                const result = await uploadVideoToCloudinary(episodeTrailerFile.buffer, {
+                  folder: 'narra/trailers'
+                });
+                parsedSeasons[s].episodes[e].trailerUrl = result.url;
+                parsedSeasons[s].episodes[e].trailerPath = result.publicId;
+              } catch (err) {
+                console.warn(`Episode ${s}-${e} trailer upload failed:`, err.message);
               }
             }
 
-            // Episode thumbnail (optional) — NEW
+            // Episode thumbnail (optional)
             const episodeThumbnailFile = getFile(files, `season-${s}-episode-${e}-thumbnail`);
             if (episodeThumbnailFile && validateFileType(episodeThumbnailFile, IMAGE_TYPES)) {
               try {
-                const saved = await optimizeImage(episodeThumbnailFile, 'thumbnails', {
+                const result = await uploadImageToCloudinary(episodeThumbnailFile.buffer, {
                   width: 1280,
                   height: 720,
                   quality: 85,
+                  folder: 'narra/thumbnails'
                 });
-                if (saved) {
-                  parsedSeasons[s].episodes[e].thumbnailUrl = saved.url;
-                  parsedSeasons[s].episodes[e].thumbnailPath = saved.filePath;
-                  console.log(`✅ Episode ${s}-${e} thumbnail saved`);
-                }
-              } catch (thumbErr) {
-                console.warn(`⚠️ Episode ${s}-${e} thumbnail optimization failed, using fallback`);
-                const saved = saveFile(episodeThumbnailFile, 'thumbnails');
-                if (saved) {
-                  parsedSeasons[s].episodes[e].thumbnailUrl = saved.url;
-                  parsedSeasons[s].episodes[e].thumbnailPath = saved.filePath;
-                }
+                parsedSeasons[s].episodes[e].thumbnailUrl = result.url;
+                parsedSeasons[s].episodes[e].thumbnailPath = result.publicId;
+                console.log(`✅ Episode ${s}-${e} thumbnail uploaded to Cloudinary`);
+              } catch (err) {
+                console.warn(`Episode ${s}-${e} thumbnail upload failed:`, err.message);
               }
             }
           }
@@ -482,39 +507,41 @@ exports.uploadAvatar = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    if (user.avatar && !user.avatar.includes('default-avatar')) {
-      const oldPath = path.join(__dirname, '..', user.avatar.replace('/uploads/', 'uploads/'));
-      deleteFileFromDisk(oldPath);
-    }
-
-    let savedAvatar;
+    // Upload to Cloudinary
     try {
-      savedAvatar = await optimizeImage(req.file, 'avatars', { width: 400, height: 400, quality: 90 });
-    } catch {
-      savedAvatar = saveFile(req.file, 'avatars');
+      const result = await uploadImageToCloudinary(req.file.buffer, {
+        width: 400,
+        height: 400,
+        quality: 90,
+        folder: 'narra/avatars'
+      });
+
+      const updatedUser = await User.findByIdAndUpdate(
+        req.user._id,
+        { $set: { avatar: result.url } },
+        { new: true, runValidators: false }
+      ).select('-password -tokenVersion');
+
+      return res.status(200).json({
+        success: true,
+        message: 'Avatar uploaded successfully',
+        avatarUrl: result.url,
+        user: {
+          id: updatedUser._id,
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          username: updatedUser.username,
+          email: updatedUser.email,
+          avatar: updatedUser.avatar,
+        },
+      });
+    } catch (err) {
+      console.error('Cloudinary avatar upload error:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to upload avatar: ' + err.message
+      });
     }
-
-    if (!savedAvatar) throw new Error('Failed to save avatar file');
-
-    const updatedUser = await User.findByIdAndUpdate(
-      req.user._id,
-      { $set: { avatar: savedAvatar.url } },
-      { new: true, runValidators: false }
-    ).select('-password -tokenVersion');
-
-    return res.status(200).json({
-      success: true,
-      message: 'Avatar uploaded successfully',
-      avatarUrl: savedAvatar.url,
-      user: {
-        id: updatedUser._id,
-        firstName: updatedUser.firstName,
-        lastName: updatedUser.lastName,
-        username: updatedUser.username,
-        email: updatedUser.email,
-        avatar: updatedUser.avatar,
-      },
-    });
   } catch (err) {
     console.error('❌ Avatar upload error:', err);
     return res.status(500).json({ success: false, message: err.message || 'Avatar upload failed' });
@@ -539,20 +566,32 @@ exports.uploadCoverImage = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Cover image size must be less than 10MB' });
     }
 
-    let savedCover;
     try {
-      savedCover = await optimizeImage(req.file, 'covers', { width: 1920, height: 480, quality: 85 });
-    } catch {
-      savedCover = saveFile(req.file, 'covers');
+      const result = await uploadImageToCloudinary(req.file.buffer, {
+        width: 1920,
+        height: 480,
+        quality: 85,
+        folder: 'narra/covers'
+      });
+
+      await User.findByIdAndUpdate(
+        req.user._id,
+        { $set: { coverImage: result.url } },
+        { new: true, runValidators: false }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Cover image uploaded successfully',
+        coverUrl: result.url
+      });
+    } catch (err) {
+      console.error('Cloudinary cover upload error:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to upload cover image: ' + err.message
+      });
     }
-
-    await User.findByIdAndUpdate(
-      req.user._id,
-      { $set: { coverImage: savedCover.url } },
-      { new: true, runValidators: false }
-    );
-
-    return res.status(200).json({ success: true, message: 'Cover image uploaded successfully', coverUrl: savedCover.url });
   } catch (err) {
     console.error('Cover image upload error:', err);
     return res.status(500).json({ success: false, message: 'Cover image upload failed' });
@@ -583,15 +622,38 @@ exports.uploadVerificationDocument = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Document size must be less than 20MB' });
     }
 
-    const savedDoc = saveFile(req.file, 'verification');
+    try {
+      const result = await uploadImageToCloudinary(req.file.buffer, {
+        folder: 'narra/verification'
+      });
 
-    await User.findByIdAndUpdate(
-      req.user._id,
-      { $push: { verificationDocuments: { type: documentType, url: savedDoc.url, uploadedAt: new Date(), status: 'pending' } } },
-      { new: true, runValidators: false }
-    );
+      await User.findByIdAndUpdate(
+        req.user._id,
+        { 
+          $push: { 
+            verificationDocuments: { 
+              type: documentType, 
+              url: result.url, 
+              uploadedAt: new Date(), 
+              status: 'pending' 
+            } 
+          } 
+        },
+        { new: true, runValidators: false }
+      );
 
-    return res.status(200).json({ success: true, message: 'Verification document uploaded successfully', document: { type: documentType, url: savedDoc.url, status: 'pending' } });
+      return res.status(200).json({
+        success: true,
+        message: 'Verification document uploaded successfully',
+        document: { type: documentType, url: result.url, status: 'pending' }
+      });
+    } catch (err) {
+      console.error('Cloudinary document upload error:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to upload document: ' + err.message
+      });
+    }
   } catch (err) {
     console.error('Document upload error:', err);
     return res.status(500).json({ success: false, message: 'Document upload failed' });
@@ -616,25 +678,36 @@ exports.uploadThumbnail = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Thumbnail size must be less than 5MB' });
     }
 
-    let savedThumbnail;
     try {
-      savedThumbnail = await optimizeImage(req.file, 'thumbnails', { width: 1280, height: 720, quality: 85 });
-    } catch {
-      savedThumbnail = saveFile(req.file, 'thumbnails');
-    }
+      const result = await uploadImageToCloudinary(req.file.buffer, {
+        width: 1280,
+        height: 720,
+        quality: 85,
+        folder: 'narra/thumbnails'
+      });
 
-    const { videoId } = req.body;
-    if (videoId) {
-      const video = await Video.findById(videoId);
-      if (video && (video.creator.toString() === req.user._id.toString() || video.user.toString() === req.user._id.toString())) {
-        if (video.thumbnailPath) deleteFileFromDisk(video.thumbnailPath);
-        video.thumbnailUrl = savedThumbnail.url;
-        video.thumbnailPath = savedThumbnail.filePath;
-        await video.save();
+      const { videoId } = req.body;
+      if (videoId) {
+        const video = await Video.findById(videoId);
+        if (video && (video.creator.toString() === req.user._id.toString() || video.user.toString() === req.user._id.toString())) {
+          video.thumbnailUrl = result.url;
+          video.thumbnailPath = result.publicId;
+          await video.save();
+        }
       }
-    }
 
-    return res.status(200).json({ success: true, message: 'Thumbnail uploaded successfully', thumbnailUrl: savedThumbnail.url });
+      return res.status(200).json({
+        success: true,
+        message: 'Thumbnail uploaded successfully',
+        thumbnailUrl: result.url
+      });
+    } catch (err) {
+      console.error('Cloudinary thumbnail upload error:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to upload thumbnail: ' + err.message
+      });
+    }
   } catch (err) {
     console.error('Thumbnail upload error:', err);
     return res.status(500).json({ success: false, message: 'Thumbnail upload failed' });
@@ -643,7 +716,7 @@ exports.uploadThumbnail = async (req, res) => {
 
 /*
 ========================================
-DELETE FILE
+DELETE FILE (From Cloudinary)
 ========================================
 */
 exports.deleteFile = async (req, res) => {
@@ -653,11 +726,30 @@ exports.deleteFile = async (req, res) => {
     const { fileUrl } = req.body;
     if (!fileUrl) return res.status(400).json({ success: false, message: 'File URL is required' });
 
-    const relativePath = fileUrl.replace('/uploads/', 'uploads/');
-    const filePath = path.join(__dirname, '..', relativePath);
-    const deleted = deleteFileFromDisk(filePath);
+    // Extract public ID from Cloudinary URL
+    let publicId = null;
+    if (fileUrl.includes('cloudinary.com')) {
+      const urlParts = fileUrl.split('/');
+      const uploadIndex = urlParts.indexOf('upload');
+      if (uploadIndex !== -1) {
+        publicId = urlParts.slice(uploadIndex + 2).join('/').split('.')[0];
+      }
+    }
 
-    return res.status(200).json({ success: true, message: deleted ? 'File deleted successfully' : 'File not found', deleted });
+    if (publicId) {
+      const result = await cloudinary.uploader.destroy(publicId, {
+        resource_type: 'auto'
+      });
+      console.log(`✅ Deleted from Cloudinary: ${publicId} (${result.result})`);
+    } else {
+      console.warn('⚠️ Not a Cloudinary URL, skipping deletion');
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'File deleted successfully',
+      deleted: true
+    });
   } catch (err) {
     console.error('File deletion error:', err);
     return res.status(500).json({ success: false, message: 'File deletion failed' });
@@ -717,4 +809,4 @@ exports.getUploadStatus = async (req, res) => {
   }
 };
 
-exports.helpers = { saveFile, optimizeImage, validateFileType, validateFileSize, deleteFile: deleteFileFromDisk, ensureDir };
+exports.helpers = { uploadToCloudinary, uploadVideoToCloudinary, uploadImageToCloudinary, validateFileType, validateFileSize };
