@@ -9,6 +9,12 @@
 
 ---
 
+# 🎬 Narra - Video Streaming Platform
+
+**Live Website:** [https://narraplay.onrender.com](https://narraplay.onrender.com)
+
+**Backend API:** [https://narra-q4p4.onrender.com](https://narra-q4p4.onrender.com)
+
 ## 🚀 Project Overview
 
 **Narra** is a modern **pay-per-view streaming platform** designed for content creators, administrators, and public viewers.  
