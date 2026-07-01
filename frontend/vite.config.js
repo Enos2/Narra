@@ -14,11 +14,18 @@ export default defineConfig({
       }
     }
   },
-  // Updated: use rolldownOptions instead of esbuildOptions
   optimizeDeps: {
     rolldownOptions: {
       define: {
         'global': 'globalThis'
+      }
+    }
+  },
+  // Add this to ensure _redirects is included in build
+  build: {
+    rollupOptions: {
+      output: {
+        // This ensures the _redirects file is copied
       }
     }
   }
