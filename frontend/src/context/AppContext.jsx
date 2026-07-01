@@ -9,6 +9,7 @@
    FIXED: Added proper token validation before setting isAuthReady
    FIXED: Added isTokenValid check from requests.js
    FIXED: Function order to prevent TDZ error with logout
+   FIXED: Changed from sessionStorage to localStorage for persistent login across tabs
 */
 
 import React, {
@@ -57,8 +58,8 @@ export const VIDEO_STATUS = {
   DRAFT: "draft",
 };
 
-// Use sessionStorage for tab isolation
-const storage = window.sessionStorage;
+// Use localStorage for persistent login across tabs
+const storage = window.localStorage;
 
 // Storage keys with role prefix
 const getStorageKeys = (role) => ({
@@ -538,10 +539,14 @@ export function AppProvider({ children }) {
     }
   }, [token, fetchVideos, updateUserData]);
 
-  // Cross-tab logout
+  // Cross-tab logout - listen for storage changes across tabs
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (e.key === "narra_current_role" && !e.newValue) logout();
+      // Also handle if token is removed from another tab
+      if (e.key?.startsWith("narra_token_") && !e.newValue) {
+        logout();
+      }
     };
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
