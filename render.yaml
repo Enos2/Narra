@@ -1,9 +1,9 @@
 services:
-  - type: static
+  - type: web
     name: narraplay
+    runtime: node
     buildCommand: cd frontend && npm install && npm run build
-    staticPublishPath: frontend/dist
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+    startCommand: npx serve -s frontend/dist -l 10000
+    envVars:
+      - key: NODE_VERSION
+        value: 18
