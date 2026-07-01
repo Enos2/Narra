@@ -1,5 +1,5 @@
 // File: frontend/src/components/Navbar.jsx
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessages } from "../context/MessageContext";
 import { useTheme } from "../context/ThemeContext";
@@ -70,6 +70,17 @@ function Navbar() {
 
   const handleLogout = () => { logout(); closeAll(); navigate("/"); };
 
+  // Handle navigation for a tags (keep SPA behavior)
+  const handleNavClick = (e, path) => {
+    // If middle click or ctrl+click, allow default behavior (open in new tab)
+    if (e.button === 1 || e.ctrlKey || e.metaKey) {
+      return; // Let the browser handle it normally
+    }
+    e.preventDefault();
+    navigate(path);
+    closeAll();
+  };
+
   const isActive = (path) => location.pathname === path;
 
   const getAvatarUrl = (avatarPath) => {
@@ -92,29 +103,46 @@ function Navbar() {
 
   return (
     <nav ref={navbarRef} className={`navbar ${scrolled ? 'scrolled' : ''}`}>
-      <Link to="/" className="logo-container" onClick={closeAll}>
+      {/* Logo - uses a tag for new tab support */}
+      <a href="/" className="logo-container" onClick={(e) => handleNavClick(e, "/")}>
         <img src={logo} alt="Narra logo" />
-      </Link>
+      </a>
 
       <div className="nav-links desktop-only">
-        <Link to="/" className={`nav-link ${isActive("/") ? "active" : ""}`} onClick={closeAll}>
+        <a
+          href="/"
+          className={`nav-link ${isActive("/") ? "active" : ""}`}
+          onClick={(e) => handleNavClick(e, "/")}
+        >
           <span className="link-text" style={isActive("/") ? { color: accent } : {}}>Home</span>
           <span className="link-indicator" style={isActive("/") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
-        </Link>
+        </a>
         {user && (
           <>
-            <Link to="/upload" className={`nav-link ${isActive("/upload") ? "active" : ""}`} onClick={closeAll}>
+            <a
+              href="/upload"
+              className={`nav-link ${isActive("/upload") ? "active" : ""}`}
+              onClick={(e) => handleNavClick(e, "/upload")}
+            >
               <span className="link-text" style={isActive("/upload") ? { color: accent } : {}}>Upload</span>
               <span className="link-indicator" style={isActive("/upload") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
-            </Link>
-            <Link to="/live" className={`nav-link ${isActive("/live") ? "active" : ""}`} onClick={closeAll}>
+            </a>
+            <a
+              href="/live"
+              className={`nav-link ${isActive("/live") ? "active" : ""}`}
+              onClick={(e) => handleNavClick(e, "/live")}
+            >
               <span className="link-text" style={isActive("/live") ? { color: accent } : {}}>Live Stream</span>
               <span className="link-indicator" style={isActive("/live") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
-            </Link>
-            <Link to="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`} onClick={closeAll}>
+            </a>
+            <a
+              href="/dashboard"
+              className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}
+              onClick={(e) => handleNavClick(e, "/dashboard")}
+            >
               <span className="link-text" style={isActive("/dashboard") ? { color: accent } : {}}>Dashboard</span>
               <span className="link-indicator" style={isActive("/dashboard") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
-            </Link>
+            </a>
           </>
         )}
       </div>
@@ -122,11 +150,18 @@ function Navbar() {
       <div className="nav-right">
         {!user ? (
           <div className="auth-links desktop-only">
-            <Link to="/login" className="auth-link login" onClick={closeAll}><span>Login</span></Link>
-            <Link to="/register" className="auth-link register" style={{ background: `linear-gradient(135deg, rgba(${accentRgb}, 0.8), rgba(${accentRgb}, 0.9))` }} onClick={closeAll}>
+            <a href="/login" className="auth-link login" onClick={(e) => handleNavClick(e, "/login")}>
+              <span>Login</span>
+            </a>
+            <a
+              href="/register"
+              className="auth-link register"
+              style={{ background: `linear-gradient(135deg, rgba(${accentRgb}, 0.8), rgba(${accentRgb}, 0.9))` }}
+              onClick={(e) => handleNavClick(e, "/register")}
+            >
               <span>Register</span>
               <span className="btn-glow" />
-            </Link>
+            </a>
           </div>
         ) : (
           <div className="user-menu">
@@ -171,20 +206,20 @@ function Navbar() {
                   </div>
                 </div>
                 <div className="dropdown-divider" />
-                <Link to="/account" onClick={closeAll}>
+                <a href="/account" onClick={(e) => handleNavClick(e, "/account")}>
                   <svg className="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
                   Account Settings
-                </Link>
-                <Link to="/messages" onClick={closeAll} className="messages-link">
+                </a>
+                <a href="/messages" onClick={(e) => handleNavClick(e, "/messages")} className="messages-link">
                   <svg className="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                   Messages
                   {unreadCount > 0 && <span className="unread-badge-nav" style={{ background: accent }}>{unreadCount > 9 ? '9+' : unreadCount}</span>}
-                </Link>
-                <Link to="/notifications" onClick={closeAll}>
+                </a>
+                <a href="/notifications" onClick={(e) => handleNavClick(e, "/notifications")}>
                   <svg className="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
                   Notifications
                   {notificationCount > 0 && <span className="unread-badge-nav" style={{ background: accent }}>{notificationCount > 9 ? '9+' : notificationCount}</span>}
-                </Link>
+                </a>
                 <button onClick={handleLogout} className="logout-btn">
                   <svg className="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
                   Sign Out
@@ -225,33 +260,47 @@ function Navbar() {
           </div>
         )}
         <div className="mobile-menu-content">
-          <Link to="/" onClick={closeAll}><svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>Home</Link>
+          <a href="/" onClick={(e) => handleNavClick(e, "/")}>
+            <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>Home
+          </a>
           {user && (
             <>
-              <Link to="/upload" onClick={closeAll}><svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>Upload</Link>
-              <Link to="/live" onClick={closeAll}><svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="2" /><path d="M12 6a6 6 0 0 0-6 6" /><path d="M12 2a10 10 0 0 0-10 10" /><path d="M12 22a10 10 0 0 0 10-10" /></svg>Live Stream</Link>
-              <Link to="/dashboard" onClick={closeAll}><svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="9" /><rect x="14" y="3" width="7" height="5" /><rect x="14" y="12" width="7" height="9" /><rect x="3" y="16" width="7" height="5" /></svg>Dashboard</Link>
-              <Link to="/messages" onClick={closeAll} className="mobile-messages-link">
+              <a href="/upload" onClick={(e) => handleNavClick(e, "/upload")}>
+                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>Upload
+              </a>
+              <a href="/live" onClick={(e) => handleNavClick(e, "/live")}>
+                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="2" /><path d="M12 6a6 6 0 0 0-6 6" /><path d="M12 2a10 10 0 0 0-10 10" /><path d="M12 22a10 10 0 0 0 10-10" /></svg>Live Stream
+              </a>
+              <a href="/dashboard" onClick={(e) => handleNavClick(e, "/dashboard")}>
+                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="9" /><rect x="14" y="3" width="7" height="5" /><rect x="14" y="12" width="7" height="9" /><rect x="3" y="16" width="7" height="5" /></svg>Dashboard
+              </a>
+              <a href="/messages" onClick={(e) => handleNavClick(e, "/messages")} className="mobile-messages-link">
                 <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                 Messages
                 {unreadCount > 0 && <span className="mobile-unread-badge" style={{ background: accent }}>{unreadCount}</span>}
-              </Link>
+              </a>
             </>
           )}
           <div className="mobile-divider" />
           {!user ? (
             <>
-              <Link to="/login" onClick={closeAll}><svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>Login</Link>
-              <Link to="/register" onClick={closeAll}><svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8.5" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="16" /><line x1="23" y1="11" x2="17" y2="11" /></svg>Register</Link>
+              <a href="/login" onClick={(e) => handleNavClick(e, "/login")}>
+                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>Login
+              </a>
+              <a href="/register" onClick={(e) => handleNavClick(e, "/register")}>
+                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8.5" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="16" /><line x1="23" y1="11" x2="17" y2="11" /></svg>Register
+              </a>
             </>
           ) : (
             <>
-              <Link to="/account" onClick={closeAll}><svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>Account Settings</Link>
-              <Link to="/notifications" onClick={closeAll}>
+              <a href="/account" onClick={(e) => handleNavClick(e, "/account")}>
+                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>Account Settings
+              </a>
+              <a href="/notifications" onClick={(e) => handleNavClick(e, "/notifications")}>
                 <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
                 Notifications
                 {notificationCount > 0 && <span className="mobile-unread-badge" style={{ background: accent }}>{notificationCount}</span>}
-              </Link>
+              </a>
               <button className="mobile-logout" onClick={handleLogout}>
                 <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
                 Sign Out
