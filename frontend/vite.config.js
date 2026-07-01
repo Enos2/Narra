@@ -21,12 +21,6 @@ export default defineConfig({
       }
     }
   },
-  // Add this to ensure _redirects is included in build
-  build: {
-    rollupOptions: {
-      output: {
-        // This ensures the _redirects file is copied
-      }
-    }
-  }
+  // Add base path to ensure assets load correctly
+  base: '/'
 })
