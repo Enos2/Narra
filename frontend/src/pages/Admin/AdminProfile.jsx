@@ -3,6 +3,7 @@
 /**
  * FILE: frontend/src/pages/admin/AdminProfile.jsx
  * DESCRIPTION: Admin profile page with role-based theming, background animations, no emojis
+ * FIXED: Hardcoded localhost URL replaced with production API URL
  */
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -114,9 +115,11 @@ export default function AdminProfile() {
         actionsThisMonth: myLogs.filter(l => new Date(l.createdAt) > monthAgo).length
       }));
       
+      // FIXED: Use production API URL instead of localhost
       if (isSuperAdmin) {
         try {
-          const response = await fetch(`http://localhost:5000/api/admin/admins/created-by/${user._id}`, {
+          const API_URL = import.meta.env.VITE_API_URL || 'https://narra-q4p4.onrender.com';
+          const response = await fetch(`${API_URL}/api/admin/admins/created-by/${user._id}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           const data = await response.json();
