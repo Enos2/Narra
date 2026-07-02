@@ -7,6 +7,7 @@
  * FIXED: Socket.IO admin auth - checks User model first then Admin model
  * ADDED: Cron job for automatic cleanup of expired trashed videos (30-day retention)
  * FIXED: Render deployment - added 0.0.0.0 binding and error handling
+ * FIXED: CORS - allow multiple origins (narrasea.onrender.com, narraplay.onrender.com)
  */
 
 const express    = require('express');
@@ -339,15 +340,33 @@ try {
 } catch { /* streaming server optional */ }
 
 // ─────────────────────────────────────────────
-// CORS + BODY PARSING
+// CORS + BODY PARSING - FIXED: Allow multiple origins
 // ─────────────────────────────────────────────
+
+// Allow multiple origins
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'https://narrasea.onrender.com',
+  'https://narraplay.onrender.com'
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with', 'Range'],
   exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
 }));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
