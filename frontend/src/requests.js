@@ -4,12 +4,11 @@
  * FILE: frontend/src/requests.js
  * Complete API requests for Narra platform
  * UPDATED: Fixed admin user endpoints, added admin user profile fetch
- * FIXED: Uses VITE_API_URL environment variable for production, falls back to localhost for development
- * FIXED: Removed /api from base URL - backend routes already include /api prefix
+ * FIXED: Hardcoded production API URL for Render deployment
  */
 
-// Use environment variable for API URL, fallback to localhost for development
-const API_BASE_URL = import.meta.env.VITE_API_URL || "https://narra-q4p4.onrender.com";
+// Use production API URL for Render deployment
+const API_BASE_URL = "https://narra-q4p4.onrender.com";
 
 /*
  * AUTH_ROUTES — 401 on these means "wrong credentials", NOT "session expired".
