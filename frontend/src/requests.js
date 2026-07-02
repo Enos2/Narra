@@ -9,7 +9,7 @@
  */
 
 // Use environment variable for API URL, fallback to localhost for development
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://narra-q4p4.onrender.com";
 
 /*
  * AUTH_ROUTES — 401 on these means "wrong credentials", NOT "session expired".
