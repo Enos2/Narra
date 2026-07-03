@@ -2,17 +2,21 @@
 /**
  * File: frontend/src/pages/Register.jsx
  * CINEMATIC CLAW MARK THEME - Dark, aggressive, creative
- * UPDATED: Full distributed claw mark background
+ * UPDATED: Matches Login.jsx visual language — true-color logo, Bebas Neue
+ * split-color title, static 5-claw background (no floating/pulsing scar
+ * clutter), ThemeContext accent color wired through.
  */
 
 import { Link, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
+import { useTheme } from "../context/ThemeContext";
 import logo from "../assets/narra-logo.png";
 import { useState, useEffect } from "react";
 import "./Register.css";
 
 function Register() {
   const { register, isAuthReady, user } = useAppContext();
+  const { theme } = useTheme();
   const navigate = useNavigate();
 
   const [firstName, setFirstName] = useState("");
@@ -32,6 +36,9 @@ function Register() {
   const [usernameAvailable, setUsernameAvailable] = useState(true);
   const [checkingUsername, setCheckingUsername] = useState(false);
   const [isFocused, setIsFocused] = useState(null);
+
+  const accent = theme.accent;
+  const accentRgb = `${parseInt(accent.slice(1,3),16)}, ${parseInt(accent.slice(3,5),16)}, ${parseInt(accent.slice(5,7),16)}`;
 
   useEffect(() => {
     if (isAuthReady && user) {
@@ -54,7 +61,7 @@ function Register() {
         setUsernameAvailable(true);
         return;
       }
-      
+
       setCheckingUsername(true);
       try {
         const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/check-username?username=${username}`);
@@ -66,7 +73,7 @@ function Register() {
         setCheckingUsername(false);
       }
     };
-    
+
     const timeoutId = setTimeout(checkUsername, 500);
     return () => clearTimeout(timeoutId);
   }, [username]);
@@ -91,7 +98,7 @@ function Register() {
     if (!lastName.trim()) { setError("Last name required"); return; }
     if (lastName.length < 2) { setError("Last name must be at least 2 characters"); return; }
     if (!username.trim()) { setError("Username required"); return; }
-    
+
     const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
     if (!usernameRegex.test(username)) {
       setError("Username: 3-30 chars, letters, numbers, underscores");
@@ -141,145 +148,71 @@ function Register() {
 
   return (
     <div className="register-page">
-      {/* Blood Stroke Lines */}
       <div className="blood-stroke top"></div>
       <div className="blood-stroke bottom"></div>
-      
-      {/* Distributed Claw Mark Background - Full */}
+
       <div className="claw-background">
-        {/* Edge claws */}
         <div className="claw claw-1"></div>
         <div className="claw claw-2"></div>
         <div className="claw claw-3"></div>
         <div className="claw claw-4"></div>
         <div className="claw claw-5"></div>
-        
-        {/* Center distributed claws */}
-        <div className="claw claw-6"></div>
-        <div className="claw claw-7"></div>
-        <div className="claw claw-8"></div>
-        <div className="claw claw-9"></div>
-        <div className="claw claw-10"></div>
-        <div className="claw claw-11"></div>
-        <div className="claw claw-12"></div>
-        <div className="claw claw-13"></div>
-        <div className="claw claw-14"></div>
-        <div className="claw claw-15"></div>
-        <div className="claw claw-16"></div>
-        <div className="claw claw-17"></div>
-        <div className="claw claw-18"></div>
-        <div className="claw claw-19"></div>
-        <div className="claw claw-20"></div>
-        
-        {/* Diagonal scar lines */}
-        <div className="scar-diagonal scar-diag-1"></div>
-        <div className="scar-diagonal scar-diag-2"></div>
-        <div className="scar-diagonal scar-diag-3"></div>
-        <div className="scar-diagonal scar-diag-4"></div>
-        <div className="scar-diagonal scar-diag-5"></div>
-        <div className="scar-diagonal scar-diag-6"></div>
-        <div className="scar-diagonal scar-diag-7"></div>
-        <div className="scar-diagonal scar-diag-8"></div>
-        <div className="scar-diagonal scar-diag-9"></div>
-        <div className="scar-diagonal scar-diag-10"></div>
-        
-        {/* Horizontal scratch marks */}
-        <div className="scratch-horizontal scratch-h-1"></div>
-        <div className="scratch-horizontal scratch-h-2"></div>
-        <div className="scratch-horizontal scratch-h-3"></div>
-        <div className="scratch-horizontal scratch-h-4"></div>
-        <div className="scratch-horizontal scratch-h-5"></div>
-        <div className="scratch-horizontal scratch-h-6"></div>
-        <div className="scratch-horizontal scratch-h-7"></div>
-        <div className="scratch-horizontal scratch-h-8"></div>
-        <div className="scratch-horizontal scratch-h-9"></div>
-        <div className="scratch-horizontal scratch-h-10"></div>
-        
-        {/* Vertical scratch marks */}
-        <div className="scratch-vertical scratch-v-1"></div>
-        <div className="scratch-vertical scratch-v-2"></div>
-        <div className="scratch-vertical scratch-v-3"></div>
-        <div className="scratch-vertical scratch-v-4"></div>
-        <div className="scratch-vertical scratch-v-5"></div>
-        <div className="scratch-vertical scratch-v-6"></div>
-        <div className="scratch-vertical scratch-v-7"></div>
-        <div className="scratch-vertical scratch-v-8"></div>
-        <div className="scratch-vertical scratch-v-9"></div>
-        <div className="scratch-vertical scratch-v-10"></div>
-        
-        {/* Triple claw marks */}
-        <div className="triple-claw triple-1"><span></span><span></span><span></span></div>
-        <div className="triple-claw triple-2"><span></span><span></span><span></span></div>
-        <div className="triple-claw triple-3"><span></span><span></span><span></span></div>
-        <div className="triple-claw triple-4"><span></span><span></span><span></span></div>
-        <div className="triple-claw triple-5"><span></span><span></span><span></span></div>
-        <div className="triple-claw triple-6"><span></span><span></span><span></span></div>
-        <div className="triple-claw triple-7"><span></span><span></span><span></span></div>
-        <div className="triple-claw triple-8"><span></span><span></span><span></span></div>
-        
-        {/* X-shaped scars */}
-        <div className="scar-x scar-x-1"></div>
-        <div className="scar-x scar-x-2"></div>
-        <div className="scar-x scar-x-3"></div>
-        <div className="scar-x scar-x-4"></div>
-        <div className="scar-x scar-x-5"></div>
-        <div className="scar-x scar-x-6"></div>
-        <div className="scar-x scar-x-7"></div>
-        <div className="scar-x scar-x-8"></div>
       </div>
 
-      <div className="register-container">
-        {/* Left Panel - Visual */}
-        <div className="register-visual-panel">
+      <div className="register-container" style={{ borderColor: `rgba(${accentRgb}, 0.3)`, boxShadow: `0 0 50px rgba(${accentRgb}, 0.1)` }}>
+        <div className="register-visual-panel" style={{ borderRight: `1px solid rgba(${accentRgb}, 0.3)` }}>
           <div className="register-visual-content">
             <div className="slash-marks">
-              <div className="slash"></div>
-              <div className="slash"></div>
-              <div className="slash"></div>
-              <div className="slash"></div>
+              <div className="slash" style={{ background: `linear-gradient(180deg, ${accent}, transparent)` }}></div>
+              <div className="slash" style={{ background: `linear-gradient(180deg, ${accent}, transparent)` }}></div>
+              <div className="slash" style={{ background: `linear-gradient(180deg, ${accent}, transparent)` }}></div>
             </div>
             <div className="logo-container">
-              <img src={logo} alt="Narra" className="narra-logo" />
-              <div className="logo-glint"></div>
+              <img src={logo} alt="Narra Sea" className="narra-logo" />
             </div>
-            <h1 className="visual-title">CARVE<br />YOUR MARK</h1>
+            <h1 className="visual-title">
+              <span className="word-carve">CARVE</span><br />
+              <span className="word-mark">YOUR MARK</span>
+            </h1>
             <p className="visual-tagline">Join the bloodline of storytellers</p>
-            
+
             <div className="benefits-list">
               <div className="benefit-item">
-                <div className="benefit-dot"></div>
+                <div className="benefit-dot" style={{ background: accent }}></div>
                 <span>Upload & share your vision</span>
               </div>
               <div className="benefit-item">
-                <div className="benefit-dot"></div>
+                <div className="benefit-dot" style={{ background: accent }}></div>
                 <span>Go live to the world</span>
               </div>
               <div className="benefit-item">
-                <div className="benefit-dot"></div>
+                <div className="benefit-dot" style={{ background: accent }}></div>
                 <span>Connect with creators</span>
               </div>
               <div className="benefit-item">
-                <div className="benefit-dot"></div>
+                <div className="benefit-dot" style={{ background: accent }}></div>
                 <span>Monetize your craft</span>
               </div>
             </div>
-            
-            <div className="grip-mark"></div>
-            <div className="blood-drip"></div>
+
+            <div className="grip-mark" style={{ background: accent }}>
+              <style>{`.register-page .grip-mark::before,.register-page .grip-mark::after{background:${accent}}`}</style>
+            </div>
           </div>
         </div>
 
-        {/* Right Panel - Form */}
         <div className="register-form-panel">
           <div className="register-form-container">
             <div className="form-header">
-              <div className="header-scar"></div>
+              <div className="header-scar" style={{ background: accent }}>
+                <style>{`.register-page .header-scar::before,.register-page .header-scar::after{background:${accent}}`}</style>
+              </div>
               <h2 className="form-title">BEGIN THE RITUAL</h2>
               <p className="form-subtitle">Create your identity</p>
             </div>
 
             {error && (
-              <div className="alert error">
+              <div className="alert error" style={{ borderLeftColor: accent }}>
                 <span className="alert-icon">⚠</span>
                 <span>{error}</span>
               </div>
@@ -288,7 +221,7 @@ function Register() {
             <form onSubmit={handleSubmit} className="register-form" noValidate>
               <div className="form-row">
                 <div className={`input-group half ${isFocused === 'first' ? 'focused' : ''}`}>
-                  <div className="input-rip"></div>
+                  <div className="input-rip" style={{ background: accent }}></div>
                   <input
                     type="text"
                     placeholder="First Name"
@@ -298,12 +231,13 @@ function Register() {
                     onBlur={() => setIsFocused(null)}
                     disabled={loading}
                     autoFocus
+                    style={{ borderColor: `rgba(${accentRgb}, 0.3)` }}
                   />
-                  <div className="input-blood"></div>
+                  <div className="input-blood" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}></div>
                 </div>
 
                 <div className={`input-group half ${isFocused === 'last' ? 'focused' : ''}`}>
-                  <div className="input-rip"></div>
+                  <div className="input-rip" style={{ background: accent }}></div>
                   <input
                     type="text"
                     placeholder="Last Name"
@@ -312,13 +246,14 @@ function Register() {
                     onFocus={() => setIsFocused('last')}
                     onBlur={() => setIsFocused(null)}
                     disabled={loading}
+                    style={{ borderColor: `rgba(${accentRgb}, 0.3)` }}
                   />
-                  <div className="input-blood"></div>
+                  <div className="input-blood" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}></div>
                 </div>
               </div>
 
               <div className={`input-group ${isFocused === 'username' ? 'focused' : ''}`}>
-                <div className="input-rip"></div>
+                <div className="input-rip" style={{ background: accent }}></div>
                 <input
                   type="text"
                   placeholder="Username"
@@ -327,18 +262,19 @@ function Register() {
                   onFocus={() => setIsFocused('username')}
                   onBlur={() => setIsFocused(null)}
                   disabled={loading}
+                  style={{ borderColor: `rgba(${accentRgb}, 0.3)` }}
                 />
                 {checkingUsername && <span className="input-status">...</span>}
                 {username.length >= 3 && !checkingUsername && (
-                  <span className={`input-status ${usernameAvailable ? 'available' : 'taken'}`}>
+                  <span className={`input-status ${usernameAvailable ? 'available' : 'taken'}`} style={{ color: usernameAvailable ? accent : '#8b0000' }}>
                     {usernameAvailable ? '✓' : '✗'}
                   </span>
                 )}
-                <div className="input-blood"></div>
+                <div className="input-blood" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}></div>
               </div>
 
               <div className={`input-group ${isFocused === 'email' ? 'focused' : ''}`}>
-                <div className="input-rip"></div>
+                <div className="input-rip" style={{ background: accent }}></div>
                 <input
                   type="email"
                   placeholder="Email"
@@ -347,12 +283,13 @@ function Register() {
                   onFocus={() => setIsFocused('email')}
                   onBlur={() => setIsFocused(null)}
                   disabled={loading}
+                  style={{ borderColor: `rgba(${accentRgb}, 0.3)` }}
                 />
-                <div className="input-blood"></div>
+                <div className="input-blood" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}></div>
               </div>
 
               <div className={`input-group ${isFocused === 'dob' ? 'focused' : ''}`}>
-                <div className="input-rip"></div>
+                <div className="input-rip" style={{ background: accent }}></div>
                 <input
                   type="date"
                   placeholder="Date of Birth"
@@ -361,8 +298,9 @@ function Register() {
                   onFocus={() => setIsFocused('dob')}
                   onBlur={() => setIsFocused(null)}
                   disabled={loading}
+                  style={{ borderColor: `rgba(${accentRgb}, 0.3)` }}
                 />
-                <div className="input-blood"></div>
+                <div className="input-blood" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}></div>
               </div>
 
               <div className="gender-group">
@@ -372,6 +310,7 @@ function Register() {
                     type="button"
                     className={`gender-option ${gender === 'male' ? 'active' : ''}`}
                     onClick={() => setGender('male')}
+                    style={gender === 'male' ? { background: accent, borderColor: accent, boxShadow: `0 0 15px rgba(${accentRgb}, 0.3)` } : { borderColor: `rgba(${accentRgb}, 0.3)` }}
                   >
                     MALE
                   </button>
@@ -379,6 +318,7 @@ function Register() {
                     type="button"
                     className={`gender-option ${gender === 'female' ? 'active' : ''}`}
                     onClick={() => setGender('female')}
+                    style={gender === 'female' ? { background: accent, borderColor: accent, boxShadow: `0 0 15px rgba(${accentRgb}, 0.3)` } : { borderColor: `rgba(${accentRgb}, 0.3)` }}
                   >
                     FEMALE
                   </button>
@@ -386,7 +326,7 @@ function Register() {
               </div>
 
               <div className={`input-group ${isFocused === 'password' ? 'focused' : ''}`}>
-                <div className="input-rip"></div>
+                <div className="input-rip" style={{ background: accent }}></div>
                 <input
                   type={showPassword ? "text" : "password"}
                   placeholder="Password"
@@ -395,6 +335,7 @@ function Register() {
                   onFocus={() => setIsFocused('password')}
                   onBlur={() => setIsFocused(null)}
                   disabled={loading}
+                  style={{ borderColor: `rgba(${accentRgb}, 0.3)` }}
                 />
                 <button
                   type="button"
@@ -403,15 +344,15 @@ function Register() {
                 >
                   {showPassword ? "✕" : "◉"}
                 </button>
-                <div className="input-blood"></div>
+                <div className="input-blood" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}></div>
               </div>
 
               {password && (
                 <div className="strength-bar-container">
                   <div className="strength-track">
-                    <div 
-                      className="strength-fill" 
-                      style={{ 
+                    <div
+                      className="strength-fill"
+                      style={{
                         width: getPasswordStrengthText().width,
                         background: getPasswordStrengthText().color
                       }}
@@ -424,7 +365,7 @@ function Register() {
               )}
 
               <div className={`input-group ${isFocused === 'confirm' ? 'focused' : ''}`}>
-                <div className="input-rip"></div>
+                <div className="input-rip" style={{ background: accent }}></div>
                 <input
                   type={showConfirmPassword ? "text" : "password"}
                   placeholder="Confirm Password"
@@ -433,6 +374,7 @@ function Register() {
                   onFocus={() => setIsFocused('confirm')}
                   onBlur={() => setIsFocused(null)}
                   disabled={loading}
+                  style={{ borderColor: `rgba(${accentRgb}, 0.3)` }}
                 />
                 <button
                   type="button"
@@ -441,25 +383,26 @@ function Register() {
                 >
                   {showConfirmPassword ? "✕" : "◉"}
                 </button>
-                <div className="input-blood"></div>
+                <div className="input-blood" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }}></div>
               </div>
 
               <div className="terms-group">
                 <label className="checkmark">
                   <input type="checkbox" checked={acceptedTerms} onChange={(e) => setAcceptedTerms(e.target.checked)} />
-                  <span className="checkmark-box"></span>
+                  <span className="checkmark-box" style={{ borderColor: `rgba(${accentRgb}, 0.5)` }}></span>
                   <span className="checkmark-text">I accept the <Link to="/terms">Terms</Link> & <Link to="/privacy">Privacy</Link></span>
                 </label>
               </div>
 
-              <button type="submit" className="submit-button" disabled={loading || !usernameAvailable}>
+              <button type="submit" className="submit-button" disabled={loading || !usernameAvailable}
+                style={{ borderColor: `rgba(${accentRgb}, 0.5)` }}>
                 <span className="button-text">{loading ? "CARVING..." : "CARVE YOUR MARK"}</span>
                 <span className="button-slash"></span>
               </button>
             </form>
 
             <div className="signin-area">
-              <p>Already have a mark? <Link to="/login" className="signin-link">ENTER THE DARK</Link></p>
+              <p>Already have a mark? <Link to="/login" className="signin-link" style={{ color: accent }}>ENTER THE DARK</Link></p>
             </div>
 
             <div className="blood-mark"></div>

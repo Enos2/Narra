@@ -76,10 +76,12 @@ function Login() {
               <div className="slash" style={{ background: `linear-gradient(180deg, ${accent}, transparent)` }}></div>
             </div>
             <div className="logo-container">
-              <img src={logo} alt="Narra" className="narra-logo" />
-              <div className="logo-glint" style={{ borderColor: `rgba(${accentRgb}, 0.5)` }}></div>
+              <img src={logo} alt="Narra Sea" className="narra-logo" />
             </div>
-            <h1 className="visual-title" style={{ textShadow: `0 0 20px rgba(${accentRgb}, 0.5)` }}>NARRA</h1>
+            <h1 className="visual-title">
+              <span className="word-narra">NARRA</span>{" "}
+              <span className="word-sea">S<span className="letter-e">E</span>A</span>
+            </h1>
             <p className="visual-tagline">Where stories bleed into reality</p>
             <div className="grip-mark" style={{ background: accent }}>
               <style>{`.login-page .grip-mark::before,.login-page .grip-mark::after{background:${accent}}`}</style>

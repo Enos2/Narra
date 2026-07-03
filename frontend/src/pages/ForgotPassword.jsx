@@ -2,6 +2,7 @@
 /**
  * File: frontend/src/pages/ForgotPassword.jsx
  * Updated to use ThemeContext accent color
+ * Visual style now matches Login.jsx (true-color logo, Bebas Neue split title, black panel)
  */
 
 import React, { useState } from "react";
@@ -54,10 +55,12 @@ function ForgotPassword() {
               <div className="slash" style={{ background: `linear-gradient(180deg, ${accent}, transparent)` }}></div>
             </div>
             <div className="logo-container">
-              <img src={logo} alt="Narra" className="narra-logo" />
-              <div className="logo-glint" style={{ borderColor: `rgba(${accentRgb}, 0.5)` }}></div>
+              <img src={logo} alt="Narra Sea" className="narra-logo" />
             </div>
-            <h1 className="visual-title" style={{ textShadow: `0 0 20px rgba(${accentRgb}, 0.5)` }}>LOST<br />ACCESS</h1>
+            <h1 className="visual-title">
+              <span className="word-lost">LOST</span>{" "}
+              <span className="word-access">ACCESS</span>
+            </h1>
             <p className="visual-tagline">We'll help you find your way back</p>
             <div className="message-container" style={{ borderLeft: `2px solid ${accent}`, background: `rgba(${accentRgb}, 0.1)` }}>
               <div className="message-icon" style={{ color: accent }}>✧</div>
@@ -66,7 +69,6 @@ function ForgotPassword() {
             <div className="grip-mark" style={{ background: accent }}>
               <style>{`.forgot-password-page .grip-mark::before,.forgot-password-page .grip-mark::after{background:${accent}}`}</style>
             </div>
-            <div className="blood-drip" style={{ background: accent }}></div>
           </div>
         </div>
 
