@@ -11,7 +11,7 @@
 
 # 🎬 Narra - Video Streaming Platform
 
-**Live Website:** [https://narraplay.onrender.com](https://narraplay.onrender.com)
+**Live Website:** [https://narraplay.onrender.com](https://narrasea.onrender.com/)
 
 **Backend API:** [https://narra-q4p4.onrender.com](https://narra-q4p4.onrender.com)
 
