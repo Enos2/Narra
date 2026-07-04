@@ -1,7 +1,6 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable no-empty */
 /* eslint-disable no-unused-vars */
-/* eslint-disable react-hooks/exhaustive-deps */
 /**
  * LiveWatch.jsx — redesigned streaming page
  * Features:
@@ -10,6 +9,7 @@
  *  - Custom SVG player controls (no generic emoji icons)
  *  - Cinematic dark aesthetic with theme-accent accents
  *  - Chat persists via localStorage
+ * FIXED: Replaced hardcoded localhost URLs with production API URL
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -21,11 +21,36 @@ import Hls from 'hls.js';
 import LiveChat from '../components/LiveChat';
 import './LiveWatch.css';
 
-const API        = 'http://localhost:5000/api';
-const SOCKET_URL = 'http://localhost:5000';
+// API Base URL - uses environment variable or falls back to production
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://narra-q4p4.onrender.com';
+const API = API_BASE_URL;
+const SOCKET_URL = API_BASE_URL;
+
+// Create axios instance with interceptor
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add request interceptor to always include token
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('narra_token_superadmin') || 
+                  localStorage.getItem('narra_token_user') ||
+                  sessionStorage.getItem('narra_token_superadmin') ||
+                  sessionStorage.getItem('narra_token_user');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 const buildHlsUrl = (streamKey) =>
-  streamKey ? `http://localhost:5000/live/${streamKey}/index.m3u8` : null;
+  streamKey ? `${API_BASE_URL}/live/${streamKey}/index.m3u8` : null;
 
 /* ── Background decoration (preserved) ── */
 function LiveDecor() {
@@ -165,8 +190,6 @@ export default function LiveWatch() {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const detachedRef = useRef(null);
 
-  const authHeader = { Authorization: `Bearer ${token}` };
-
   useEffect(() => {
     if (id && chatMessages.length > 0) {
       try {
@@ -199,7 +222,7 @@ export default function LiveWatch() {
   /* ── Data ── */
   const fetchLive = useCallback(async () => {
     try {
-      const res  = await axios.get(`${API}/lives/${id}`, { headers: authHeader });
+      const res  = await api.get(`/api/lives/${id}`);
       const data = res.data.live;
       const hlsUrl = buildHlsUrl(data.streamKey);
       setLive({ ...data, hlsUrl, playbackUrl: hlsUrl });
@@ -219,18 +242,18 @@ export default function LiveWatch() {
     } finally {
       setLoading(false);
     }
-  }, [id, token, user]);
+  }, [id, user]);
 
   const joinStream = useCallback(async () => {
     try {
-      const res  = await axios.post(`${API}/lives/${id}/join`, {}, { headers: authHeader });
+      const res  = await api.post(`/api/lives/${id}/join`, {});
       const data = res.data.live;
       const hlsUrl = buildHlsUrl(data.streamKey);
       setLive(p => ({ ...p, ...data, hlsUrl, playbackUrl: hlsUrl }));
       setViewerCount(data.viewerCount || 0);
       setIsHost(data.isHost || false);
     } catch {}
-  }, [id, token]);
+  }, [id]);
 
   useEffect(() => {
     if (!token) { navigate('/login'); return; }
@@ -420,7 +443,7 @@ export default function LiveWatch() {
   /* ── Host actions ── */
   const handleStartStream = async () => {
     try {
-      const res  = await axios.post(`${API}/lives/${id}/start`, {}, { headers: authHeader });
+      const res  = await api.post(`/api/lives/${id}/start`, {});
       const data = res.data.live;
       const url  = buildHlsUrl(data.streamKey);
       setStreamState('live');
@@ -431,7 +454,7 @@ export default function LiveWatch() {
   const handleStopStream = async () => {
     if (!window.confirm('End this live stream?')) return;
     try {
-      await axios.post(`${API}/lives/${id}/stop`, {}, { headers: authHeader });
+      await api.post(`/api/lives/${id}/stop`, {});
       setStreamState('ended');
       setLive(p => p ? { ...p, status: 'ended', playbackUrl: null } : p);
     } catch (err) { alert(err.response?.data?.message || 'Failed to stop stream.'); }
@@ -621,7 +644,7 @@ export default function LiveWatch() {
               <div className="lw-host-row">
                 <div className="lw-host-avatar">
                   {live?.host?.avatar
-                    ? <img src={`http://localhost:5000${live.host.avatar}`} alt={hostName} />
+                    ? <img src={`${API_BASE_URL}${live.host.avatar}`} alt={hostName} />
                     : <span>{hostName[0]?.toUpperCase()}</span>
                   }
                 </div>
