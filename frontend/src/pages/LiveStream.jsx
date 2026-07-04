@@ -3,6 +3,7 @@
  * File: frontend/src/pages/LiveStream.jsx
  * Now reads accent color from ThemeContext instead of hardcoded #043ede
  * Theme, layout and all behaviour preserved exactly.
+ * FIXED: Added base API URL to axios calls
  */
 
 import React, { useState, useRef, useEffect } from "react";
@@ -12,6 +13,9 @@ import useHlsPlayer from "../utils/useHlsPlayer";
 import axios from "axios";
 import LiveQualificationStatus from "../components/LiveQualificationStatus";
 import "./LiveStream.css";
+
+// API Base URL - uses environment variable or falls back to production
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://narra-q4p4.onrender.com";
 
 const GENRES = [
   "Drama", "Music", "Concert", "Comedy", "Action", "Gaming", "Documentary", "Education",
@@ -77,6 +81,7 @@ export default function LiveStream() {
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
+      // FIXED: Use full API URL with axios
       const data = {
         title, description, ageRating, tags: genres,
         isSponsored: purpose === "sponsored",
@@ -86,7 +91,7 @@ export default function LiveStream() {
         isPaid: false, price: 0, currency,
         thumbnailUrl: "", category: "general", scheduledAt: null,
       };
-      const res = await axios.post("/api/lives", data, {
+      const res = await axios.post(`${API_BASE_URL}/api/lives`, data, {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       });
       const live = res.data.live;

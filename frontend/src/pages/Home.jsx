@@ -313,7 +313,7 @@ function Home() {
         <SpotlightBanner placement="between-rows" token={token} />
         {renderRow('Series', series, 'series', seriesScrollRef)}
         <SpotlightBanner placement="between-rows" token={token} />
-        {liveStreams.length > 0 && renderRow('Live Now 🔴', liveStreams, 'live', liveScrollRef)}
+        {liveStreams.length > 0 && renderRow('Live Now ', liveStreams, 'live', liveScrollRef)}
       </>
     );
   };
@@ -491,7 +491,7 @@ function Home() {
                 onClick={() => setActiveTab(tab)}
                 role="tab" aria-selected={activeTab === tab}
               >
-                {tab === 'all' ? 'All' : tab === 'movie' ? 'Movies' : tab === 'series' ? 'Series' : '🔴 Live'}
+                {tab === 'all' ? 'All' : tab === 'movie' ? 'Movies' : tab === 'series' ? 'Series' : ' Live'}
               </button>
             ))}
           </div>
