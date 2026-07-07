@@ -18,6 +18,9 @@
  *   — Super admin only —
  *   GET    /api/messages/admin/admin-conversations      — list all admin conversations
  *   GET    /api/messages/admin/admin-conversations/:id  — read an admin conversation
+ * 
+ * FIXED: Added debug logging for startConversation
+ * FIXED: Better error handling in findOrCreate
  */
 
 const Conversation = require('../models/Conversation');
@@ -83,6 +86,8 @@ exports.startConversation = async (req, res) => {
     const { recipientId } = req.body;
     const actor = req.actor;
 
+    console.log('🔍 [startConversation] Actor:', actor.id, 'Recipient:', recipientId);
+
     if (!recipientId) {
       return res.status(400).json({ success: false, message: 'recipientId is required' });
     }
@@ -97,33 +102,53 @@ exports.startConversation = async (req, res) => {
     let recipient;
     if (lane === 'user') {
       recipient = await User.findById(recipientId).select('firstName lastName username avatar isVerified');
-      if (!recipient) return res.status(404).json({ success: false, message: 'User not found' });
+      if (!recipient) {
+        console.log('❌ [startConversation] User not found:', recipientId);
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
     } else {
       recipient = await Admin.findById(recipientId).select('fullName role status');
-      if (!recipient) return res.status(404).json({ success: false, message: 'Admin not found' });
+      if (!recipient) {
+        console.log('❌ [startConversation] Admin not found:', recipientId);
+        return res.status(404).json({ success: false, message: 'Admin not found' });
+      }
       if (recipient.status === 'inactive') {
         return res.status(403).json({ success: false, message: 'That admin account is inactive' });
       }
     }
 
+    console.log('✅ [startConversation] Recipient found, finding or creating conversation...');
+
     const recipientModel = lane === 'user' ? 'User' : 'Admin';
 
-    const { conversation, created } = await Conversation.findOrCreate({
+    // FIXED: Use the updated findOrCreate method
+    const result = await Conversation.findOrCreate({
       lane,
       participantA: { id: actor.id, model: actor.model },
       participantB: { id: recipientId, model: recipientModel },
     });
 
-    const enriched = await attachOtherParticipant(conversation, actor.id);
+    if (!result || !result.conversation) {
+      console.error('❌ [startConversation] Failed to create conversation');
+      return res.status(500).json({ success: false, message: 'Failed to create conversation' });
+    }
 
-    return res.status(created ? 201 : 200).json({
+    console.log('✅ [startConversation] Conversation:', result.conversation._id, 'Created:', result.created);
+
+    const enriched = await attachOtherParticipant(result.conversation, actor.id);
+
+    return res.status(result.created ? 201 : 200).json({
       success: true,
       conversation: enriched,
-      created,
+      created: result.created,
     });
   } catch (err) {
-    console.error('startConversation error:', err);
-    return res.status(500).json({ success: false, message: 'Server error' });
+    console.error('❌ [startConversation] Error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
   }
 };
 

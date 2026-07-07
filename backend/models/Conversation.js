@@ -88,12 +88,21 @@ ConversationSchema.statics.findOrCreate = async function ({
   participantA,   // { id, model }
   participantB,   // { id, model }
 }) {
+  // FIXED: Find conversation where both participants exist
   const existing = await this.findOne({
     lane,
-    'participants.participantId': { $all: [participantA.id, participantB.id] },
+    'participants.participantId': participantA.id,
+  }).then(async (conv) => {
+    if (!conv) return null;
+    const hasB = conv.participants.some(
+      (p) => p.participantId.toString() === participantB.id.toString()
+    );
+    return hasB ? conv : null;
   });
+
   if (existing) return { conversation: existing, created: false };
 
+  // Create new conversation
   const conversation = await this.create({
     lane,
     participants: [
