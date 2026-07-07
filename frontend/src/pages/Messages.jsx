@@ -3,7 +3,7 @@
 /* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useMessages } from '../context/MessageContext';
 import { useAppContext } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
@@ -80,6 +80,8 @@ function ConvoRow({ conv, isActive, onClick, myId, accent, accentRgb }) {
 
 export default function Messages() {
   const { conversationId: paramId } = useParams();
+  const [searchParams] = useSearchParams();
+  const userIdParam = searchParams.get('user'); // e.g. /messages?user=<id> from a "Message" button elsewhere
   const navigate = useNavigate();
   const { user } = useAppContext();
   const { theme } = useTheme();
@@ -103,6 +105,7 @@ export default function Messages() {
   const [searchRes, setSearchRes] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [mobileShowChat, setMobileShowChat] = useState(false);
+  const [resolvingUserParam, setResolvingUserParam] = useState(false);
 
   const feedRef = useRef(null);
   const composeRef = useRef(null);
@@ -111,6 +114,41 @@ export default function Messages() {
 
   useEffect(() => { fetchConversations().finally(() => setLoading(false)); }, [fetchConversations]);
   useEffect(() => { if (paramId && paramId !== activeId) openConversation(paramId); }, [paramId]);
+
+  // FIXED: handle links that navigate to /messages?user=<id> instead of /messages/:conversationId
+  // (e.g. a "Message" button on a profile page). Resolve the user id to an existing or new
+  // conversation, then navigate into it properly.
+  useEffect(() => {
+    if (!loading && userIdParam && !resolvingUserParam) {
+      resolveUserParam(userIdParam);
+    }
+  }, [loading, userIdParam]);
+
+  const resolveUserParam = useCallback(async (userId) => {
+    setResolvingUserParam(true);
+    try {
+      const existingConv = conversations.find((c) => {
+        const otherId = c.otherParticipant?._id || c.otherParticipant?.id;
+        return otherId === userId;
+      });
+      if (existingConv) {
+        await openConversation(existingConv._id);
+        return;
+      }
+      const conv = await startConversation(userId);
+      if (conv && conv._id) {
+        await openConversation(conv._id);
+        await fetchConversations();
+      } else {
+        console.error('Could not start conversation for user param:', userId);
+        navigate('/messages', { replace: true });
+      }
+    } catch (err) {
+      console.error('Error resolving ?user= param:', err);
+      navigate('/messages', { replace: true });
+    }
+    setResolvingUserParam(false);
+  }, [conversations, startConversation, fetchConversations, navigate]);
 
   useEffect(() => {
     const off = onSocketEvent('new-message', ({ message, conversationId }) => {
@@ -359,7 +397,7 @@ export default function Messages() {
         {!activeId ? (
           <div className="msg-empty-state" style={{ borderColor: `rgba(${accentRgb}, 0.2)` }}>
             <div className="msg-empty-state__glyph">[ ]</div>
-            <div className="msg-empty-state__label">Select a conversation</div>
+            <div className="msg-empty-state__label">{resolvingUserParam ? 'Opening conversation...' : 'Select a conversation'}</div>
           </div>
         ) : (
           <>
