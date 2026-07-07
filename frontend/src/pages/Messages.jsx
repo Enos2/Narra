@@ -4,12 +4,16 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import EmojiPicker from 'emoji-picker-react';
 import { useMessages } from '../context/MessageContext';
 import { useAppContext } from '../context/AppContext';
 import { useTheme } from '../context/ThemeContext';
 import './Messages.css';
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '');
+
+// Messages can be edited, or deleted-for-everyone, only within this window.
+const EDIT_DELETE_WINDOW_MS = 10 * 60 * 1000;
 
 function avatar(path) {
   if (!path) return null;
@@ -34,6 +38,9 @@ function needsDivider(msgs, index) {
   if (index === 0) return true;
   const prev = new Date(msgs[index - 1].createdAt); const curr = new Date(msgs[index].createdAt);
   return curr.getDate() !== prev.getDate();
+}
+function withinEditWindow(msg) {
+  return Date.now() - new Date(msg.createdAt).getTime() <= EDIT_DELETE_WINDOW_MS;
 }
 
 function Avatar({ src, name, size = 40, className = '', userId, onClick }) {
@@ -85,7 +92,7 @@ export default function Messages() {
   const navigate = useNavigate();
   const { user } = useAppContext();
   const { theme } = useTheme();
-  const { conversations, fetchConversations, getConversation, startConversation, sendMessage, markAsRead, deleteMessage, searchUsers, sendTyping, onSocketEvent } = useMessages();
+  const { conversations, fetchConversations, getConversation, startConversation, sendMessage, markAsRead, editMessage, deleteMessage, searchUsers, sendTyping, onSocketEvent } = useMessages();
 
   const accent    = theme.accent;
   const accentLight = theme.accentLight || theme.accent;
@@ -106,14 +113,30 @@ export default function Messages() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [mobileShowChat, setMobileShowChat] = useState(false);
   const [resolvingUserParam, setResolvingUserParam] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  // NEW: message action state (per-message menu, editing)
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState('');
+  const [, forceTick] = useState(0); // re-render periodically so the 10-min window expires live
 
   const feedRef = useRef(null);
   const composeRef = useRef(null);
+  const editInputRef = useRef(null);
   const typingTimeout = useRef(null);
   const searchTimeout = useRef(null);
+  const emojiPickerRef = useRef(null);
+  const emojiBtnRef = useRef(null);
 
   useEffect(() => { fetchConversations().finally(() => setLoading(false)); }, [fetchConversations]);
   useEffect(() => { if (paramId && paramId !== activeId) openConversation(paramId); }, [paramId]);
+
+  // Keep the 10-minute edit/delete window accurate without a page reload.
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   // FIXED: handle links that navigate to /messages?user=<id> instead of /messages/:conversationId
   // (e.g. a "Message" button on a profile page). Resolve the user id to an existing or new
@@ -150,13 +173,21 @@ export default function Messages() {
     setResolvingUserParam(false);
   }, [conversations, startConversation, fetchConversations, navigate]);
 
+  // FIXED: the backend broadcasts 'new-message' to everyone in the room,
+  // including the sender. The sender already has the message from the
+  // optimistic append + HTTP response — so if this event is our own
+  // message, skip appending it again (that was the duplicate-message bug).
   useEffect(() => {
     const off = onSocketEvent('new-message', ({ message, conversationId }) => {
+      if (message?.senderId?.toString() === myId?.toString()) {
+        fetchConversations();
+        return;
+      }
       if (conversationId === activeId) { setMessages((prev) => [...prev, message]); scrollToBottom(); markAsRead(conversationId); }
       fetchConversations();
     });
     return off;
-  }, [onSocketEvent, activeId, markAsRead, fetchConversations]);
+  }, [onSocketEvent, activeId, markAsRead, fetchConversations, myId]);
 
   useEffect(() => {
     const off = onSocketEvent('typing', ({ conversationId, senderName, isTyping }) => {
@@ -167,15 +198,66 @@ export default function Messages() {
     return off;
   }, [onSocketEvent, activeId]);
 
+  // UPDATED: handles both delete scopes.
+  // 'everyone' -> mark as deleted for all, show placeholder.
+  // 'me'       -> remove entirely from this view (only reaches us via our
+  //               own personal room, e.g. another tab/device).
   useEffect(() => {
-    const off = onSocketEvent('message-deleted', ({ messageId }) => {
-      setMessages((prev) => prev.map((m) => m._id === messageId ? { ...m, isDeleted: true, content: 'Message deleted' } : m));
+    const off = onSocketEvent('message-deleted', ({ messageId, scope }) => {
+      if (scope === 'me') {
+        setMessages((prev) => prev.filter((m) => m._id !== messageId));
+      } else {
+        setMessages((prev) => prev.map((m) => m._id === messageId ? { ...m, isDeleted: true, content: '' } : m));
+      }
+    });
+    return off;
+  }, [onSocketEvent]);
+
+  // NEW: live update when a message is edited by its sender (any participant).
+  useEffect(() => {
+    const off = onSocketEvent('message-edited', ({ messageId, content, editedAt }) => {
+      setMessages((prev) => prev.map((m) => m._id === messageId ? { ...m, content, isEdited: true, editedAt } : m));
     });
     return off;
   }, [onSocketEvent]);
 
   const scrollToBottom = useCallback(() => { setTimeout(() => { if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight; }, 50); }, []);
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
+
+  // close emoji picker on outside click / Escape
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    const handleClickOutside = (e) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target) &&
+          emojiBtnRef.current && !emojiBtnRef.current.contains(e.target)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    const handleEscape = (e) => { if (e.key === 'Escape') setShowEmojiPicker(false); };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showEmojiPicker]);
+
+  // NEW: close message action menu on outside click / Escape
+  useEffect(() => {
+    if (openMenuId === null) return;
+    const handleClick = (e) => {
+      if (!e.target.closest('.msg-action-menu') && !e.target.closest('.msg-action-trigger')) {
+        setOpenMenuId(null);
+      }
+    };
+    const handleEscape = (e) => { if (e.key === 'Escape') setOpenMenuId(null); };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [openMenuId]);
 
   const openConversation = useCallback(async (id) => {
     if (!id) return;
@@ -195,6 +277,16 @@ export default function Messages() {
     }
     setLoadingChat(false);
   }, [getConversation, markAsRead, navigate]);
+
+  // NEW: close the currently open chat, back to the empty state / conversation list
+  const closeChat = useCallback(() => {
+    setActiveId(null);
+    setMessages([]);
+    setDraft('');
+    setShowEmojiPicker(false);
+    setMobileShowChat(false);
+    navigate('/messages', { replace: true });
+  }, [navigate]);
 
   const handleSearch = (e) => {
     const q = e.target.value; 
@@ -307,6 +399,7 @@ export default function Messages() {
     if (!content || !activeId || sending) return;
     setSending(true); 
     setDraft('');
+    setShowEmojiPicker(false);
     const optimistic = { _id: `opt-${Date.now()}`, senderId: myId, senderModel: 'User', content, createdAt: new Date().toISOString(), _optimistic: true };
     setMessages((prev) => [...prev, optimistic]); 
     scrollToBottom();
@@ -329,9 +422,62 @@ export default function Messages() {
     typingTimeout.current = setTimeout(() => { if (activeId) sendTyping(activeId, false); }, 1500);
   };
 
-  const handleDelete = async (msgId) => {
-    const ok = await deleteMessage(msgId);
-    if (ok) setMessages((prev) => prev.map((m) => m._id === msgId ? { ...m, isDeleted: true, content: 'Message deleted' } : m));
+  // insert an emoji at the current cursor position in the textarea
+  const handleEmojiClick = (emojiObject) => {
+    const emoji = emojiObject.emoji;
+    const el = composeRef.current;
+    if (el && typeof el.selectionStart === 'number') {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const next = draft.slice(0, start) + emoji + draft.slice(end);
+      setDraft(next);
+      requestAnimationFrame(() => {
+        el.focus();
+        const cursor = start + emoji.length;
+        el.setSelectionRange(cursor, cursor);
+      });
+    } else {
+      setDraft((prev) => prev + emoji);
+    }
+    if (activeId) sendTyping(activeId, true);
+    clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => { if (activeId) sendTyping(activeId, false); }, 1500);
+  };
+
+  // NEW: edit flow
+  const startEdit = (msg) => {
+    setEditingId(msg._id);
+    setEditDraft(msg.content);
+    setOpenMenuId(null);
+    requestAnimationFrame(() => editInputRef.current?.focus());
+  };
+  const cancelEdit = () => { setEditingId(null); setEditDraft(''); };
+  const submitEdit = async (msg) => {
+    const trimmed = editDraft.trim();
+    if (!trimmed) { cancelEdit(); return; }
+    if (trimmed === msg.content) { cancelEdit(); return; }
+    const result = await editMessage(msg._id, trimmed);
+    if (result && !result.error) {
+      setMessages((prev) => prev.map((m) => m._id === msg._id ? { ...m, content: result.content, isEdited: true, editedAt: result.editedAt } : m));
+    } else if (result?.error) {
+      console.error('Edit failed:', result.error);
+    }
+    cancelEdit();
+  };
+
+  // NEW: delete flow (scope: 'me' | 'everyone')
+  const handleDeleteMessage = async (msg, scope) => {
+    setOpenMenuId(null);
+    const result = await deleteMessage(msg._id, scope);
+    if (!result?.success) {
+      if (result?.message) console.error('Delete failed:', result.message);
+      return;
+    }
+    if (scope === 'everyone') {
+      setMessages((prev) => prev.map((m) => m._id === msg._id ? { ...m, isDeleted: true, content: '' } : m));
+    } else {
+      setMessages((prev) => prev.filter((m) => m._id !== msg._id));
+    }
   };
 
   const activeConv = conversations.find((c) => c._id === activeId);
@@ -412,6 +558,10 @@ export default function Messages() {
                 </Link>
                 <div className="msg-chat__header-sub">@{otherUser?.username || '...'}</div>
               </div>
+              {/* close chat button */}
+              <button className="msg-chat__header__close" style={{ borderColor: `rgba(${accentRgb}, 0.3)` }} onClick={closeChat} title="Close chat" aria-label="Close chat">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
             </div>
 
             <div className="msg-feed" ref={feedRef}>
@@ -422,8 +572,12 @@ export default function Messages() {
               ) : (
                 messages.map((msg, i) => {
                   const isSent = msg.senderId?.toString() === myId?.toString();
-                  const prevMsg = i > 0 ? messages[i - 1] : null;
-                  const isGroupStart = !prevMsg || prevMsg.senderId?.toString() !== msg.senderId?.toString();
+                  const isGroupStart = i === 0 || messages[i - 1].senderId?.toString() !== msg.senderId?.toString();
+                  const isEditing = editingId === msg._id;
+                  const canEdit = isSent && !msg.isDeleted && !msg._optimistic && withinEditWindow(msg);
+                  const canDeleteEveryone = isSent && !msg.isDeleted && !msg._optimistic && withinEditWindow(msg);
+                  const canShowMenu = !msg.isDeleted && !msg._optimistic;
+
                   return (
                     <div key={msg._id}>
                       {needsDivider(messages, i) && (
@@ -432,14 +586,71 @@ export default function Messages() {
                         </div>
                       )}
                       <div className={`msg-bubble-wrap msg-bubble-wrap--${isSent ? 'sent' : 'recv'}${isGroupStart ? ' msg-bubble-wrap--group-start' : ''}`}>
-                        <div className={`msg-bubble msg-bubble--${isSent ? 'sent' : 'recv'}${msg.isDeleted ? ' msg-bubble--deleted' : ''}`}
-                          style={isSent ? { borderColor: `rgba(${accentRgb}, 0.35)` } : {}}>
-                          {msg.isDeleted ? 'Message deleted' : msg.content}
-                          <div className="msg-bubble__time">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                          {isSent && !msg.isDeleted && !msg._optimistic && (
-                            <button className="msg-bubble__delete-btn" style={{ borderColor: `rgba(${accentRgb}, 0.3)` }} onClick={() => handleDelete(msg._id)} title="Delete message">
-                              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                        {canShowMenu && (
+                          <button
+                            className="msg-action-trigger"
+                            onClick={() => setOpenMenuId(openMenuId === msg._id ? null : msg._id)}
+                            title="Message options"
+                            aria-label="Message options"
+                            type="button"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                              <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
+                            </svg>
+                          </button>
+                        )}
+
+                        {openMenuId === msg._id && (
+                          <div className={`msg-action-menu msg-action-menu--${isSent ? 'sent' : 'recv'}`}>
+                            {canEdit && (
+                              <button type="button" onClick={() => startEdit(msg)}>Edit</button>
+                            )}
+                            <button type="button" onClick={() => handleDeleteMessage(msg, 'me')}>
+                              Delete for me
                             </button>
+                            {canDeleteEveryone && (
+                              <button type="button" className="msg-action-menu__danger" onClick={() => handleDeleteMessage(msg, 'everyone')}>
+                                Delete for everyone
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        <div className={`msg-bubble msg-bubble--${isSent ? 'sent' : 'recv'}${msg.isDeleted ? ' msg-bubble--deleted' : ''}`}
+                          style={isSent && !msg.isDeleted ? { borderColor: `rgba(${accentRgb}, 0.35)` } : {}}>
+                          {msg.isDeleted ? (
+                            <span className="msg-bubble__deleted-label">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6" />
+                              </svg>
+                              This message was deleted
+                            </span>
+                          ) : isEditing ? (
+                            <div className="msg-bubble__edit">
+                              <textarea
+                                ref={editInputRef}
+                                className="msg-bubble__edit-input"
+                                value={editDraft}
+                                onChange={(e) => setEditDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitEdit(msg); }
+                                  if (e.key === 'Escape') cancelEdit();
+                                }}
+                                rows={1}
+                              />
+                              <div className="msg-bubble__edit-actions">
+                                <button type="button" onClick={() => submitEdit(msg)}>Save</button>
+                                <button type="button" onClick={cancelEdit}>Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {msg.content}
+                              <div className="msg-bubble__meta">
+                                {msg.isEdited && <span className="msg-bubble__edited-tag">edited</span>}
+                                <span className="msg-bubble__time">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            </>
                           )}
                         </div>
                       </div>
@@ -453,7 +664,39 @@ export default function Messages() {
               {typing && (<>{typingName} is typing<span className="msg-typing__dots"><span style={{ background: accent }} /><span style={{ background: accent }} /><span style={{ background: accent }} /></span></>)}
             </div>
 
-            <div className="msg-compose" style={{ borderTop: `1px solid rgba(${accentRgb}, 0.15)` }}>
+            <div className="msg-compose" style={{ borderTop: `1px solid rgba(${accentRgb}, 0.15)`, position: 'relative' }}>
+              {showEmojiPicker && (
+                <div className="msg-emoji-picker-wrap" ref={emojiPickerRef}>
+                  <EmojiPicker
+                    onEmojiClick={handleEmojiClick}
+                    autoFocusSearch={false}
+                    theme="dark"
+                    width="300px"
+                    height="360px"
+                    lazyLoadEmojis={true}
+                    searchDisabled={false}
+                    skinTonesDisabled={false}
+                    previewConfig={{ showPreview: false }}
+                    emojiStyle="native"
+                  />
+                </div>
+              )}
+              <button
+                type="button"
+                ref={emojiBtnRef}
+                className="msg-compose__emoji"
+                style={{ borderColor: `rgba(${accentRgb}, 0.3)`, color: showEmojiPicker ? accent : undefined }}
+                onClick={() => setShowEmojiPicker((v) => !v)}
+                aria-label="Insert emoji"
+                title="Emoji"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M8.5 14s1.5 2 3.5 2 3.5-2 3.5-2" strokeLinecap="round" />
+                  <line x1="9" y1="9.5" x2="9.01" y2="9.5" strokeLinecap="round" strokeWidth="2.5" />
+                  <line x1="15" y1="9.5" x2="15.01" y2="9.5" strokeLinecap="round" strokeWidth="2.5" />
+                </svg>
+              </button>
               <textarea ref={composeRef} className="msg-compose__input" placeholder="Write a message..." value={draft} onChange={handleDraftChange} onKeyDown={handleKeyDown} rows={1}
                 style={{ borderColor: `rgba(${accentRgb}, 0.3)` }} />
               <button className="msg-compose__send" onClick={handleSend} disabled={!draft.trim() || sending} aria-label="Send"

@@ -9,6 +9,8 @@
  * FIXED: searchUsers handles empty results properly
  * FIXED: Added debug logging for search
  * FIXED: API_BASE now correctly handles production URL
+ * NEW: editMessage — PUT /api/messages/:messageId
+ * NEW: deleteMessage now takes a scope ('me' | 'everyone')
  */
 
 import React, {
@@ -253,18 +255,39 @@ export function MessageProvider({ children }) {
     }
   }, [token, authHeader, socketMarkRead, user]);
 
-  const deleteMessage = useCallback(async (messageId) => {
-    if (!token) return false;
+  // NEW: edit a message. Returns the updated message on success, or an
+  // object with `.error` set to the server's message on failure.
+  const editMessage = useCallback(async (messageId, content) => {
+    if (!token) return { error: 'Not authenticated' };
+    try {
+      const res  = await fetch(`${API_BASE}/api/messages/${messageId}`, {
+        method:  'PUT',
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ content }),
+      });
+      const data = await res.json();
+      if (data.success) return data.message;
+      return { error: data.message || 'Could not edit message' };
+    } catch (err) {
+      console.error('editMessage error:', err);
+      return { error: 'Network error' };
+    }
+  }, [token, authHeader]);
+
+  // UPDATED: deleteMessage now takes a scope: 'me' (default) or 'everyone'.
+  const deleteMessage = useCallback(async (messageId, scope = 'me') => {
+    if (!token) return { success: false };
     try {
       const res  = await fetch(`${API_BASE}/api/messages/${messageId}`, {
         method:  'DELETE',
-        headers: authHeader(),
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ scope }),
       });
       const data = await res.json();
-      return data.success;
+      return data;
     } catch (err) {
       console.error('deleteMessage error:', err);
-      return false;
+      return { success: false };
     }
   }, [token, authHeader]);
 
@@ -327,6 +350,7 @@ export function MessageProvider({ children }) {
     startConversation,
     sendMessage,
     markAsRead,
+    editMessage,
     deleteMessage,
     searchUsers,
     searchAdmins,

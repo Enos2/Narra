@@ -9,7 +9,8 @@
  *   GET    /api/messages/conversations/:id      — get one conversation + messages
  *   POST   /api/messages/conversations/:id      — send a message
  *   PUT    /api/messages/conversations/:id/read — mark conversation as read
- *   DELETE /api/messages/:messageId             — soft-delete a message (sender only)
+ *   PUT    /api/messages/:messageId             — edit a message (sender only, 10 min window)
+ *   DELETE /api/messages/:messageId             — delete a message (scope: 'me' | 'everyone')
  *
  *   — Admin moderation (platform/super admin) —
  *   GET    /api/messages/admin/user-conversations       — list all user conversations
@@ -18,9 +19,14 @@
  *   — Super admin only —
  *   GET    /api/messages/admin/admin-conversations      — list all admin conversations
  *   GET    /api/messages/admin/admin-conversations/:id  — read an admin conversation
- * 
+ *
  * FIXED: Added debug logging for startConversation
  * FIXED: Better error handling in findOrCreate
+ * NEW: editMessage — 10 minute edit window, sender only
+ * NEW: deleteMessage now supports scope 'me' (hide for self, any time) vs
+ *      'everyone' (soft-delete for all participants, sender only, 10 min window)
+ * NEW: getConversation excludes messages the actor personally deleted, and
+ *      masks content for messages deleted-for-everyone instead of hiding them
  */
 
 const Conversation = require('../models/Conversation');
@@ -30,6 +36,9 @@ const Admin        = require('../models/Admin');
 
 let _io = null;
 exports.setSocketIO = (io) => { _io = io; };
+
+// Window (ms) within which a message can be edited, or deleted-for-everyone.
+const EDIT_DELETE_WINDOW_MS = 10 * 60 * 1000;
 
 /* ─────────────────────────────────────────────
    HELPERS
@@ -74,6 +83,10 @@ async function attachOtherParticipant(conv, actorId) {
  */
 function laneFor(actor) {
   return actor.model === 'Admin' ? 'admin' : 'user';
+}
+
+function personalRoomFor(actor) {
+  return `${actor.model === 'Admin' ? 'admin' : 'user'}:${actor.id}`;
 }
 
 /* ─────────────────────────────────────────────
@@ -200,14 +213,24 @@ exports.getConversation = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    const [messages, total] = await Promise.all([
-      Message.find({ conversationId: id, isDeleted: false })
+    // NOTE: we no longer filter out isDeleted (deleted-for-everyone) messages —
+    // they stay in the list so the placeholder "message deleted" renders for
+    // everyone. We DO filter out messages this actor personally deleted-for-me.
+    const filter = { conversationId: id, deletedFor: { $ne: actor.id } };
+
+    const [rawMessages, total] = await Promise.all([
+      Message.find(filter)
         .sort({ createdAt: 1 })
         .skip(skip)
         .limit(limit)
         .lean(),
-      Message.countDocuments({ conversationId: id, isDeleted: false }),
+      Message.countDocuments(filter),
     ]);
+
+    // Mask content on messages deleted-for-everyone — don't leak original text.
+    const messages = rawMessages.map((m) =>
+      m.isDeleted ? { ...m, content: '' } : m
+    );
 
     const enriched = await attachOtherParticipant(conversation, actor.id);
 
@@ -266,6 +289,11 @@ exports.sendMessage = async (req, res) => {
 
     // Real-time delivery via Socket.IO
     if (_io) {
+      // NOTE: this broadcasts to the whole room, including the sender's own
+      // socket (they're subscribed to the room too). The frontend is
+      // responsible for ignoring its own messages here, since the sender
+      // already has the saved message from this HTTP response — otherwise
+      // you get a duplicate bubble.
       _io.to(`conversation:${id}`).emit('new-message', {
         message,
         conversationId: id,
@@ -342,13 +370,20 @@ exports.markAsRead = async (req, res) => {
 };
 
 /* ─────────────────────────────────────────────
-   SOFT-DELETE A MESSAGE
-   DELETE /api/messages/:messageId
+   EDIT A MESSAGE
+   PUT /api/messages/:messageId
+   body: { content }
+   — Sender only, only within the 10 minute edit window, not deleted.
 ───────────────────────────────────────────── */
-exports.deleteMessage = async (req, res) => {
+exports.editMessage = async (req, res) => {
   try {
     const actor = req.actor;
     const { messageId } = req.params;
+    const { content } = req.body;
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ success: false, message: 'Message content is required' });
+    }
 
     const message = await Message.findById(messageId);
     if (!message) {
@@ -356,23 +391,119 @@ exports.deleteMessage = async (req, res) => {
     }
 
     if (message.senderId.toString() !== actor.id.toString()) {
-      return res.status(403).json({ success: false, message: 'You can only delete your own messages' });
+      return res.status(403).json({ success: false, message: 'You can only edit your own messages' });
     }
 
-    message.isDeleted      = true;
-    message.deletedAt      = new Date();
-    message.deletedBy      = actor.id;
-    message.deletedByModel = actor.model;
+    if (message.isDeleted) {
+      return res.status(400).json({ success: false, message: 'This message was deleted and can no longer be edited' });
+    }
+
+    const ageMs = Date.now() - new Date(message.createdAt).getTime();
+    if (ageMs > EDIT_DELETE_WINDOW_MS) {
+      return res.status(403).json({ success: false, message: 'This message can only be edited within 10 minutes of sending' });
+    }
+
+    message.content  = content.trim();
+    message.isEdited = true;
+    message.editedAt = new Date();
     await message.save();
 
     if (_io) {
-      _io.to(`conversation:${message.conversationId}`).emit('message-deleted', {
+      _io.to(`conversation:${message.conversationId}`).emit('message-edited', {
         messageId,
-        conversationId: message.conversationId,
+        conversationId: message.conversationId.toString(),
+        content:  message.content,
+        editedAt: message.editedAt,
       });
     }
 
-    return res.json({ success: true });
+    return res.json({ success: true, message });
+  } catch (err) {
+    console.error('editMessage error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+/* ─────────────────────────────────────────────
+   DELETE A MESSAGE
+   DELETE /api/messages/:messageId
+   body: { scope: 'me' | 'everyone' }
+   — 'me'       → hides the message from the actor's own view only, any time,
+                  any participant.
+   — 'everyone' → soft-deletes for all participants. Sender only, and only
+                  within the 10 minute window; after that, only 'me' is allowed.
+───────────────────────────────────────────── */
+exports.deleteMessage = async (req, res) => {
+  try {
+    const actor = req.actor;
+    const { messageId } = req.params;
+    const scope = req.body?.scope === 'everyone' ? 'everyone' : 'me';
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    const conversation = await Conversation.findById(message.conversationId);
+    if (!conversation || !conversation.hasParticipant(actor.id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const ageMs = Date.now() - new Date(message.createdAt).getTime();
+    const withinWindow = ageMs <= EDIT_DELETE_WINDOW_MS;
+
+    if (scope === 'everyone') {
+      if (message.senderId.toString() !== actor.id.toString()) {
+        return res.status(403).json({ success: false, message: 'You can only delete your own messages for everyone' });
+      }
+      if (message.isDeleted) {
+        return res.status(400).json({ success: false, message: 'Message already deleted' });
+      }
+      if (!withinWindow) {
+        return res.status(403).json({
+          success: false,
+          message: 'This message can only be deleted for everyone within 10 minutes of sending. You can still delete it for yourself.',
+        });
+      }
+
+      message.isDeleted      = true;
+      message.deletedAt      = new Date();
+      message.deletedBy      = actor.id;
+      message.deletedByModel = actor.model;
+      await message.save();
+
+      if (_io) {
+        _io.to(`conversation:${message.conversationId}`).emit('message-deleted', {
+          messageId,
+          conversationId: message.conversationId.toString(),
+          scope: 'everyone',
+        });
+      }
+
+      return res.json({ success: true, scope: 'everyone' });
+    }
+
+    // scope === 'me' — hide only for the requesting actor, no time limit,
+    // works whether or not the actor sent the message.
+    const alreadyHidden = message.deletedFor.some(
+      (uid) => uid.toString() === actor.id.toString()
+    );
+    if (!alreadyHidden) {
+      message.deletedFor.push(actor.id);
+      await message.save();
+    }
+
+    if (_io) {
+      // Only the actor's own other sessions/tabs need to know, not the
+      // other participant — 'delete for me' doesn't affect them.
+      _io.to(personalRoomFor(actor)).emit('message-deleted', {
+        messageId,
+        conversationId: message.conversationId.toString(),
+        scope: 'me',
+      });
+    }
+
+    return res.json({ success: true, scope: 'me' });
   } catch (err) {
     console.error('deleteMessage error:', err);
     return res.status(500).json({ success: false, message: 'Server error' });
@@ -411,10 +542,6 @@ exports.searchUsers = async (req, res) => {
 /* ─────────────────────────────────────────────
    SEARCH ADMINS TO MESSAGE (admin lane)
    GET /api/messages/search-admins?q=
-   
-   FIXED: Only searches fields that exist in the Admin model:
-   - fullName
-   - email
 ───────────────────────────────────────────── */
 exports.searchAdmins = async (req, res) => {
   try {
@@ -448,10 +575,6 @@ exports.searchAdmins = async (req, res) => {
    Platform admin + super admin
 ═══════════════════════════════════════════════ */
 
-/**
- * GET /api/messages/admin/user-conversations
- * List all user-lane conversations (paginated).
- */
 exports.adminListUserConversations = async (req, res) => {
   try {
     const page  = parseInt(req.query.page)  || 1;
@@ -466,7 +589,6 @@ exports.adminListUserConversations = async (req, res) => {
       Conversation.countDocuments({ lane: 'user', isActive: true }),
     ]);
 
-    // Enrich both participants for moderation view
     const enriched = await Promise.all(
       conversations.map(async (conv) => {
         const plain = conv.toObject();
@@ -493,10 +615,6 @@ exports.adminListUserConversations = async (req, res) => {
   }
 };
 
-/**
- * GET /api/messages/admin/user-conversations/:id
- * Read a specific user conversation.
- */
 exports.adminGetUserConversation = async (req, res) => {
   try {
     const { id } = req.params;
@@ -534,9 +652,6 @@ exports.adminGetUserConversation = async (req, res) => {
    SUPER ADMIN — view admin conversations
 ═══════════════════════════════════════════════ */
 
-/**
- * GET /api/messages/admin/admin-conversations
- */
 exports.superAdminListAdminConversations = async (req, res) => {
   try {
     const page  = parseInt(req.query.page)  || 1;
@@ -577,9 +692,6 @@ exports.superAdminListAdminConversations = async (req, res) => {
   }
 };
 
-/**
- * GET /api/messages/admin/admin-conversations/:id
- */
 exports.superAdminGetAdminConversation = async (req, res) => {
   try {
     const { id } = req.params;

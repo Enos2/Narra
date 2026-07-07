@@ -41,10 +41,18 @@ const MessageSchema = new mongoose.Schema(
 
     readBy: { type: [ReadReceiptSchema], default: [] },
 
-    isDeleted:     { type: Boolean, default: false },
-    deletedAt:     { type: Date, default: null },
-    deletedBy:     { type: mongoose.Schema.Types.ObjectId, default: null },
-    deletedByModel:{ type: String, enum: ['User', 'Admin', null], default: null },
+    // ── Edit tracking ──
+    isEdited: { type: Boolean, default: false },
+    editedAt: { type: Date, default: null },
+
+    // ── Delete for everyone ──
+    isDeleted:      { type: Boolean, default: false },
+    deletedAt:      { type: Date, default: null },
+    deletedBy:      { type: mongoose.Schema.Types.ObjectId, default: null },
+    deletedByModel: { type: String, enum: ['User', 'Admin', null], default: null },
+
+    // ── Delete for me only (per-participant hide list) ──
+    deletedFor: { type: [mongoose.Schema.Types.ObjectId], default: [] },
   },
   { timestamps: true }
 );

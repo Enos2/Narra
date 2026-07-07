@@ -21,7 +21,9 @@ router.get('/conversations',         ctrl.listConversations);
 router.get('/conversations/:id',     ctrl.getConversation);
 router.post('/conversations/:id',    ctrl.sendMessage);
 router.put('/conversations/:id/read', ctrl.markAsRead);
-router.delete('/:messageId',         ctrl.deleteMessage);
+
+router.put('/:messageId',    ctrl.editMessage);   // NEW: edit a message
+router.delete('/:messageId', ctrl.deleteMessage); // body: { scope: 'me' | 'everyone' }
 
 /* ── Admin moderation — platform admin + super admin ── */
 router.get(
