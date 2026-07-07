@@ -7,6 +7,7 @@
  * ADDED: AdminDetails route for viewing admin profile details
  * FIXED: Admin login route changed to /admin-login
  * ADDED: Dynamic page titles based on current route
+ * FIXED: Added /messages/:conversationId route so opening a conversation doesn't fall through to the catch-all redirect
  */
 
 import React, { Suspense, lazy, useEffect } from "react";
@@ -247,6 +248,7 @@ function App() {
                         <Route path="upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
                         <Route path="account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
                         <Route path="messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
+                        <Route path="messages/:conversationId" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
                         <Route path="notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
                         <Route path="live" element={<ProtectedRoute><LiveStream /></ProtectedRoute>} />
                         <Route path="live/:id" element={<LiveWatch />} />
