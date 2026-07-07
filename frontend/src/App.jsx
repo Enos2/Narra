@@ -6,10 +6,11 @@
  * ADDED: AdminUserProfileTest route for debugging
  * ADDED: AdminDetails route for viewing admin profile details
  * FIXED: Admin login route changed to /admin-login
+ * ADDED: Dynamic page titles based on current route
  */
 
-import React, { Suspense, lazy } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import React, { Suspense, lazy, useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 import { ThemeProvider } from "./context/ThemeContext";
 import { MessageProvider } from "./context/MessageContext";
 import { AppProvider } from "./context/AppContext";
@@ -123,6 +124,62 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+/**
+ * Component that updates the page title based on current route
+ */
+function PageTitleUpdater() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const pageNames = {
+      '/': 'Home',
+      '/upload': 'Upload',
+      '/dashboard': 'Dashboard',
+      '/login': 'Login',
+      '/register': 'Register',
+      '/live': 'Live Stream',
+      '/messages': 'Messages',
+      '/notifications': 'Notifications',
+      '/account': 'Account',
+      '/profile': 'Profile',
+      '/hub': 'Hub',
+      '/forgot-password': 'Forgot Password',
+      '/admin-login': 'Admin Login',
+      '/admin': 'Admin Panel',
+      '/video/': 'Video',
+      '/reset-password/': 'Reset Password',
+    };
+
+    let pageName = 'Narra Sea';
+    const currentPath = location.pathname;
+
+    // Check exact matches first
+    for (const [path, name] of Object.entries(pageNames)) {
+      if (currentPath === path) {
+        pageName = `${name} - Narra Sea`;
+        break;
+      }
+    }
+
+    // Check for dynamic routes (like /video/:id)
+    if (pageName === 'Narra Sea') {
+      for (const [path, name] of Object.entries(pageNames)) {
+        if (currentPath.startsWith(path) && path.length > 1) {
+          pageName = `${name} - Narra Sea`;
+          break;
+        }
+      }
+    }
+
+    document.title = pageName;
+  }, [location]);
+
+  return null;
+}
+
+/**
+ * Main App Component
+ */
 function App() {
   return (
     <ErrorBoundary>
@@ -133,6 +190,7 @@ function App() {
               <MessageProvider>
                 <AuthGate>
                   <Suspense fallback={<div className="loading-screen">Loading...</div>}>
+                    <PageTitleUpdater />
                     <Routes>
                       {/* Admin Login - no layout - FIXED: changed to /admin-login */}
                       <Route path="/admin-login" element={<AdminLogin />} />
