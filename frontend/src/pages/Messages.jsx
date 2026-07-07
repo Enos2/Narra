@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/preserve-manual-memoization */
 /* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/exhaustive-deps */
+/* Message.jsx*/
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useMessages } from '../context/MessageContext';
