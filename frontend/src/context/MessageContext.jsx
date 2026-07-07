@@ -6,6 +6,9 @@
  * Manages Socket.IO connection, real-time events, and unread counts.
  * Works for both regular users (User model) and admins (Admin model).
  * FIXED: API endpoints now use correct /api prefix
+ * FIXED: searchUsers handles empty results properly
+ * FIXED: Added debug logging for search
+ * FIXED: API_BASE now correctly handles production URL
  */
 
 import React, {
@@ -21,9 +24,13 @@ import { useAppContext } from './AppContext';
 
 const MessageContext = createContext(null);
 
-// API_BASE should NOT include /api - we'll add it in the fetch calls
-const API_BASE = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
+// API_BASE - remove /api if present, we'll add it back in fetch calls
+const API_BASE = import.meta.env.VITE_API_URL 
+  ? import.meta.env.VITE_API_URL.replace(/\/api$/, '') 
+  : 'http://localhost:5000';
 const SOCKET_URL = API_BASE;
+
+console.log('🔧 MessageContext API_BASE:', API_BASE);
 
 export function MessageProvider({ children }) {
   const { user, token } = useAppContext();
@@ -146,16 +153,16 @@ export function MessageProvider({ children }) {
       });
       const data = await res.json();
       if (data.success) {
-        setConversations(data.conversations);
-        const unread = data.conversations.reduce((sum, c) => {
+        setConversations(data.conversations || []);
+        const unread = (data.conversations || []).reduce((sum, c) => {
           const me = c.participants?.find(
             (p) => p.participantId?.toString() === (user?._id || user?.id)?.toString()
           );
           return sum + (me?.unreadCount || 0);
         }, 0);
         setTotalUnread(unread);
-        subscribeToConversations(data.conversations.map((c) => c._id));
-        return data.conversations;
+        subscribeToConversations((data.conversations || []).map((c) => c._id));
+        return data.conversations || [];
       }
       return [];
     } catch (err) {
@@ -261,30 +268,41 @@ export function MessageProvider({ children }) {
     }
   }, [token, authHeader]);
 
+  // FIXED: searchUsers with better error handling and logging
   const searchUsers = useCallback(async (q) => {
-    if (!token || !q) return [];
+    if (!token || !q || q.length < 2) {
+      console.log('🔍 Search: query too short or no token');
+      return [];
+    }
     try {
-      const res  = await fetch(
-        `${API_BASE}/api/messages/search-users?q=${encodeURIComponent(q)}`,
-        { headers: authHeader() }
-      );
+      const url = `${API_BASE}/api/messages/search-users?q=${encodeURIComponent(q)}`;
+      console.log('🔍 Searching users with URL:', url);
+      
+      const res = await fetch(url, { headers: authHeader() });
       const data = await res.json();
-      return data.success ? data.users : [];
-    } catch {
+      console.log('🔍 Search response:', data);
+      
+      if (data.success) {
+        return data.users || [];
+      }
+      return [];
+    } catch (err) {
+      console.error('🔍 searchUsers error:', err);
       return [];
     }
   }, [token, authHeader]);
 
   const searchAdmins = useCallback(async (q) => {
-    if (!token || !q) return [];
+    if (!token || !q || q.length < 2) return [];
     try {
       const res  = await fetch(
         `${API_BASE}/api/messages/search-admins?q=${encodeURIComponent(q)}`,
         { headers: authHeader() }
       );
       const data = await res.json();
-      return data.success ? data.admins : [];
-    } catch {
+      return data.success ? data.admins || [] : [];
+    } catch (err) {
+      console.error('searchAdmins error:', err);
       return [];
     }
   }, [token, authHeader]);
