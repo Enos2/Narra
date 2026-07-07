@@ -5,6 +5,7 @@
  *
  * Manages Socket.IO connection, real-time events, and unread counts.
  * Works for both regular users (User model) and admins (Admin model).
+ * FIXED: API endpoints now use correct /api prefix
  */
 
 import React, {
@@ -20,8 +21,9 @@ import { useAppContext } from './AppContext';
 
 const MessageContext = createContext(null);
 
-const SOCKET_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
-const API_BASE   = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// API_BASE should NOT include /api - we'll add it in the fetch calls
+const API_BASE = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
+const SOCKET_URL = API_BASE;
 
 export function MessageProvider({ children }) {
   const { user, token } = useAppContext();
@@ -48,9 +50,6 @@ export function MessageProvider({ children }) {
       return;
     }
 
-    // Delay socket creation so React Strict Mode's immediate cleanup
-    // fires first — this prevents the "WebSocket closed before connection
-    // established" browser warning caused by the double-invoke in dev.
     let cancelled = false;
     let socket = null;
 
@@ -136,13 +135,13 @@ export function MessageProvider({ children }) {
   }, []);
 
   /* ══════════════════════════════════════════
-     HTTP API HELPERS
+     HTTP API HELPERS - FIXED: All use /api prefix
   ══════════════════════════════════════════ */
 
   const fetchConversations = useCallback(async () => {
     if (!token) return [];
     try {
-      const res  = await fetch(`${API_BASE}/messages/conversations`, {
+      const res  = await fetch(`${API_BASE}/api/messages/conversations`, {
         headers: authHeader(),
       });
       const data = await res.json();
@@ -169,7 +168,7 @@ export function MessageProvider({ children }) {
     if (!token) return null;
     try {
       const res  = await fetch(
-        `${API_BASE}/messages/conversations/${id}?page=${page}&limit=50`,
+        `${API_BASE}/api/messages/conversations/${id}?page=${page}&limit=50`,
         { headers: authHeader() }
       );
       const data = await res.json();
@@ -183,7 +182,7 @@ export function MessageProvider({ children }) {
   const startConversation = useCallback(async (recipientId) => {
     if (!token) return null;
     try {
-      const res  = await fetch(`${API_BASE}/messages/conversations`, {
+      const res  = await fetch(`${API_BASE}/api/messages/conversations`, {
         method:  'POST',
         headers: { ...authHeader(), 'Content-Type': 'application/json' },
         body:    JSON.stringify({ recipientId }),
@@ -207,7 +206,7 @@ export function MessageProvider({ children }) {
   const sendMessage = useCallback(async (conversationId, content) => {
     if (!token) return null;
     try {
-      const res  = await fetch(`${API_BASE}/messages/conversations/${conversationId}`, {
+      const res  = await fetch(`${API_BASE}/api/messages/conversations/${conversationId}`, {
         method:  'POST',
         headers: { ...authHeader(), 'Content-Type': 'application/json' },
         body:    JSON.stringify({ content }),
@@ -224,7 +223,7 @@ export function MessageProvider({ children }) {
     if (!token) return;
     socketMarkRead(conversationId);
     try {
-      await fetch(`${API_BASE}/messages/conversations/${conversationId}/read`, {
+      await fetch(`${API_BASE}/api/messages/conversations/${conversationId}/read`, {
         method:  'PUT',
         headers: authHeader(),
       });
@@ -250,7 +249,7 @@ export function MessageProvider({ children }) {
   const deleteMessage = useCallback(async (messageId) => {
     if (!token) return false;
     try {
-      const res  = await fetch(`${API_BASE}/messages/${messageId}`, {
+      const res  = await fetch(`${API_BASE}/api/messages/${messageId}`, {
         method:  'DELETE',
         headers: authHeader(),
       });
@@ -266,7 +265,7 @@ export function MessageProvider({ children }) {
     if (!token || !q) return [];
     try {
       const res  = await fetch(
-        `${API_BASE}/messages/search-users?q=${encodeURIComponent(q)}`,
+        `${API_BASE}/api/messages/search-users?q=${encodeURIComponent(q)}`,
         { headers: authHeader() }
       );
       const data = await res.json();
@@ -280,7 +279,7 @@ export function MessageProvider({ children }) {
     if (!token || !q) return [];
     try {
       const res  = await fetch(
-        `${API_BASE}/messages/search-admins?q=${encodeURIComponent(q)}`,
+        `${API_BASE}/api/messages/search-admins?q=${encodeURIComponent(q)}`,
         { headers: authHeader() }
       );
       const data = await res.json();
@@ -291,8 +290,7 @@ export function MessageProvider({ children }) {
   }, [token, authHeader]);
 
   /* ══════════════════════════════════════════
-     SOCKET REF EXPOSURE (for components
-     that need to listen to real-time events)
+     SOCKET REF EXPOSURE
   ══════════════════════════════════════════ */
   const onSocketEvent = useCallback((event, handler) => {
     socketRef.current?.on(event, handler);
