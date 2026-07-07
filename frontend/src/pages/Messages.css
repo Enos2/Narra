@@ -3,6 +3,9 @@
  * CLAW MARK THEME - Indigo Purple for Messaging
  * MATCHING LIVESTREAM PATTERN - Navbar blends seamlessly
  * UPDATED: Added message bubble redesign with action menu, emoji picker, edit/delete features
+ * FIX: .msg-bubble-wrap now has position: relative so the message action
+ *      menu (3-dot -> edit/delete) anchors to the bubble instead of the
+ *      page, where it was being clipped by overflow:hidden on .msg-main.
  */
 
 * {
@@ -678,10 +681,22 @@
   align-items: center;
   gap: 6px;
   margin-bottom: 2px;
+  /* FIX: needed so .msg-action-menu (position: absolute) anchors to this
+     wrapper instead of escaping up to .msg-main (which clips via
+     overflow: hidden), which was making the 3-dot menu invisible/inert */
+  position: relative;
+  /* animates smoothly when extra room is made for an open action menu */
+  transition: margin-top 0.2s ease;
 }
-.msg-bubble-wrap--sent { justify-content: flex-end; }
-.msg-bubble-wrap--recv { justify-content: flex-start; }
-.msg-bubble-wrap--recv .msg-action-trigger { order: 3; }
+/* align-self (not just justify-content) is what actually matters here:
+   .msg-feed is flex-direction: column, so its children default to
+   stretch and each .msg-bubble-wrap silently spans the FULL chat width.
+   That meant the absolutely-positioned .msg-action-menu (anchored to
+   this wrapper) rendered at the wrapper's left edge -- way over by the
+   sidebar -- instead of next to the actual bubble. align-self shrinks
+   the wrapper down to just its content so the menu anchors correctly. */
+.msg-bubble-wrap--sent { justify-content: flex-end; align-self: flex-end; }
+.msg-bubble-wrap--recv { justify-content: flex-start; align-self: flex-start; }
 
 .msg-bubble-wrap--group-start { margin-top: 10px; }
 
@@ -789,27 +804,37 @@
 .msg-bubble__edit-actions button:first-child { color: #818cf8; }
 .msg-bubble__edit-actions button:hover { color: #a5b4fc; }
 
-/* message action menu (kebab trigger + dropdown) */
+/* message action menu (kebab trigger + dropdown) — WhatsApp-style:
+   the trigger sits pinned to the bubble's own top corner (overlapping
+   it slightly) instead of floating in the layout beside it, and the
+   dropdown opens attached directly under that corner, hugging the
+   bubble edge, rather than jumping out to the side of the row. */
 .msg-action-trigger {
   display: none;
   align-items: center;
   justify-content: center;
+  position: absolute;
+  top: -7px;
   width: 22px;
   height: 22px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(129, 140, 248, 0.25);
-  border-radius: 4px;
-  color: #8888a0;
+  background: rgba(10, 10, 10, 0.9);
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  border-radius: 50%;
+  color: #c7d2fe;
   cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.15s, border-color 0.15s;
+  z-index: 15;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
+.msg-bubble-wrap--sent .msg-action-trigger { right: -7px; }
+.msg-bubble-wrap--recv .msg-action-trigger { left: -7px; }
 .msg-bubble-wrap:hover .msg-action-trigger { display: flex; }
-.msg-action-trigger:hover { color: #818cf8; border-color: rgba(129, 140, 248, 0.5); }
+.msg-action-trigger:hover { color: #818cf8; border-color: rgba(129, 140, 248, 0.6); background: rgba(129, 140, 248, 0.15); }
 
 .msg-action-menu {
   position: absolute;
-  top: 0;
+  bottom: calc(100% + 6px);
+  right: -7px;
   z-index: 20;
   background: rgba(10, 10, 10, 0.97);
   border: 1px solid rgba(129, 140, 248, 0.25);
@@ -820,8 +845,16 @@
   flex-direction: column;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
 }
-.msg-action-menu--sent { right: 100%; margin-right: 6px; }
-.msg-action-menu--recv { left: 100%; margin-left: 6px; }
+.msg-action-menu--recv { right: auto; left: -7px; }
+
+/* When a message's menu is open, the JS adds this class to that
+   message's wrapper. Extra margin-top pushes it (and everything after
+   it) down, away from the message above -- opening up exactly enough
+   room for the menu instead of covering the previous message. Closing
+   the menu removes the class and it eases back down smoothly. */
+.msg-bubble-wrap--menu-open {
+  margin-top: 104px;
+}
 .msg-action-menu button {
   background: transparent;
   border: none;
@@ -1045,12 +1078,11 @@
     width: auto;
   }
 
-  .msg-action-menu--sent,
-  .msg-action-menu--recv {
-    left: auto;
-    right: 0;
-    top: calc(100% + 4px);
-    margin: 0;
+  /* Make the 3-dot trigger always visible on touch devices, since
+     :hover never fires there and the button would otherwise be
+     permanently display:none and unreachable */
+  .msg-action-trigger {
+    display: flex;
   }
 
   /* Hide some scars on mobile */
