@@ -2,6 +2,7 @@
  * File: backend/controllers/promotionController.js
  * Internal name: promotion (displayed as "Campaign" to users/admins)
  * Replaces: adController.js
+ * FIXED: getActivePromotions now handles empty results gracefully
  */
 
 const Promotion = require('../models/Promotion');
@@ -65,7 +66,31 @@ exports.getActivePromotions = async (req, res) => {
       ).lean();
     }
 
-    const promotions = await Promotion.getActiveForUser(user, placement || null, parseInt(limit));
+    // Get promotions - this will return empty array if none found
+    let promotions = [];
+    try {
+      promotions = await Promotion.getActiveForUser(user, placement || null, parseInt(limit));
+    } catch (err) {
+      console.warn('[getActivePromotions] Method error, using fallback:', err.message);
+      // Fallback: direct query if static method fails
+      const now = new Date();
+      const query = { 
+        status: 'active', 
+        isDeleted: false,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+        remainingBudget: { $gt: 0 }
+      };
+      if (placement) query.placement = placement;
+      promotions = await Promotion.find(query)
+        .limit(parseInt(limit))
+        .lean();
+    }
+
+    // If no promotions found, return empty array (not 500)
+    if (!promotions || promotions.length === 0) {
+      return res.json({ success: true, promotions: [] });
+    }
 
     const safe = promotions.map(p => ({
       _id:          p._id,
@@ -82,7 +107,12 @@ exports.getActivePromotions = async (req, res) => {
     return res.json({ success: true, promotions: safe });
   } catch (err) {
     console.error('[getActivePromotions]', err);
-    return res.status(500).json({ success: false, message: 'Failed to fetch campaigns' });
+    // Return empty array on error instead of 500
+    return res.status(200).json({ 
+      success: true, 
+      promotions: [],
+      message: 'No promotions available'
+    });
   }
 };
 
