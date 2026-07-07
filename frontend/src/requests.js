@@ -6,6 +6,7 @@
  * UPDATED: Fixed admin user endpoints, added admin user profile fetch
  * FIXED: API_BASE_URL now respects VITE_API_URL for local dev,
  *        falls back to production Render URL when not set (hosted site unaffected)
+ * FIXED: getUserById now uses regular user endpoint instead of admin endpoint
  */
 
 // Use env var for local dev (e.g. http://localhost:5000), falls back to
@@ -182,8 +183,8 @@ export async function updateUserProfile(token, profileData) {
 }
 
 export async function getUserById(token, userId) {
-  // For admin routes, use the admin endpoint
-  const endpoint = `${API_BASE_URL}/api/admin/users/${userId}`;
+  // Use regular user endpoint for profile viewing (not admin)
+  const endpoint = `${API_BASE_URL}/api/users/${userId}`;
   const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
   
   try {
