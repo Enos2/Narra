@@ -2,7 +2,6 @@
 /* eslint-disable react-hooks/preserve-manual-memoization */
 /* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/exhaustive-deps */
-/* Message.jsx*/
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useMessages } from '../context/MessageContext';
@@ -141,36 +140,146 @@ export default function Messages() {
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
 
   const openConversation = useCallback(async (id) => {
-    setActiveId(id); setLoadingChat(true); setMessages([]); setMobileShowChat(true);
+    if (!id) return;
+    setActiveId(id); 
+    setLoadingChat(true); 
+    setMessages([]); 
+    setMobileShowChat(true);
     navigate(`/messages/${id}`, { replace: true });
-    const data = await getConversation(id);
-    if (data) { setMessages(data.messages || []); markAsRead(id); }
+    try {
+      const data = await getConversation(id);
+      if (data && data.messages) {
+        setMessages(data.messages || []);
+        markAsRead(id);
+      }
+    } catch (err) {
+      console.error('Error opening conversation:', err);
+    }
     setLoadingChat(false);
   }, [getConversation, markAsRead, navigate]);
 
   const handleSearch = (e) => {
-    const q = e.target.value; setSearchQ(q);
+    const q = e.target.value; 
+    setSearchQ(q);
     clearTimeout(searchTimeout.current);
     if (!q.trim()) { setSearchRes([]); return; }
     setSearchLoading(true);
-    searchTimeout.current = setTimeout(async () => { const res = await searchUsers(q); setSearchRes(res); setSearchLoading(false); }, 300);
+    searchTimeout.current = setTimeout(async () => { 
+      try {
+        const res = await searchUsers(q); 
+        setSearchRes(res || []); 
+      } catch (err) {
+        console.error('Search error:', err);
+        setSearchRes([]);
+      }
+      setSearchLoading(false); 
+    }, 300);
   };
 
+  // FIXED: handleSelectUser with proper conversation handling and navigation
   const handleSelectUser = async (u) => {
-    setSearchQ(''); setSearchRes([]);
-    const conv = await startConversation(u._id);
-    if (conv) openConversation(conv._id);
+    if (!u || !u._id) {
+      console.error('No user selected');
+      return;
+    }
+    
+    // Clear search
+    setSearchQ('');
+    setSearchRes([]);
+    setSearchLoading(false);
+    
+    try {
+      console.log('🔍 Selecting user:', u._id, u.username || u.firstName);
+      
+      // Check if conversation already exists in the current list
+      let existingConv = null;
+      for (const c of conversations) {
+        const otherId = c.otherParticipant?._id || c.otherParticipant?.id;
+        if (otherId === u._id) {
+          existingConv = c;
+          break;
+        }
+      }
+      
+      if (existingConv) {
+        console.log('✅ Found existing conversation:', existingConv._id);
+        // Navigate to existing conversation
+        navigate(`/messages/${existingConv._id}`);
+        setActiveId(existingConv._id);
+        setMobileShowChat(true);
+        // Fetch messages
+        const data = await getConversation(existingConv._id);
+        if (data && data.messages) {
+          setMessages(data.messages || []);
+          markAsRead(existingConv._id);
+        }
+        return;
+      }
+      
+      // Start a new conversation
+      console.log('🆕 Starting new conversation with:', u._id);
+      const conv = await startConversation(u._id);
+      
+      if (conv && conv._id) {
+        console.log('✅ Conversation created:', conv._id);
+        // Navigate to the new conversation
+        navigate(`/messages/${conv._id}`);
+        setActiveId(conv._id);
+        setMobileShowChat(true);
+        // Fetch messages (should be empty for new conversation)
+        const data = await getConversation(conv._id);
+        if (data && data.messages) {
+          setMessages(data.messages || []);
+          markAsRead(conv._id);
+        }
+        // Refresh conversations list to include the new one
+        await fetchConversations();
+      } else {
+        console.error('❌ Failed to start conversation');
+        // Try to refresh conversations and find it
+        await fetchConversations();
+        // Check if the conversation now exists
+        const found = conversations.find(
+          (c) => {
+            const otherId = c.otherParticipant?._id || c.otherParticipant?.id;
+            return otherId === u._id;
+          }
+        );
+        if (found) {
+          console.log('✅ Found conversation after refresh:', found._id);
+          navigate(`/messages/${found._id}`);
+          setActiveId(found._id);
+          setMobileShowChat(true);
+          const data = await getConversation(found._id);
+          if (data && data.messages) {
+            setMessages(data.messages || []);
+            markAsRead(found._id);
+          }
+        } else {
+          console.error('❌ Conversation still not found after refresh');
+        }
+      }
+    } catch (err) {
+      console.error('❌ Error starting conversation:', err);
+    }
   };
 
   const handleSend = async () => {
     const content = draft.trim();
     if (!content || !activeId || sending) return;
-    setSending(true); setDraft('');
+    setSending(true); 
+    setDraft('');
     const optimistic = { _id: `opt-${Date.now()}`, senderId: myId, senderModel: 'User', content, createdAt: new Date().toISOString(), _optimistic: true };
-    setMessages((prev) => [...prev, optimistic]); scrollToBottom();
-    const saved = await sendMessage(activeId, content);
-    setMessages((prev) => prev.map((m) => (m._id === optimistic._id ? (saved || m) : m)));
-    setSending(false); fetchConversations();
+    setMessages((prev) => [...prev, optimistic]); 
+    scrollToBottom();
+    try {
+      const saved = await sendMessage(activeId, content);
+      setMessages((prev) => prev.map((m) => (m._id === optimistic._id ? (saved || m) : m)));
+    } catch (err) {
+      console.error('Send message error:', err);
+    }
+    setSending(false); 
+    fetchConversations();
   };
 
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
@@ -216,10 +325,10 @@ export default function Messages() {
               <div className="msg-search__results" style={{ borderColor: `rgba(${accentRgb}, 0.2)` }}>
                 {searchLoading ? <div style={{ padding: '12px 16px', color: '#55556a', fontSize: 12 }}>Searching...</div> : (
                   searchRes.map((u) => (
-                    <div key={u._id} className="msg-search__result" onClick={() => handleSelectUser(u)}>
+                    <div key={u._id} className="msg-search__result" onClick={() => handleSelectUser(u)} style={{ cursor: 'pointer' }}>
                       <Avatar src={u.avatar} name={u.username || `${u.firstName} ${u.lastName}`} size={30} className="msg-search__result-avatar" userId={u._id} />
                       <div>
-                        <Link to={`/profile/${u._id}`} className="msg-search__result-name" onClick={(e) => e.stopPropagation()}>{u.firstName} {u.lastName}</Link>
+                        <div className="msg-search__result-name">{u.firstName} {u.lastName}</div>
                         <div className="msg-search__result-sub">@{u.username}</div>
                       </div>
                     </div>
