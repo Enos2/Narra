@@ -1,0 +1,428 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   CreateAdmin.css  ·  Pure Black Canvas  ·  Per-role accent
+   ═══════════════════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400&display=swap');
+
+.ca-page {
+  --accent: #FFD700;
+  --bg: #000000;
+  --border: rgba(255,215,0,0.25);
+  --radius: 10px;
+  --radius-lg: 16px;
+  --font-d: 'Bebas Neue', sans-serif;
+  --font-b: 'DM Sans', sans-serif;
+  --font-m: 'DM Mono', monospace;
+
+  position: relative;
+  min-height: 100vh;
+  padding: 2.5rem 2rem 5rem;
+  background: #000000;
+  color: #FFFFFF;
+  font-family: var(--font-b);
+  overflow-x: hidden;
+}
+
+.ca-role-superadmin    { --accent: #FFD700; --border: rgba(255,215,0,0.25); }
+.ca-role-platformadmin { --accent: #3B82F6; --border: rgba(59,130,246,0.25); }
+.ca-role-supportadmin  { --accent: #22c55e; --border: rgba(34,197,94,0.25); }
+
+.ca-bg {
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  overflow: hidden;
+}
+
+.ca-bg-svg {
+  width: 100%; height: 100%;
+  position: absolute; inset: 0;
+}
+
+.ca-grain {
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 1;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+  opacity: 0.3;
+}
+
+.ca-page > *:not(.ca-bg):not(.ca-grain) { position: relative; z-index: 2; }
+
+.ca-container {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.ca-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.ca-title {
+  font-family: var(--font-d);
+  font-size: 2.5rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.5rem 0;
+  background: linear-gradient(135deg, var(--accent), #ffffff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.ca-description {
+  color: rgba(255,255,255,0.6);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.ca-info-note {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #050505;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+  border-left: 3px solid var(--accent);
+}
+
+.ca-info-content {
+  flex: 1;
+}
+
+.ca-info-content p {
+  margin: 0.25rem 0;
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.6);
+}
+
+.ca-info-content strong {
+  color: var(--accent);
+}
+
+.ca-alert {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.ca-alert-success {
+  background: #051005;
+  border: 1px solid rgba(34,197,94,0.3);
+  color: #22c55e;
+}
+
+.ca-alert-error {
+  background: #100505;
+  border: 1px solid rgba(239,68,68,0.3);
+  color: #ef4444;
+}
+
+.ca-alert-close {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: inherit;
+  margin-left: auto;
+}
+
+.ca-form {
+  background: #050505;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+}
+
+.ca-form-group {
+  margin-bottom: 1.5rem;
+}
+
+.ca-form-group label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.7);
+  margin-bottom: 0.5rem;
+}
+
+/* Input and Select Styling - NO WHITE */
+.ca-form-group input,
+.ca-form-group select {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  background: #000000 !important;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #FFFFFF !important;
+  font-family: var(--font-b);
+  font-size: 0.9rem;
+  transition: all 0.2s;
+  -webkit-text-fill-color: #FFFFFF !important;
+  caret-color: var(--accent);
+}
+
+/* Remove white background on autofill */
+.ca-form-group input:-webkit-autofill,
+.ca-form-group input:-webkit-autofill:hover,
+.ca-form-group input:-webkit-autofill:focus,
+.ca-form-group input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #000000 inset !important;
+  -webkit-text-fill-color: #FFFFFF !important;
+  background-color: #000000 !important;
+  background: #000000 !important;
+  border-color: var(--accent);
+}
+
+.ca-form-group input:hover,
+.ca-form-group select:hover {
+  border-color: var(--accent);
+}
+
+.ca-form-group input:focus,
+.ca-form-group select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb, 255, 215, 0), 0.15);
+}
+
+.ca-form-group input:disabled,
+.ca-form-group select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Select dropdown dark styling */
+.ca-form-group select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.6)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  background-size: 14px;
+  background-color: #000000 !important;
+}
+
+.ca-form-group select option {
+  background: #000000 !important;
+  color: #FFFFFF !important;
+  padding: 0.5rem;
+}
+
+/* Date input dark styling */
+input[type="date"] {
+  color-scheme: dark;
+  background-color: #000000 !important;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  background-color: rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  filter: invert(1);
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  background-color: rgba(255,255,255,0.2);
+}
+
+input[type="date"]::-webkit-datetime-edit-text,
+input[type="date"]::-webkit-datetime-edit-month-field,
+input[type="date"]::-webkit-datetime-edit-day-field,
+input[type="date"]::-webkit-datetime-edit-year-field {
+  color: #FFFFFF;
+}
+
+input[type="date"]::-webkit-datetime-edit-month-field:focus,
+input[type="date"]::-webkit-datetime-edit-day-field:focus,
+input[type="date"]::-webkit-datetime-edit-year-field:focus {
+  background-color: var(--accent);
+  color: #000000;
+}
+
+.ca-form-hint {
+  display: block;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.4);
+  margin-top: 0.25rem;
+  font-family: var(--font-m);
+}
+
+.ca-password-wrapper {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ca-password-wrapper input {
+  flex: 1;
+}
+
+.ca-password-btn {
+  padding: 0 0.85rem;
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.6);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ca-password-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #0a0a0a;
+}
+
+.ca-password-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ca-password-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.ca-generate-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.85rem;
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-family: var(--font-b);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ca-generate-btn:hover:not(:disabled) {
+  background: #0a0a0a;
+  border-color: var(--accent);
+}
+
+.ca-generate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ca-form-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.ca-submit-btn {
+  flex: 1;
+  padding: 0.85rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: var(--font-b);
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--accent);
+  color: #000000;
+}
+
+.ca-submit-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(0.95);
+}
+
+.ca-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ca-cancel-btn {
+  flex: 1;
+  padding: 0.85rem;
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #FFFFFF;
+  font-size: 0.9rem;
+  font-family: var(--font-b);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ca-cancel-btn:hover {
+  background: #0a0a0a;
+  border-color: var(--accent);
+}
+
+.ca-permission-warning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #0a0a0a;
+  border: 1px solid rgba(239,68,68,0.3);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  text-align: center;
+  color: #ef4444;
+}
+
+/* Remove any white from placeholder text */
+.ca-form-group input::placeholder {
+  color: rgba(255,255,255,0.3);
+  opacity: 1;
+}
+
+/* Ensure all text inputs are black background */
+input, textarea, select {
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+}
+
+/* Override any browser default styling */
+input:autofill,
+input:autofill:hover,
+input:autofill:focus,
+input:autofill:active {
+  background-color: #000000 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  -webkit-box-shadow: 0 0 0 1000px #000000 inset !important;
+  box-shadow: 0 0 0 1000px #000000 inset !important;
+}
+
+@media (max-width: 700px) {
+  .ca-page {
+    padding: 1.5rem 1rem 3rem;
+  }
+  
+  .ca-title {
+    font-size: 1.8rem;
+  }
+  
+  .ca-form {
+    padding: 1.5rem;
+  }
+  
+  .ca-password-actions {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+  
+  .ca-form-actions {
+    flex-direction: column;
+  }
+}

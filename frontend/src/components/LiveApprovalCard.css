@@ -1,0 +1,324 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   LiveApprovalCard.css  ·  Pure Black Canvas  ·  Theme-aware component
+   ═══════════════════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=DM+Mono:wght@400&display=swap');
+
+.lac-card {
+  --accent: #FFD700;
+  
+  background: #000000;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 1.2rem;
+  transition: all 0.3s ease;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.lac-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* Header */
+.lac-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.lac-avatar-container {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+}
+
+.lac-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--accent);
+}
+
+.lac-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: #000000;
+  font-family: 'Bebas Neue', sans-serif;
+  border: 2px solid var(--accent);
+}
+
+.lac-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.lac-name {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.2rem 0;
+  color: #FFFFFF;
+}
+
+.lac-email {
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.5);
+  font-family: 'DM Mono', monospace;
+  margin: 0;
+  word-break: break-all;
+}
+
+.lac-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 20px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.lac-status-text {
+  font-family: 'DM Sans', sans-serif;
+}
+
+/* Stats Grid */
+.lac-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.lac-stat-item {
+  text-align: center;
+}
+
+.lac-stat-label {
+  font-size: 0.6rem;
+  color: rgba(255,255,255,0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.2rem;
+}
+
+.lac-stat-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: 'DM Mono', monospace;
+}
+
+/* Individual stat colors */
+.lac-stat-value.approved-videos {
+  color: #a855f7;
+}
+.lac-stat-value.approved-videos.met {
+  color: #c084fc;
+  text-shadow: 0 0 8px rgba(168, 85, 247, 0.3);
+}
+
+.lac-stat-value.total-views {
+  color: #06b6d4;
+}
+.lac-stat-value.total-views.met {
+  color: #22d3ee;
+  text-shadow: 0 0 8px rgba(6, 182, 212, 0.3);
+}
+
+.lac-stat-value.account-age {
+  color: #f59e0b;
+}
+.lac-stat-value.account-age.met {
+  color: #fbbf24;
+  text-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
+}
+
+.lac-stat-value.active-strikes {
+  color: #ef4444;
+}
+.lac-stat-value.active-strikes.met {
+  color: #22c55e;
+  text-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
+}
+
+.lac-stat-value .stat-number {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.lac-stat-value .stat-max {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  margin-left: 0.2rem;
+}
+
+/* Qualification Status */
+.lac-qualification-status {
+  margin-bottom: 1rem;
+}
+
+.lac-auto-qualify-notice,
+.lac-missing-requirements,
+.lac-approved-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border: 1px solid;
+}
+
+.lac-notice-icon,
+.lac-missing-icon,
+.lac-approved-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.lac-auto-qualify-notice span,
+.lac-approved-status span {
+  color: rgba(255,255,255,0.8);
+}
+
+.lac-missing-requirements span {
+  color: #ef4444;
+}
+
+/* Actions */
+.lac-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lac-btn {
+  flex: 1;
+  min-width: 80px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.lac-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lac-btn-details {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #FFFFFF;
+}
+
+.lac-btn-details:hover:not(:disabled) {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.2);
+}
+
+.lac-btn-grant {
+  border: none;
+}
+
+.lac-btn-grant:hover:not(:disabled) {
+  opacity: 0.85;
+  transform: scale(0.98);
+}
+
+.lac-btn-revoke {
+  background: transparent;
+  border-width: 1px;
+  border-style: solid;
+}
+
+.lac-btn-revoke:hover:not(:disabled) {
+  background: var(--accent);
+  color: #000000 !important;
+}
+
+.lac-btn-strike {
+  background: transparent;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+}
+
+.lac-btn-strike:hover:not(:disabled) {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #ffffff !important;
+}
+
+.lac-btn-remove-strike {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  color: rgba(255,255,255,0.7);
+}
+
+.lac-btn-remove-strike:hover:not(:disabled) {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.3);
+}
+
+/* Responsive */
+@media (max-width: 500px) {
+  .lac-card {
+    padding: 1rem;
+  }
+  
+  .lac-header {
+    flex-wrap: wrap;
+  }
+  
+  .lac-status-badge {
+    margin-left: auto;
+  }
+  
+  .lac-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+  
+  .lac-actions {
+    gap: 0.4rem;
+  }
+  
+  .lac-btn {
+    font-size: 0.65rem;
+    padding: 0.4rem 0.6rem;
+    min-width: 70px;
+  }
+}
+
+@media (max-width: 400px) {
+  .lac-actions {
+    flex-direction: column;
+  }
+  
+  .lac-btn {
+    width: 100%;
+  }
+}
