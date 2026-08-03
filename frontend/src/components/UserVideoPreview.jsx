@@ -39,6 +39,7 @@ const UserVideoPreview = ({ video, onClose, onWatch, isOpen }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [shareFeedback, setShareFeedback] = useState('');
 
   useEffect(() => {
     if (!isOpen) {
@@ -57,6 +58,35 @@ const UserVideoPreview = ({ video, onClose, onWatch, isOpen }) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const handleShare = async () => {
+    const shareUrl = `${window.location.origin}/watch/${video._id}`;
+    const shareData = {
+      title: video.title || 'Check this out on Narra',
+      text: video.description ? video.description.slice(0, 140) : undefined,
+      url: shareUrl,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      throw new Error('Web Share API unavailable');
+    } catch (err) {
+      // User cancelling the native share sheet also lands here — don't fall
+      // through to clipboard in that case.
+      if (err?.name === 'AbortError') return;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareFeedback('Link copied!');
+        setTimeout(() => setShareFeedback(''), 2000);
+      } catch {
+        setShareFeedback('Could not copy link');
+        setTimeout(() => setShareFeedback(''), 2000);
+      }
+    }
   };
 
   return (
@@ -131,8 +161,8 @@ const UserVideoPreview = ({ video, onClose, onWatch, isOpen }) => {
             >
               Watch Full Video
             </button>
-            <button className="share-button">
-              Share
+            <button className="share-button" onClick={handleShare}>
+              {shareFeedback || 'Share'}
             </button>
           </div>
         </div>

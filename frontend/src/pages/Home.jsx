@@ -214,10 +214,18 @@ function Home() {
     }
   };
 
+  const enrichVideoForPreview = (video) => ({
+    ...video,
+    thumbnailUrl: getFullUrl(video.thumbnailUrl),
+    videoUrl: getFullUrl(video.videoUrl),
+    creatorName: video.creator?.name || video.creator?.username || video.creatorName || 'Unknown Creator',
+    creatorAvatar: getFullUrl(video.creator?.avatar) || video.creatorAvatar || null,
+  });
+
   const handleVideoClick = (video) => {
     if (!user) { setSelectedVideo(video); setShowAuthModal(true); return; }
     if (video.type === 'live' || video.isLive) { navigate(`/live/${video._id}`); return; }
-    setSelectedVideo(video);
+    setSelectedVideo(enrichVideoForPreview(video));
     setShowPreview(true);
   };
 
@@ -568,7 +576,13 @@ function Home() {
       )}
 
       {selectedVideo && user && !selectedVideo.isLive && (
-        <UserVideoPreview video={selectedVideo} isOpen={showPreview} onClose={() => setShowPreview(false)} user={user} />
+        <UserVideoPreview
+          video={selectedVideo}
+          isOpen={showPreview}
+          onClose={() => setShowPreview(false)}
+          onWatch={(video) => { setShowPreview(false); navigate(`/watch/${video._id}`); }}
+          user={user}
+        />
       )}
     </div>
   );
