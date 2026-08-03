@@ -10,6 +10,23 @@ import UserVideoPreview from '../components/UserVideoPreview';
 import SpotlightBanner from '../components/SpotlightBanner';
 import './Home.css';
 
+const EyeIcon = ({ size = 11 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={{ marginRight: 4, verticalAlign: '-1px', flexShrink: 0 }}
+  >
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
 function Home() {
   const { user, token } = useAppContext();
   const { theme } = useTheme();
@@ -234,7 +251,12 @@ function Home() {
         <div className="live-home-thumb">
           {live.thumbnailUrl ? <img src={getFullUrl(live.thumbnailUrl)} alt={live.title} /> : <div className="live-home-thumb-placeholder" />}
           {live.isLive && <div className="live-home-badge"><span className="live-home-dot" />LIVE</div>}
-          {live.isLive && <div className="live-home-viewers">👁 {live.viewerCount || 0}</div>}
+          {live.isLive && (
+            <div className="live-home-viewers">
+              <EyeIcon />
+              {live.viewerCount || 0}
+            </div>
+          )}
         </div>
         <div className="live-home-info">
           <p className="live-home-title">{live.title}</p>
