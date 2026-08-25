@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { useMessages } from "../context/MessageContext";
 import { useTheme } from "../context/ThemeContext";
+import { useGuest } from "../context/GuestContext";
 import { useState, useEffect, useRef } from "react";
 import logo from "../assets/narra-logo.png";
 import "./Navbar.css";
@@ -11,6 +12,7 @@ function Navbar() {
   const { user, logout } = useAppContext();
   const { unreadCount } = useMessages();
   const { theme } = useTheme();
+  const { isGuest, enableGuestMode, disableGuestMode } = useGuest();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -101,6 +103,16 @@ function Navbar() {
   const totalUnread = (unreadCount || 0) + (notificationCount || 0);
   const hasNotifications = totalUnread > 0;
 
+  // Guest mode handlers
+  const handleGuestToggle = () => {
+    if (isGuest) {
+      disableGuestMode();
+    } else {
+      enableGuestMode();
+    }
+    closeAll();
+  };
+
   return (
     <nav ref={navbarRef} className={`navbar ${scrolled ? 'scrolled' : ''}`}>
       {/* Logo - uses a tag for new tab support */}
@@ -150,6 +162,33 @@ function Navbar() {
       <div className="nav-right">
         {!user ? (
           <div className="auth-links desktop-only">
+            {/* Guest Mode Toggle - Show before login/register */}
+            <button 
+              className={`guest-toggle ${isGuest ? 'active' : ''}`}
+              onClick={handleGuestToggle}
+              style={{
+                background: isGuest ? `rgba(${accentRgb}, 0.15)` : 'transparent',
+                border: `1px solid ${isGuest ? accent : 'rgba(255,255,255,0.2)'}`,
+                color: isGuest ? accent : '#888',
+                padding: '8px 16px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                transition: 'all 0.3s ease',
+                marginRight: '8px',
+                fontFamily: 'inherit'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = isGuest ? `rgba(${accentRgb}, 0.25)` : 'rgba(255,255,255,0.05)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = isGuest ? `rgba(${accentRgb}, 0.15)` : 'transparent';
+              }}
+            >
+              <span style={{ marginRight: '4px' }}>👤</span>
+              {isGuest ? 'Exit Guest' : 'Guest Mode'}
+            </button>
+
             <a href="/login" className="auth-link login" onClick={(e) => handleNavClick(e, "/login")}>
               <span>Login</span>
             </a>
@@ -229,6 +268,25 @@ function Navbar() {
           </div>
         )}
 
+        {/* Guest Badge - shown when in guest mode */}
+        {isGuest && (
+          <span className="guest-badge" style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: `rgba(${accentRgb}, 0.12)`,
+            color: accent,
+            padding: '4px 12px 4px 10px',
+            borderRadius: '20px',
+            fontSize: '12px',
+            fontWeight: '500',
+            border: `1px solid rgba(${accentRgb}, 0.2)`,
+            marginRight: '12px'
+          }}>
+            <span>👤</span> Guest
+          </span>
+        )}
+
         <div
           className={`hamburger mobile-only ${menuOpen ? 'active' : ''} ${hasNotifications ? 'has-notifications' : ''}`}
           onClick={() => setMenuOpen(!menuOpen)}
@@ -259,10 +317,36 @@ function Navbar() {
             </div>
           </div>
         )}
+        
+        {/* Guest badge in mobile menu */}
+        {isGuest && !user && (
+          <div className="mobile-guest-badge" style={{
+            padding: '12px 20px',
+            borderBottom: `1px solid rgba(${accentRgb}, 0.1)`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            <span style={{ fontSize: '20px' }}>👤</span>
+            <span style={{ 
+              background: `rgba(${accentRgb}, 0.12)`,
+              color: accent,
+              padding: '4px 12px',
+              borderRadius: '20px',
+              fontSize: '12px',
+              fontWeight: '500',
+              border: `1px solid rgba(${accentRgb}, 0.2)`
+            }}>
+              Guest Mode
+            </span>
+          </div>
+        )}
+
         <div className="mobile-menu-content">
           <a href="/" onClick={(e) => handleNavClick(e, "/")}>
             <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>Home
           </a>
+          
           {user && (
             <>
               <a href="/upload" onClick={(e) => handleNavClick(e, "/upload")}>
@@ -281,9 +365,36 @@ function Navbar() {
               </a>
             </>
           )}
+          
           <div className="mobile-divider" />
+          
           {!user ? (
             <>
+              {/* Guest mode toggle in mobile menu */}
+              <button 
+                onClick={handleGuestToggle}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: isGuest ? accent : '#fff',
+                  padding: '12px 20px',
+                  width: '100%',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  fontFamily: 'inherit'
+                }}
+              >
+                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z" />
+                  <path d="M12 6v6l4 2" />
+                </svg>
+                {isGuest ? 'Exit Guest Mode' : 'Guest Mode'}
+                {isGuest && <span style={{ marginLeft: 'auto', fontSize: '12px', color: accent }}>● Active</span>}
+              </button>
               <a href="/login" onClick={(e) => handleNavClick(e, "/login")}>
                 <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>Login
               </a>

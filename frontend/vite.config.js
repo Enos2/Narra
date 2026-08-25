@@ -14,12 +14,5 @@ export default defineConfig({
       }
     }
   },
-  optimizeDeps: {
-    rolldownOptions: {
-      define: {
-        'global': 'globalThis'
-      }
-    }
-  },
   base: '/'
 })

@@ -2,6 +2,7 @@
  * File: backend/routes/liveRoutes.js
  * REBUILT FROM SCRATCH
  * All routes for live streaming — user, host, and admin
+ * ADDED: Guest middleware support for guest mode
  */
 
 const express = require('express');
@@ -36,15 +37,16 @@ const {
 } = require('../controllers/liveController');
 
 const { protect, requireRole } = require('../middleware/authMiddleware');
+const { guestAuth, guestRateLimiter } = require('../middleware/guestMiddleware');
 
 const ADMIN = ['superadmin', 'platformadmin', 'supportadmin'];
 
 // ─────────────────────────────────────────────
-// PUBLIC
+// PUBLIC - WITH GUEST SUPPORT
 // ─────────────────────────────────────────────
 
-// Live feed (public — no auth needed)
-router.get('/', getLiveFeed);
+// Live feed (public — guests can view)
+router.get('/', guestAuth, guestRateLimiter(60, 60000), getLiveFeed);
 
 // ─────────────────────────────────────────────
 // AUTHENTICATED USER ROUTES
@@ -85,14 +87,14 @@ router.post('/ban-streaming/:id', protect, requireRole(...ADMIN), banUserFromStr
 // SPECIFIC STREAM ROUTES  (/lives/:id/...)
 // ─────────────────────────────────────────────
 
-// Get stream status / details
-router.get('/:id', protect, getStreamStatus);
+// Get stream status / details - guests can view with rate limiting
+router.get('/:id', guestAuth, guestRateLimiter(30, 60000), getStreamStatus);
 
-// Join / start watching a stream
-router.post('/:id/join', protect, joinLive);
+// Join / start watching a stream - guests can join with rate limiting
+router.post('/:id/join', guestAuth, guestRateLimiter(20, 60000), joinLive);
 
-// Check access (paywall / age)
-router.get('/:id/access', protect, checkLiveAccess);
+// Check access (paywall / age) - guests can check with rate limiting
+router.get('/:id/access', guestAuth, guestRateLimiter(30, 60000), checkLiveAccess);
 
 // Purchase stream (no-op — all free)
 router.post('/:id/purchase', protect, purchaseLive);
@@ -103,8 +105,8 @@ router.post('/:id/start', protect, startStream);
 // Host: stop broadcasting
 router.post('/:id/stop', protect, stopStream);
 
-// Status alias
-router.get('/:id/status', protect, getStreamStatus);
+// Status alias - guests can view with rate limiting
+router.get('/:id/status', guestAuth, guestRateLimiter(30, 60000), getStreamStatus);
 
 // ─────────────────────────────────────────────
 // ADMIN STREAM MODERATION

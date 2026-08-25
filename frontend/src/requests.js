@@ -7,6 +7,8 @@
  * FIXED: API_BASE_URL now respects VITE_API_URL for local dev,
  *        falls back to production Render URL when not set (hosted site unaffected)
  * FIXED: getUserById now uses regular user endpoint instead of admin endpoint
+ * ADDED: Guest mode support with X-Guest-ID headers
+ * ADDED: getHeadersWithGuest helper function for guest authentication
  */
 
 // Use env var for local dev (e.g. http://localhost:5000), falls back to
@@ -88,6 +90,28 @@ function getAuthHeaders(token) {
     'Content-Type': 'application/json',
     'X-Requested-With': 'XMLHttpRequest'
   };
+}
+
+/**
+ * Get headers with guest support
+ * Adds X-Guest-ID header when in guest mode
+ */
+function getHeadersWithGuest(token, customHeaders = {}) {
+  const guestMode = localStorage.getItem('guestMode') === 'true';
+  const guestId = localStorage.getItem('guestId');
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    ...customHeaders
+  };
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  } else if (guestMode && guestId) {
+    headers['X-Guest-ID'] = guestId;
+  }
+  
+  return headers;
 }
 
 function isTokenValid(token) {
@@ -185,7 +209,7 @@ export async function updateUserProfile(token, profileData) {
 export async function getUserById(token, userId) {
   // Use regular user endpoint for profile viewing (not admin)
   const endpoint = `${API_BASE_URL}/api/users/${userId}`;
-  const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
   
   try {
     const res = await fetch(endpoint, { headers });
@@ -361,7 +385,7 @@ export async function getFollowSuggestions(token, limit = 10) {
 ====================================================== */
 
 export async function getVideos(token) {
-  const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
   const res = await fetch(`${API_BASE_URL}/api/videos`, { headers });
   if (!res.ok) return [];
   const data = await res.json();
@@ -374,7 +398,7 @@ export async function getVideos(token) {
 }
 
 export async function getVideoById(token, videoId) {
-  const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
   const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}`, { headers });
   if (!res.ok) return null;
   const data = await res.json();
@@ -389,7 +413,7 @@ export async function getVideoById(token, videoId) {
 
 export async function getRecommendedVideos(token, currentVideoId, limit = 10) {
   try {
-    const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+    const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
     let url = `${API_BASE_URL}/api/videos/recommended?limit=${limit}`;
     if (currentVideoId && typeof currentVideoId === 'string' && currentVideoId.length > 0) {
       url += `&exclude=${encodeURIComponent(currentVideoId)}`;
@@ -484,7 +508,7 @@ export async function updateVideoStatus(token, videoId, status, rejectionReason 
 }
 
 export async function checkVideoAccess(token, videoId) {
-  const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
   const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/access`, { headers });
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) return { success: false, hasAccess: false, requiresAuth: true };
@@ -504,7 +528,7 @@ export async function watchVideo(token, videoId, seasonNumber = null, episodeNum
   if (seasonNumber) params.append('seasonNumber', seasonNumber);
   if (episodeNumber) params.append('episodeNumber', episodeNumber);
   if (params.toString()) url += `?${params.toString()}`;
-  const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
   const res = await fetch(url, { headers });
   if (!res.ok) {
     if (res.status === 402) throw new Error('PAYMENT_REQUIRED');
@@ -687,7 +711,7 @@ export async function getPlaylistVideos(token, playlistId, page = 1, limit = 20)
 
 export async function trackShare(token, videoId, platform) {
   try {
-    const headers = token ? getAuthHeaders(token) : { 'Content-Type': 'application/json' };
+    const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
     const res = await fetch(`${API_BASE_URL}/api/videos/${videoId}/share`, {
       method: 'POST', headers, body: JSON.stringify({ platform }),
     });
@@ -1235,7 +1259,8 @@ export async function createLiveStream(token, liveData) {
 }
 
 export async function getLiveStreams(token) {
-  const res = await fetch(`${API_BASE_URL}/api/lives`, { headers: getAuthHeaders(token) });
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
+  const res = await fetch(`${API_BASE_URL}/api/lives`, { headers });
   if (!res.ok) return { success: false, lives: [] };
   const data = await res.json();
   if (data?.lives && Array.isArray(data.lives)) {
@@ -1250,7 +1275,8 @@ export async function joinLiveStream(token, liveId) {
 }
 
 export async function checkLiveAccess(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/access`, { headers: getAuthHeaders(token) });
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/access`, { headers });
   if (!res.ok) return { success: false, hasAccess: false };
   return await res.json();
 }
@@ -1266,7 +1292,8 @@ export async function stopLiveStream(token, liveId) {
 }
 
 export async function getLiveStreamStatus(token, liveId) {
-  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/status`, { headers: getAuthHeaders(token) });
+  const headers = token ? getAuthHeaders(token) : getHeadersWithGuest(token);
+  const res = await fetch(`${API_BASE_URL}/api/lives/${liveId}/status`, { headers });
   if (!res.ok) return { success: false, isLive: false };
   return await res.json();
 }

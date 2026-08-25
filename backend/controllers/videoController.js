@@ -5,6 +5,7 @@
  * UPDATED: Added user trash system with 30-day retention, restore limits (3x/90days), 10-day cooldown
  * UPDATED: Removed userPermanentDeleteVideo - users cannot permanently delete
  * ADDED: Trash system methods using Video schema methods
+ * ADDED: Guest mode support - guests can view free/public content with rate limiting
  */
 
 const Video = require('../models/Video');
@@ -399,7 +400,13 @@ const getVideoFeed = async (req, res) => {
       isShadowBanned: false
     };
 
-    if (!req.user) {
+    // Check if user is a guest (not authenticated and not a guest)
+    if (!req.user && !req.isGuest) {
+      // Completely unauthenticated users can only see free/public content
+      query.isPaid = false;
+      query.isPrivate = false;
+    } else if (req.isGuest) {
+      // Guest users can see free/public content with rate limiting
       query.isPaid = false;
       query.isPrivate = false;
     }
@@ -456,7 +463,7 @@ const getVideoFeed = async (req, res) => {
             epTotal + (ep.duration || 0), 0) || 0), 0) || 0 : 
         video.duration || 0,
       isAccessible: true,
-      requiresAuth: !req.user && video.isPaid,
+      requiresAuth: (!req.user && !req.isGuest) && video.isPaid,
       isFree: !video.isPaid
     }));
 
@@ -501,7 +508,11 @@ const getRecommendedVideos = async (req, res) => {
       query._id = { $ne: exclude };
     }
     
-    if (!req.user) {
+    // Check if user is a guest
+    if (!req.user && !req.isGuest) {
+      query.isPaid = false;
+      query.isPrivate = false;
+    } else if (req.isGuest) {
       query.isPaid = false;
       query.isPrivate = false;
     }
@@ -721,6 +732,7 @@ const trackShare = async (req, res) => {
     const { id } = req.params;
     const { platform } = req.body;
     const userId = req.user?._id;
+    const isGuestUser = req.isGuest;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ success: false, message: 'Invalid video ID format' });
@@ -740,14 +752,14 @@ const trackShare = async (req, res) => {
         details: { 
           title: video.title, 
           platform: platform || 'unknown',
-          sharedBy: userId || 'anonymous'
+          sharedBy: userId || (isGuestUser ? `guest_${req.guestId}` : 'anonymous')
         }
       });
     } catch (logErr) {
       console.error('Failed to log share:', logErr);
     }
 
-    console.log(`📤 Video shared: ${video.title} on ${platform || 'unknown'} by ${userId || 'anonymous'}`);
+    console.log(`📤 Video shared: ${video.title} on ${platform || 'unknown'} by ${userId || (isGuestUser ? `guest_${req.guestId}` : 'anonymous')}`);
 
     res.json({
       success: true,
@@ -1304,7 +1316,26 @@ const checkVideoAccess = async (req, res) => {
     if (!video || video.isDeleted || video.status !== 'released' || video.isShadowBanned)
       return res.status(404).json({ success: false, message: 'Video unavailable' });
 
-    if (!req.user) {
+    // Check guest access
+    if (!req.user && !req.isGuest) {
+      const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
+        (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
+      
+      return res.json({ 
+        success: true, 
+        hasAccess: isFreeAndPublic, 
+        price: video.isPaid ? video.price : 0,
+        isPaid: video.isPaid,
+        type: video.type,
+        isSeries: video.type === 'series',
+        totalSeasons: video.totalSeasons || 0,
+        totalEpisodes: video.totalEpisodes || 0,
+        status: video.status,
+        requiresAuth: !isFreeAndPublic,
+        message: isFreeAndPublic ? 'Free access' : 'Authentication required'
+      });
+    } else if (req.isGuest) {
+      // Guests can only access free/public content
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
       
@@ -1386,7 +1417,8 @@ const watchVideo = async (req, res) => {
     if (!video || video.isDeleted || video.status !== 'released' || video.isShadowBanned)
       return res.status(404).json({ success: false, message: 'Video unavailable' });
 
-    if (!req.user) {
+    // Check guest access
+    if (!req.user && !req.isGuest) {
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
       
@@ -1409,6 +1441,18 @@ const watchVideo = async (req, res) => {
           requiresAuth: true
         });
       }
+    } else if (req.isGuest) {
+      // Guests can only watch free/public content
+      if (video.isPaid || video.isPrivate) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required to watch this video',
+          requiresAuth: true
+        });
+      }
+      // Guest can watch free content
+      video.views += 1;
+      await video.save();
     }
 
     const userAge = req.user?.dateOfBirth ? new Date().getFullYear() - new Date(req.user.dateOfBirth).getFullYear() : null;
@@ -1663,162 +1707,6 @@ const editVideo = async (req, res) => {
 
 /**
  * --------------------------
- * ADMIN UPDATE VIDEO FLAGS
- * --------------------------
- */
-const adminUpdateVideoFlags = async (req, res) => {
-  try {
-    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
-      return res.status(403).json({ success: false, message: 'Not authorized' });
-
-    const { ageRating, contentFlags, genre } = req.body;
-    const video = await Video.findById(req.params.id);
-    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
-
-    if (ageRating) video.ageRating = ageRating;
-    if (genre) video.genre = genre;
-    if (contentFlags) video.contentFlags = { ...video.contentFlags, ...contentFlags };
-
-    await video.save();
-    res.json({ success: true, message: 'Video flags updated', video });
-  } catch (err) {
-    console.error('Admin update video flags error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update video flags', 
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
-    });
-  }
-};
-
-/**
- * --------------------------
- * UPDATE VIDEO STATUS (APPROVE / REJECT) - Legacy
- * --------------------------
- */
-const updateVideoStatus = async (req, res) => {
-  try {
-    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
-      return res.status(403).json({ success: false, message: 'Not authorized' });
-
-    const { status, rejectionReason, rejectionDetails } = req.body;
-    if (!['approved','rejected'].includes(status)) 
-      return res.status(400).json({ success: false, message: 'Invalid status' });
-
-    const video = await Video.findById(req.params.id);
-    if (!video) 
-      return res.status(404).json({ success: false, message: 'Video not found' });
-
-    video.approved = status === 'approved';
-    video.rejected = status === 'rejected';
-    video.status = status;
-    video.rejectionReason = status === 'rejected' ? rejectionReason || 'No reason provided' : '';
-    video.rejectionDetails = status === 'rejected' ? rejectionDetails || '' : '';
-    video.approvedBy = req.user._id;
-    video.approvedAt = status === 'approved' ? new Date() : null;
-    
-    video.publishedAt = null;
-    video.released = false;
-    video.releasedAt = null;
-    video.releasedBy = null;
-
-    await video.save();
-    
-    if (status === 'approved') {
-      await NotificationService.notifyVideoApproved(
-        video.creator,
-        video.title,
-        video._id,
-        req.user._id
-      );
-    } else if (status === 'rejected') {
-      await NotificationService.notifyVideoRejected(
-        video.creator,
-        video.title,
-        video._id,
-        rejectionReason || 'No reason provided'
-      );
-    }
-    
-    res.json({ 
-      success: true, 
-      message: `Video ${status}. Creator can now release it.`,
-      video 
-    });
-  } catch (err) {
-    console.error('Update video status error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update video status', 
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
-    });
-  }
-};
-
-/**
- * --------------------------
- * SHADOW BAN VIDEO
- * --------------------------
- */
-const shadowBanVideo = async (req, res) => {
-  try {
-    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
-      return res.status(403).json({ success: false, message: 'Not authorized' });
-
-    const video = await Video.findById(req.params.id);
-    if (!video) 
-      return res.status(404).json({ success: false, message: 'Video not found' });
-
-    video.isShadowBanned = true;
-    await video.save();
-
-    res.json({ 
-      success: true, 
-      message: 'Video shadow banned' 
-    });
-  } catch (err) {
-    console.error('Shadow ban video error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to shadow ban video', 
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
-    });
-  }
-};
-
-/**
- * --------------------------
- * DELETE VIDEO (Admin soft delete)
- * --------------------------
- */
-const deleteVideo = async (req, res) => {
-  try {
-    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
-      return res.status(403).json({ success: false, message: 'Not authorized' });
-
-    const video = await Video.findById(req.params.id);
-    if (!video) 
-      return res.status(404).json({ success: false, message: 'Video not found' });
-
-    video.isDeleted = true;
-    await video.save();
-
-    res.json({ 
-      success: true, 
-      message: 'Video deleted' 
-    });
-  } catch (err) {
-    console.error('Delete video error:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to delete video', 
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
-    });
-  }
-};
-
-/**
- * --------------------------
  * GET VIDEO BY ID
  * --------------------------
  */
@@ -1865,20 +1753,21 @@ const getVideoById = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Video unavailable' });
     }
 
-    if (!req.user && video.releaseOption === 'schedule' && video.scheduledReleaseDate) {
-      if (new Date() < video.scheduledReleaseDate) {
-        return res.status(403).json({ 
-          success: false, 
-          message: 'Video is scheduled for later release' 
-        });
-      }
-    }
-
-    if (!req.user) {
+    // Check guest access
+    if (!req.user && !req.isGuest) {
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
       
       if (!isFreeAndPublic) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required to view this video',
+          requiresAuth: true
+        });
+      }
+    } else if (req.isGuest) {
+      // Guests can only view free/public content
+      if (video.isPaid || video.isPrivate) {
         return res.status(401).json({ 
           success: false, 
           message: 'Authentication required to view this video',
@@ -1905,7 +1794,7 @@ const getVideoById = async (req, res) => {
       canEdit: isAdmin || isCreator,
       canDelete: isAdmin,
       canRelease: isCreator && video.status === 'approved',
-      requiresAuth: !req.user && (video.isPaid || video.isPrivate || video.status !== 'released')
+      requiresAuth: (!req.user && !req.isGuest) && (video.isPaid || video.isPrivate || video.status !== 'released')
     };
 
     res.json({ 
@@ -1952,12 +1841,22 @@ const getSeriesEpisode = async (req, res) => {
     const isAdmin = req.user && ['superadmin','platformadmin','supportadmin'].includes(req.user.role);
     const isCreator = req.user && video.creator._id.toString() === req.user._id.toString();
 
-    if (!req.user) {
+    // Check guest access
+    if (!req.user && !req.isGuest) {
       const isFreeAndPublic = !video.isPaid && !video.isPrivate && 
         video.status === 'released' && season.isPublished && episode.published &&
         (video.releaseOption !== 'schedule' || !video.scheduledReleaseDate || new Date() >= video.scheduledReleaseDate);
       
       if (!isFreeAndPublic) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required to view this episode',
+          requiresAuth: true
+        });
+      }
+    } else if (req.isGuest) {
+      // Guests can only view free/public content
+      if (video.isPaid || video.isPrivate || !season.isPublished || !episode.published) {
         return res.status(401).json({ 
           success: false, 
           message: 'Authentication required to view this episode',
@@ -1995,7 +1894,7 @@ const getSeriesEpisode = async (req, res) => {
         currentSeason: season,
         moderationStatus: video.status,
         releaseStatus: video.releaseStatus,
-        requiresAuth: !req.user && (video.isPaid || video.isPrivate)
+        requiresAuth: (!req.user && !req.isGuest) && (video.isPaid || video.isPrivate)
       }
     });
   } catch (err) {
@@ -2568,7 +2467,7 @@ const adminRemoveVideo = async (req, res) => {
 
 /**
  * --------------------------
- * ADMIN RESTORE VIDEO (undo soft delete)
+ * ADMIN RESTORE VIDEO
  * --------------------------
  */
 const adminRestoreVideo = async (req, res) => {
@@ -3150,7 +3049,6 @@ const adminRemoveShadowBan = async (req, res) => {
 
 /**
  * USER SOFT DELETE VIDEO (Move to Trash)
- * Sets 30-day expiry, checks cooldown period
  */
 const userSoftDeleteVideo = async (req, res) => {
   try {
@@ -3224,7 +3122,6 @@ const userSoftDeleteVideo = async (req, res) => {
 
 /**
  * USER RESTORE VIDEO (Restore from Trash)
- * Checks restore limits (max 3 in 90 days)
  */
 const userRestoreVideo = async (req, res) => {
   try {
@@ -3305,13 +3202,6 @@ const userRestoreVideo = async (req, res) => {
     });
   }
 };
-
-/**
- * USER PERMANENT DELETE VIDEO - REMOVED
- * Users cannot permanently delete videos directly.
- * Videos auto-delete after 30 days in trash, or when restore limit exceeded.
- * Admins can permanently delete from admin panel.
- */
 
 /**
  * ================================
@@ -3562,6 +3452,162 @@ const adminBulkDeleteTrashedVideos = async (req, res) => {
 
 /**
  * --------------------------
+ * ADMIN UPDATE VIDEO FLAGS (age rating, content flags)
+ * --------------------------
+ */
+const adminUpdateVideoFlags = async (req, res) => {
+  try {
+    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+
+    const { ageRating, contentFlags, genre } = req.body;
+    const video = await Video.findById(req.params.id);
+    if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
+
+    if (ageRating) video.ageRating = ageRating;
+    if (genre) video.genre = genre;
+    if (contentFlags) video.contentFlags = { ...video.contentFlags, ...contentFlags };
+
+    await video.save();
+    res.json({ success: true, message: 'Video flags updated', video });
+  } catch (err) {
+    console.error('Admin update video flags error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to update video flags', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
+  }
+};
+
+/**
+ * --------------------------
+ * UPDATE VIDEO STATUS (APPROVE / REJECT) - Legacy
+ * --------------------------
+ */
+const updateVideoStatus = async (req, res) => {
+  try {
+    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+
+    const { status, rejectionReason, rejectionDetails } = req.body;
+    if (!['approved','rejected'].includes(status)) 
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+
+    const video = await Video.findById(req.params.id);
+    if (!video) 
+      return res.status(404).json({ success: false, message: 'Video not found' });
+
+    video.approved = status === 'approved';
+    video.rejected = status === 'rejected';
+    video.status = status;
+    video.rejectionReason = status === 'rejected' ? rejectionReason || 'No reason provided' : '';
+    video.rejectionDetails = status === 'rejected' ? rejectionDetails || '' : '';
+    video.approvedBy = req.user._id;
+    video.approvedAt = status === 'approved' ? new Date() : null;
+    
+    video.publishedAt = null;
+    video.released = false;
+    video.releasedAt = null;
+    video.releasedBy = null;
+
+    await video.save();
+    
+    if (status === 'approved') {
+      await NotificationService.notifyVideoApproved(
+        video.creator,
+        video.title,
+        video._id,
+        req.user._id
+      );
+    } else if (status === 'rejected') {
+      await NotificationService.notifyVideoRejected(
+        video.creator,
+        video.title,
+        video._id,
+        rejectionReason || 'No reason provided'
+      );
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `Video ${status}. Creator can now release it.`,
+      video 
+    });
+  } catch (err) {
+    console.error('Update video status error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to update video status', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
+  }
+};
+
+/**
+ * --------------------------
+ * SHADOW BAN VIDEO (legacy)
+ * --------------------------
+ */
+const shadowBanVideo = async (req, res) => {
+  try {
+    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+
+    const video = await Video.findById(req.params.id);
+    if (!video) 
+      return res.status(404).json({ success: false, message: 'Video not found' });
+
+    video.isShadowBanned = true;
+    await video.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Video shadow banned' 
+    });
+  } catch (err) {
+    console.error('Shadow ban video error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to shadow ban video', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
+  }
+};
+
+/**
+ * --------------------------
+ * DELETE VIDEO (Admin soft delete - legacy)
+ * --------------------------
+ */
+const deleteVideo = async (req, res) => {
+  try {
+    if (!['superadmin','platformadmin','supportadmin'].includes(req.user.role))
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+
+    const video = await Video.findById(req.params.id);
+    if (!video) 
+      return res.status(404).json({ success: false, message: 'Video not found' });
+
+    video.isDeleted = true;
+    await video.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Video deleted' 
+    });
+  } catch (err) {
+    console.error('Delete video error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to delete video', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
+  }
+};
+
+/**
+ * --------------------------
  * EXPORT - UPDATED with all functions
  * --------------------------
  */
@@ -3627,7 +3673,3 @@ module.exports = {
   adminBulkRestoreTrashedVideos,
   adminBulkDeleteTrashedVideos
 };
-
-/**
- * END OF FILE: backend/controllers/videoController.js
- */

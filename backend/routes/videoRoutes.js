@@ -4,12 +4,14 @@
  * FULLY UPDATED: Added like/dislike, share tracking, and watch history routes
  * UPDATED: Added /recommended route before /:id to fix CastError
  * FIXED: Removed userPermanentDeleteVideo - users cannot permanently delete
+ * ADDED: Guest middleware support for guest mode
  */
 
 const express = require('express');
 const router = express.Router();
 const Video = require('../models/Video'); // Video model
 const { protect } = require('../middleware/authMiddleware');
+const { guestAuth, guestRateLimiter } = require('../middleware/guestMiddleware');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -72,30 +74,34 @@ const getSeriesFields = () => {
 };
 
 /* ================================
-   PUBLIC ROUTES (Limited access)
+   PUBLIC ROUTES (Limited access - with guest support)
 ================================ */
 
 // GET ALL VIDEOS (Public - Only RELEASED videos that are free/public)
-router.get('/', videoController.getVideoFeed);
+// Guest users can view videos with rate limiting
+router.get('/', guestAuth, guestRateLimiter(100, 60000), videoController.getVideoFeed);
 
 // GET RECOMMENDED VIDEOS - MUST be BEFORE the /:id route to avoid CastError
-router.get('/recommended', videoController.getRecommendedVideos);
+// Guest users can view recommendations with rate limiting
+router.get('/recommended', guestAuth, guestRateLimiter(50, 60000), videoController.getRecommendedVideos);
 
 // GET VIDEO BY ID (Public - But with access checks)
-router.get('/:id', videoController.getVideoById);
+// Guest users can view videos with rate limiting
+router.get('/:id', guestAuth, guestRateLimiter(30, 60000), videoController.getVideoById);
 
 // GET SERIES EPISODE (Public - But with access checks)
-router.get('/:videoId/seasons/:seasonNumber/episodes/:episodeNumber', videoController.getSeriesEpisode);
+// Guest users can view episodes with rate limiting
+router.get('/:videoId/seasons/:seasonNumber/episodes/:episodeNumber', guestAuth, guestRateLimiter(30, 60000), videoController.getSeriesEpisode);
 
 /* ================================
    PROTECTED ROUTES (Require Authentication)
 ================================ */
 
 // CHECK VIDEO ACCESS (requires login for paid/private videos)
-router.get('/:id/access', videoController.checkVideoAccess); // This now handles both auth and non-auth cases
+router.get('/:id/access', guestAuth, videoController.checkVideoAccess);
 
 // WATCH VIDEO (requires login for paid/private videos)
-router.get('/:id/watch', videoController.watchVideo); // This now handles both auth and non-auth cases
+router.get('/:id/watch', guestAuth, videoController.watchVideo);
 
 // PURCHASE VIDEO (requires login)
 router.post('/:id/purchase', protect, videoController.purchaseVideo);
@@ -108,6 +114,7 @@ router.put('/:id/edit', protect, videoController.editVideo);
 
 /* ================================
    🆕 NEW: LIKE / DISLIKE ROUTES
+   Guest users are blocked by protect middleware
 ================================ */
 
 // LIKE VIDEO (toggle like/unlike)
@@ -121,10 +128,11 @@ router.get('/:id/interaction-status', protect, videoController.getVideoInteracti
 
 /* ================================
    🆕 NEW: SHARE TRACKING ROUTE
+   Guests can share but with rate limiting
 ================================ */
 
 // TRACK VIDEO SHARE
-router.post('/:id/share', protect, videoController.trackShare);
+router.post('/:id/share', guestAuth, guestRateLimiter(20, 60000), videoController.trackShare);
 
 /* ================================
    🆕 NEW: WATCH HISTORY WITH RESUME

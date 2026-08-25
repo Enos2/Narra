@@ -1,6 +1,7 @@
 /**
  * FILE: frontend/src/App.jsx
  * Main App component with routing configuration
+ * ADDED: GuestProvider and GuestGuard for guest mode functionality
  * ADDED: AdminUserTrash route for managing deleted user videos
  * ADDED: AdminConversationDetail route for viewing individual conversations
  * ADDED: AdminUserProfileTest route for debugging
@@ -16,6 +17,8 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { MessageProvider } from "./context/MessageContext";
 import { AppProvider } from "./context/AppContext";
 import { AdminProvider } from "./context/AdminContext";
+import GuestProvider from "./context/GuestContext";
+import GuestGuard from "./components/GuestGuard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AuthGate from "./components/AuthGate";
 import Navbar from "./components/Navbar";
@@ -189,74 +192,106 @@ function App() {
           <AppProvider>
             <AdminProvider>
               <MessageProvider>
-                <AuthGate>
-                  <Suspense fallback={<div className="loading-screen">Loading...</div>}>
-                    <PageTitleUpdater />
-                    <Routes>
-                      {/* Admin Login - no layout - FIXED: changed to /admin-login */}
-                      <Route path="/admin-login" element={<AdminLogin />} />
-                      
-                      {/* Admin Routes - with AdminLayout */}
-                      <Route path="/admin" element={
-                        <ProtectedRoute requireAdmin>
-                          <AdminLayout />
-                        </ProtectedRoute>
-                      }>
-                        <Route index element={<Navigate to="dashboard" replace />} />
-                        <Route path="dashboard" element={<AdminDashboardRouter />} />
-                        <Route path="super-admin" element={<SuperAdminDashboard />} />
-                        <Route path="platform-admin" element={<PlatformAdminDashboard />} />
-                        <Route path="support-admin" element={<SupportAdminDashboard />} />
-                        <Route path="video-approvals" element={<AdminVideoApprovals />} />
-                        <Route path="video-approvals/:id" element={<AdminVideoDetails />} />
-                        <Route path="video-moderation" element={<VideoModeration />} />
-                        <Route path="video-moderation/:id" element={<AdminVideoDetails />} />
-                        <Route path="user-trash" element={<AdminUserTrash />} />
-                        <Route path="admins" element={<AdminList />} />
-                        <Route path="admins/create" element={<CreateAdmin />} />
-                        <Route path="admins/inactive" element={<InactiveAdmins />} />
-                        <Route path="admin-details/:id" element={<AdminDetails />} />
-                        <Route path="users" element={<UserList />} />
-                        <Route path="users/:id" element={<AdminUserProfile />} />
-                        {/* TEST ROUTE - Remove after debugging */}
-                        <Route path="users-test/:id" element={<AdminUserProfileTest />} />
-                        <Route path="profile" element={<AdminProfile />} />
-                        <Route path="chat" element={<AdminChat />} />
-                        <Route path="messages" element={<AdminMessageCenter />} />
-                        <Route path="messages/:type/:convId" element={<AdminConversationDetail />} />
-                        <Route path="audit-logs" element={<AdminAuditLogs />} />
-                        <Route path="campaigns" element={<CampaignManagement />} />
-                        <Route path="campaigns/create" element={<CampaignCreate />} />
-                        <Route path="campaigns/:id/edit" element={<CampaignEdit />} />
-                        <Route path="campaigns/:id/analytics" element={<CampaignAnalytics />} />
-                        <Route path="live-approvals" element={<AdminLiveApprovals />} />
-                        <Route path="message-moderation" element={<MessageModeration />} />
-                        <Route path="*" element={<Navigate to="dashboard" replace />} />
-                      </Route>
-                      
-                      {/* Public Routes - with Navbar */}
-                      <Route path="/" element={<><Navbar /><Outlet /></>}>
-                        <Route index element={<Home />} />
-                        <Route path="login" element={<Login />} />
-                        <Route path="register" element={<Register />} />
-                        <Route path="forgot-password" element={<ForgotPassword />} />
-                        <Route path="reset-password/:token" element={<ResetPassword />} />
-                        <Route path="video/:id" element={<VideoDetails />} />
-                        <Route path="profile/:userId?" element={<Profile />} />
-                        <Route path="hub" element={<Hub />} />
-                        <Route path="dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                        <Route path="upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
-                        <Route path="account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
-                        <Route path="messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
-                        <Route path="messages/:conversationId" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
-                        <Route path="notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-                        <Route path="live" element={<ProtectedRoute><LiveStream /></ProtectedRoute>} />
-                        <Route path="live/:id" element={<LiveWatch />} />
-                        <Route path="*" element={<Navigate to="/" replace />} />
-                      </Route>
-                    </Routes>
-                  </Suspense>
-                </AuthGate>
+                <GuestProvider>
+                  <AuthGate>
+                    <Suspense fallback={<div className="loading-screen">Loading...</div>}>
+                      <PageTitleUpdater />
+                      <Routes>
+                        {/* Admin Login - no layout - FIXED: changed to /admin-login */}
+                        <Route path="/admin-login" element={<AdminLogin />} />
+                        
+                        {/* Admin Routes - with AdminLayout */}
+                        <Route path="/admin" element={
+                          <ProtectedRoute requireAdmin>
+                            <AdminLayout />
+                          </ProtectedRoute>
+                        }>
+                          <Route index element={<Navigate to="dashboard" replace />} />
+                          <Route path="dashboard" element={<AdminDashboardRouter />} />
+                          <Route path="super-admin" element={<SuperAdminDashboard />} />
+                          <Route path="platform-admin" element={<PlatformAdminDashboard />} />
+                          <Route path="support-admin" element={<SupportAdminDashboard />} />
+                          <Route path="video-approvals" element={<AdminVideoApprovals />} />
+                          <Route path="video-approvals/:id" element={<AdminVideoDetails />} />
+                          <Route path="video-moderation" element={<VideoModeration />} />
+                          <Route path="video-moderation/:id" element={<AdminVideoDetails />} />
+                          <Route path="user-trash" element={<AdminUserTrash />} />
+                          <Route path="admins" element={<AdminList />} />
+                          <Route path="admins/create" element={<CreateAdmin />} />
+                          <Route path="admins/inactive" element={<InactiveAdmins />} />
+                          <Route path="admin-details/:id" element={<AdminDetails />} />
+                          <Route path="users" element={<UserList />} />
+                          <Route path="users/:id" element={<AdminUserProfile />} />
+                          {/* TEST ROUTE - Remove after debugging */}
+                          <Route path="users-test/:id" element={<AdminUserProfileTest />} />
+                          <Route path="profile" element={<AdminProfile />} />
+                          <Route path="chat" element={<AdminChat />} />
+                          <Route path="messages" element={<AdminMessageCenter />} />
+                          <Route path="messages/:type/:convId" element={<AdminConversationDetail />} />
+                          <Route path="audit-logs" element={<AdminAuditLogs />} />
+                          <Route path="campaigns" element={<CampaignManagement />} />
+                          <Route path="campaigns/create" element={<CampaignCreate />} />
+                          <Route path="campaigns/:id/edit" element={<CampaignEdit />} />
+                          <Route path="campaigns/:id/analytics" element={<CampaignAnalytics />} />
+                          <Route path="live-approvals" element={<AdminLiveApprovals />} />
+                          <Route path="message-moderation" element={<MessageModeration />} />
+                          <Route path="*" element={<Navigate to="dashboard" replace />} />
+                        </Route>
+                        
+                        {/* Public Routes - with Navbar */}
+                        <Route path="/" element={<><Navbar /><Outlet /></>}>
+                          <Route index element={<Home />} />
+                          <Route path="login" element={<Login />} />
+                          <Route path="register" element={<Register />} />
+                          <Route path="forgot-password" element={<ForgotPassword />} />
+                          <Route path="reset-password/:token" element={<ResetPassword />} />
+                          <Route path="video/:id" element={<VideoDetails />} />
+                          <Route path="profile/:userId?" element={<Profile />} />
+                          <Route path="hub" element={<Hub />} />
+                          
+                          {/* Protected Routes - Require Authentication (Guests cannot access) */}
+                          <Route path="dashboard" element={
+                            <GuestGuard requireAuth={true} action="dashboard">
+                              <ProtectedRoute><Dashboard /></ProtectedRoute>
+                            </GuestGuard>
+                          } />
+                          <Route path="upload" element={
+                            <GuestGuard requireAuth={true} action="upload">
+                              <ProtectedRoute><Upload /></ProtectedRoute>
+                            </GuestGuard>
+                          } />
+                          <Route path="account" element={
+                            <GuestGuard requireAuth={true} action="account">
+                              <ProtectedRoute><Account /></ProtectedRoute>
+                            </GuestGuard>
+                          } />
+                          <Route path="messages" element={
+                            <GuestGuard requireAuth={true} action="messages">
+                              <ProtectedRoute><Messages /></ProtectedRoute>
+                            </GuestGuard>
+                          } />
+                          <Route path="messages/:conversationId" element={
+                            <GuestGuard requireAuth={true} action="messages">
+                              <ProtectedRoute><Messages /></ProtectedRoute>
+                            </GuestGuard>
+                          } />
+                          <Route path="notifications" element={
+                            <GuestGuard requireAuth={true} action="notifications">
+                              <ProtectedRoute><Notifications /></ProtectedRoute>
+                            </GuestGuard>
+                          } />
+                          <Route path="live" element={
+                            <GuestGuard requireAuth={true} action="live">
+                              <ProtectedRoute><LiveStream /></ProtectedRoute>
+                            </GuestGuard>
+                          } />
+                          <Route path="live/:id" element={<LiveWatch />} />
+                          <Route path="*" element={<Navigate to="/" replace />} />
+                        </Route>
+                      </Routes>
+                    </Suspense>
+                  </AuthGate>
+                </GuestProvider>
               </MessageProvider>
             </AdminProvider>
           </AppProvider>
