@@ -10,7 +10,8 @@ import { useMessages } from "../../context/MessageContext";
 import { getAdStats } from "../../requests";
 import "./SupportAdminDashboard.css";
 
-const SUPPORT_LOGO = "/src/assets/Admin/Support-admin.png";
+import supportAdminLogo from "../../assets/Admin/Support-admin.png";
+// Then use: src={supportAdminLogo}
 
 // ── Animated SVG background — organic vine network ───────────────────────────
 function SupportBg() {

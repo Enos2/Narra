@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable no-unused-vars */
 // FILE: frontend/src/pages/admin/PlatformAdminDashboard.jsx
@@ -10,7 +11,8 @@ import { useMessages } from "../../context/MessageContext";
 import { getAdStats } from "../../requests";
 import "./PlatformAdminDashboard.css";
 
-const PLATFORM_LOGO = "/src/assets/Admin/Platform-admin.png";
+import platformAdminLogo from "../../assets/Admin/Platform-admin.png";
+// Then use: src={platformAdminLogo}
 
 // ── Animated SVG background — electric circuit traces ────────────────────────
 function PlatformBg() {
@@ -186,6 +188,7 @@ export default function PlatformAdminDashboard() {
       {/* ── Header ── */}
       <header className="pd-header">
         <div className="pd-header__logo-wrap">
+          // eslint-disable-next-line no-undef
           <img src={PLATFORM_LOGO} alt="Platform Admin" className="pd-header__logo" />
           <div className="pd-header__logo-ring" />
         </div>

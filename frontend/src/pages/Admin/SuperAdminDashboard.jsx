@@ -12,7 +12,8 @@ import {
   getAdmins, getInactiveAdmins, getRecentAuditLogs, getAdStats
 } from "../../requests.js";
 
-const ADMIN_LOGO = "/src/assets/Admin/Super-admin.png";
+import superAdminLogo from "../../assets/Admin/Super-admin.png";
+// Then use: src={superAdminLogo}
 
 // ── Animated SVG background — radiating sovereign crown geometry ──────────────
 function SuperBg() {
