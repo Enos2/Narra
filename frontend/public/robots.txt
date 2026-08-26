@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /admin/*
+Disallow: /dashboard/*
+Disallow: /account/*
+Disallow: /messages/*
+Disallow: /notifications/*
+Disallow: /api/*
+
+Sitemap: https://narrasea.onrender.com/sitemap.xml
