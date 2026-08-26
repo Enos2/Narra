@@ -113,6 +113,9 @@ function Navbar() {
     closeAll();
   };
 
+  // Check if user is logged in OR in guest mode
+  const canAccessProtected = user || isGuest;
+
   return (
     <nav ref={navbarRef} className={`navbar ${scrolled ? 'scrolled' : ''}`}>
       {/* Logo - uses a tag for new tab support */}
@@ -129,33 +132,41 @@ function Navbar() {
           <span className="link-text" style={isActive("/") ? { color: accent } : {}}>Home</span>
           <span className="link-indicator" style={isActive("/") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
         </a>
-        {user && (
-          <>
-            <a
-              href="/upload"
-              className={`nav-link ${isActive("/upload") ? "active" : ""}`}
-              onClick={(e) => handleNavClick(e, "/upload")}
-            >
-              <span className="link-text" style={isActive("/upload") ? { color: accent } : {}}>Upload</span>
-              <span className="link-indicator" style={isActive("/upload") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
-            </a>
-            <a
-              href="/live"
-              className={`nav-link ${isActive("/live") ? "active" : ""}`}
-              onClick={(e) => handleNavClick(e, "/live")}
-            >
-              <span className="link-text" style={isActive("/live") ? { color: accent } : {}}>Live Stream</span>
-              <span className="link-indicator" style={isActive("/live") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
-            </a>
-            <a
-              href="/dashboard"
-              className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}
-              onClick={(e) => handleNavClick(e, "/dashboard")}
-            >
-              <span className="link-text" style={isActive("/dashboard") ? { color: accent } : {}}>Dashboard</span>
-              <span className="link-indicator" style={isActive("/dashboard") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
-            </a>
-          </>
+        
+        {/* Show Upload to logged-in users AND guests */}
+        {canAccessProtected && (
+          <a
+            href="/upload"
+            className={`nav-link ${isActive("/upload") ? "active" : ""}`}
+            onClick={(e) => handleNavClick(e, "/upload")}
+          >
+            <span className="link-text" style={isActive("/upload") ? { color: accent } : {}}>Upload</span>
+            <span className="link-indicator" style={isActive("/upload") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
+          </a>
+        )}
+        
+        {/* Show Live Stream to logged-in users AND guests */}
+        {canAccessProtected && (
+          <a
+            href="/live"
+            className={`nav-link ${isActive("/live") ? "active" : ""}`}
+            onClick={(e) => handleNavClick(e, "/live")}
+          >
+            <span className="link-text" style={isActive("/live") ? { color: accent } : {}}>Live Stream</span>
+            <span className="link-indicator" style={isActive("/live") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
+          </a>
+        )}
+        
+        {/* Show Dashboard to logged-in users AND guests */}
+        {canAccessProtected && (
+          <a
+            href="/dashboard"
+            className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}
+            onClick={(e) => handleNavClick(e, "/dashboard")}
+          >
+            <span className="link-text" style={isActive("/dashboard") ? { color: accent } : {}}>Dashboard</span>
+            <span className="link-indicator" style={isActive("/dashboard") ? { background: `linear-gradient(90deg, transparent, ${accent}, ${theme.accentLight || accent}, ${accent}, transparent)`, transform: 'translateX(-50%) scaleX(1)' } : {}} />
+          </a>
         )}
       </div>
 
@@ -185,7 +196,6 @@ function Navbar() {
                 e.target.style.background = isGuest ? `rgba(${accentRgb}, 0.15)` : 'transparent';
               }}
             >
-              <span style={{ marginRight: '4px' }}>👤</span>
               {isGuest ? 'Exit Guest' : 'Guest Mode'}
             </button>
 
@@ -283,7 +293,7 @@ function Navbar() {
             border: `1px solid rgba(${accentRgb}, 0.2)`,
             marginRight: '12px'
           }}>
-            <span>👤</span> Guest
+            Guest
           </span>
         )}
 
@@ -327,7 +337,6 @@ function Navbar() {
             alignItems: 'center',
             gap: '10px'
           }}>
-            <span style={{ fontSize: '20px' }}>👤</span>
             <span style={{ 
               background: `rgba(${accentRgb}, 0.12)`,
               color: accent,
@@ -347,17 +356,29 @@ function Navbar() {
             <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>Home
           </a>
           
+          {/* Show Upload to logged-in users AND guests */}
+          {canAccessProtected && (
+            <a href="/upload" onClick={(e) => handleNavClick(e, "/upload")}>
+              <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>Upload
+            </a>
+          )}
+          
+          {/* Show Live Stream to logged-in users AND guests */}
+          {canAccessProtected && (
+            <a href="/live" onClick={(e) => handleNavClick(e, "/live")}>
+              <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="2" /><path d="M12 6a6 6 0 0 0-6 6" /><path d="M12 2a10 10 0 0 0-10 10" /><path d="M12 22a10 10 0 0 0 10-10" /></svg>Live Stream
+            </a>
+          )}
+          
+          {/* Show Dashboard to logged-in users AND guests */}
+          {canAccessProtected && (
+            <a href="/dashboard" onClick={(e) => handleNavClick(e, "/dashboard")}>
+              <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="9" /><rect x="14" y="3" width="7" height="5" /><rect x="14" y="12" width="7" height="9" /><rect x="3" y="16" width="7" height="5" /></svg>Dashboard
+            </a>
+          )}
+          
           {user && (
             <>
-              <a href="/upload" onClick={(e) => handleNavClick(e, "/upload")}>
-                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>Upload
-              </a>
-              <a href="/live" onClick={(e) => handleNavClick(e, "/live")}>
-                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="2" /><path d="M12 6a6 6 0 0 0-6 6" /><path d="M12 2a10 10 0 0 0-10 10" /><path d="M12 22a10 10 0 0 0 10-10" /></svg>Live Stream
-              </a>
-              <a href="/dashboard" onClick={(e) => handleNavClick(e, "/dashboard")}>
-                <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="9" /><rect x="14" y="3" width="7" height="5" /><rect x="14" y="12" width="7" height="9" /><rect x="3" y="16" width="7" height="5" /></svg>Dashboard
-              </a>
               <a href="/messages" onClick={(e) => handleNavClick(e, "/messages")} className="mobile-messages-link">
                 <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                 Messages
@@ -393,7 +414,7 @@ function Navbar() {
                   <path d="M12 6v6l4 2" />
                 </svg>
                 {isGuest ? 'Exit Guest Mode' : 'Guest Mode'}
-                {isGuest && <span style={{ marginLeft: 'auto', fontSize: '12px', color: accent }}>● Active</span>}
+                {isGuest && <span style={{ marginLeft: 'auto', fontSize: '12px', color: accent }}>Active</span>}
               </button>
               <a href="/login" onClick={(e) => handleNavClick(e, "/login")}>
                 <svg className="mobile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>Login

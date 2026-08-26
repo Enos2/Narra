@@ -9,6 +9,7 @@
  * FIXED: Admin login route changed to /admin-login
  * ADDED: Dynamic page titles based on current route
  * FIXED: Added /messages/:conversationId route so opening a conversation doesn't fall through to the catch-all redirect
+ * FIXED: Guests can now view Upload and Live Stream pages but see restricted message when interacting
  */
 
 import React, { Suspense, lazy, useEffect } from "react";
@@ -249,22 +250,38 @@ function App() {
                           <Route path="profile/:userId?" element={<Profile />} />
                           <Route path="hub" element={<Hub />} />
                           
-                          {/* Protected Routes - Require Authentication (Guests cannot access) */}
+                          {/* Upload - Guests can VIEW the page but actions are restricted */}
+                          <Route path="upload" element={
+                            <GuestGuard requireAuth={false} action="upload">
+                              <Upload />
+                            </GuestGuard>
+                          } />
+                          
+                          {/* Live Stream - Guests can VIEW the page but actions are restricted */}
+                          <Route path="live" element={
+                            <GuestGuard requireAuth={false} action="live">
+                              <LiveStream />
+                            </GuestGuard>
+                          } />
+                          
+                          {/* Live Watch - Guests can watch live streams */}
+                          <Route path="live/:id" element={<LiveWatch />} />
+                          
+                          {/* Dashboard - Guests cannot access at all */}
                           <Route path="dashboard" element={
                             <GuestGuard requireAuth={true} action="dashboard">
                               <ProtectedRoute><Dashboard /></ProtectedRoute>
                             </GuestGuard>
                           } />
-                          <Route path="upload" element={
-                            <GuestGuard requireAuth={true} action="upload">
-                              <ProtectedRoute><Upload /></ProtectedRoute>
-                            </GuestGuard>
-                          } />
+                          
+                          {/* Account - Guests cannot access at all */}
                           <Route path="account" element={
                             <GuestGuard requireAuth={true} action="account">
                               <ProtectedRoute><Account /></ProtectedRoute>
                             </GuestGuard>
                           } />
+                          
+                          {/* Messages - Guests cannot access at all */}
                           <Route path="messages" element={
                             <GuestGuard requireAuth={true} action="messages">
                               <ProtectedRoute><Messages /></ProtectedRoute>
@@ -275,17 +292,14 @@ function App() {
                               <ProtectedRoute><Messages /></ProtectedRoute>
                             </GuestGuard>
                           } />
+                          
+                          {/* Notifications - Guests cannot access at all */}
                           <Route path="notifications" element={
                             <GuestGuard requireAuth={true} action="notifications">
                               <ProtectedRoute><Notifications /></ProtectedRoute>
                             </GuestGuard>
                           } />
-                          <Route path="live" element={
-                            <GuestGuard requireAuth={true} action="live">
-                              <ProtectedRoute><LiveStream /></ProtectedRoute>
-                            </GuestGuard>
-                          } />
-                          <Route path="live/:id" element={<LiveWatch />} />
+                          
                           <Route path="*" element={<Navigate to="/" replace />} />
                         </Route>
                       </Routes>

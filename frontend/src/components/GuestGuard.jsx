@@ -2,10 +2,11 @@
 /**
  * GuestGuard.jsx
  * Protects routes based on guest/authenticated status
- * Shows appropriate messages for restricted actions
+ * FIXED: Shows the actual page content (with design) but adds an overlay for restricted actions
+ * REMOVED: All emojis
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGuest } from '../context/GuestContext';
 import { useAppContext } from '../context/AppContext';
@@ -14,15 +15,20 @@ const GuestGuard = ({
   children, 
   requireAuth = false, 
   requireGuest = false,
-  showMessage = true,
-  fallback = null,
-  action = null // For specific actions like 'like', 'comment', 'upload'
+  action = null,
+  showOverlay = true
 }) => {
   const { isGuest } = useGuest();
   const { isAuthReady, user, token } = useAppContext();
   const navigate = useNavigate();
+  const [showRestrictedOverlay, setShowRestrictedOverlay] = useState(false);
 
-  // If auth is still loading, show nothing or a loader
+  useEffect(() => {
+    if (isAuthReady && requireGuest && token && user) {
+      navigate('/');
+    }
+  }, [isAuthReady, requireGuest, token, user, navigate]);
+
   if (!isAuthReady) {
     return (
       <div className="guest-guard-loading" style={{
@@ -39,11 +45,14 @@ const GuestGuard = ({
 
   const isAuthenticated = !!token && !!user;
 
-  // If route requires authentication and user is a guest
+  // If the route is for guests only and user is authenticated, redirect
+  if (requireGuest && isAuthenticated) {
+    navigate('/');
+    return null;
+  }
+
+  // If requireAuth is true and user is a guest, show the page with overlay
   if (requireAuth && isGuest) {
-    if (fallback) return fallback;
-    
-    // Specific action messages
     const actionMessages = {
       like: 'Sign in to like this video',
       comment: 'Sign in to comment',
@@ -60,95 +69,138 @@ const GuestGuard = ({
       playlist: 'Sign in to create playlists',
     };
 
-    const message = action ? actionMessages[action] : 'Please sign in to access this feature';
+    const message = action ? actionMessages[action] : 'Sign in to access this feature';
 
     return (
-      <div className="guest-restricted" style={{
-        textAlign: 'center',
-        padding: '60px 20px',
-        maxWidth: '500px',
-        margin: '40px auto',
-        background: 'rgba(255,255,255,0.03)',
-        borderRadius: '12px',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
-      }}>
-        <div style={{
-          fontSize: '48px',
-          marginBottom: '16px',
-          display: 'block'
+      <div style={{ position: 'relative', width: '100%', minHeight: '100vh' }}>
+        {/* The actual page content - rendered with blur and reduced opacity */}
+        <div style={{ 
+          opacity: 0.25, 
+          pointerEvents: 'none',
+          filter: 'blur(6px)',
+          userSelect: 'none',
+          transition: 'all 0.3s ease'
         }}>
-          🔒
+          {children}
         </div>
-        <h2 style={{
-          marginBottom: '12px',
-          color: '#fff',
-          fontSize: '22px',
-          fontWeight: '600'
-        }}>
-          Authentication Required
-        </h2>
-        <p style={{
-          color: '#999',
-          marginBottom: '24px',
-          fontSize: '14px',
-          lineHeight: '1.6'
-        }}>
-          {message}
-        </p>
+        
+        {/* Overlay with sign-in prompt - centered on top */}
         <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
           display: 'flex',
-          gap: '12px',
+          alignItems: 'center',
           justifyContent: 'center',
-          flexWrap: 'wrap'
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          zIndex: 999,
+          padding: '20px',
+          minHeight: '100vh'
         }}>
-          <button
-            onClick={() => navigate('/login')}
-            style={{
-              padding: '10px 28px',
-              border: 'none',
-              borderRadius: '6px',
-              background: 'linear-gradient(135deg, #cc5500, #e67300)',
+          <div style={{
+            textAlign: 'center',
+            maxWidth: '440px',
+            width: '100%',
+            background: 'rgba(20, 20, 20, 0.95)',
+            borderRadius: '16px',
+            padding: '48px 40px',
+            border: '1px solid rgba(204, 85, 0, 0.2)',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8)',
+          }}>
+            <div style={{
+              marginBottom: '20px',
+              display: 'flex',
+              justifyContent: 'center'
+            }}>
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#cc5500" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <h2 style={{
               color: '#fff',
+              fontSize: '24px',
               fontWeight: '600',
-              cursor: 'pointer',
+              marginBottom: '8px',
+              fontFamily: 'Inter, system-ui, sans-serif'
+            }}>
+              Authentication Required
+            </h2>
+            <p style={{
+              color: '#999',
               fontSize: '14px',
-              transition: 'transform 0.2s ease'
-            }}
-            onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-          >
-            Sign In
-          </button>
-          <button
-            onClick={() => navigate('/register')}
-            style={{
-              padding: '10px 28px',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: '6px',
-              background: 'transparent',
-              color: '#fff',
-              fontWeight: '600',
-              cursor: 'pointer',
-              fontSize: '14px',
-              transition: 'transform 0.2s ease'
-            }}
-            onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
-            onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-          >
-            Create Account
-          </button>
+              lineHeight: '1.6',
+              marginBottom: '28px',
+              fontFamily: 'Inter, system-ui, sans-serif'
+            }}>
+              {message}
+            </p>
+            <div style={{
+              display: 'flex',
+              gap: '12px',
+              justifyContent: 'center',
+              flexWrap: 'wrap'
+            }}>
+              <button
+                onClick={() => navigate('/login')}
+                style={{
+                  padding: '12px 32px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  background: 'linear-gradient(135deg, #cc5500, #e67300)',
+                  color: '#fff',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                  fontFamily: 'Inter, system-ui, sans-serif'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.transform = 'scale(1.05)';
+                  e.target.style.boxShadow = '0 4px 20px rgba(204, 85, 0, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.transform = 'scale(1)';
+                  e.target.style.boxShadow = 'none';
+                }}
+              >
+                Sign In
+              </button>
+              <button
+                onClick={() => navigate('/register')}
+                style={{
+                  padding: '12px 32px',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: '8px',
+                  background: 'transparent',
+                  color: '#fff',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  transition: 'transform 0.2s ease, background 0.2s ease',
+                  fontFamily: 'Inter, system-ui, sans-serif'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.transform = 'scale(1.05)';
+                  e.target.style.background = 'rgba(255,255,255,0.05)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.transform = 'scale(1)';
+                  e.target.style.background = 'transparent';
+                }}
+              >
+                Create Account
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  // If route is for guests only and user is authenticated
-  if (requireGuest && isAuthenticated) {
-    navigate('/');
-    return null;
-  }
-
+  // If user is authenticated or no restrictions, render children normally
   return children;
 };
 
