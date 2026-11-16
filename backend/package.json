@@ -79,5 +79,8 @@
     "port": 5000,
     "rtmp_port": 1935,
     "hls_port": 8000
+  },
+  "allowScripts": {
+    "ffmpeg-static@5.3.0": true
   }
 }
