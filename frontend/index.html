@@ -1,106 +1,118 @@
+
+<!--
+  File: frontend/index.html
+  Purpose: NarraSea frontend entry point, SEO metadata, PWA compatibility,
+  social sharing metadata, and application bootstrap.
+-->
+
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    
-    <!-- Favicon - using your existing logo -->
+
+    <!-- Favicon -->
     <link rel="icon" type="image/png" href="/favicon.png" />
-    
+
+    <!-- Viewport and theme -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#000000" />
-    
-    <!-- ============================================================
-         GOOGLE SITE VERIFICATION - META TAG (FIXED)
-         ============================================================ -->
-    <meta name="google-site-verification" content="google81b6e917c5a6d091" />
 
-    <!-- ============================================================
-         PRIMARY SEO TITLE
-         ============================================================ -->
+    <!-- Progressive Web App compatibility -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Google Site Verification -->
+    <meta
+      name="google-site-verification"
+      content="google81b6e917c5a6d091"
+    />
+
+    <!-- Primary SEO -->
     <title>NarraSea - Premium Video Streaming Platform | Watch &amp; Upload Videos</title>
-    
-    <!-- ============================================================
-         META DESCRIPTION
-         ============================================================ -->
-    <meta name="description" content="NarraSea is the ultimate video streaming platform. Watch trending videos, live streams, and upload your own content. Join the NarraSea community today for free!" />
-    
-    <!-- ============================================================
-         KEYWORDS
-         ============================================================ -->
-    <meta name="keywords" content="NarraSea, Narrasea, video streaming, watch videos, upload videos, live streaming, pay-per-view, video platform, content creators, online video, streaming service" />
-    
-    <!-- ============================================================
-         AUTHOR & ROBOTS
-         ============================================================ -->
+
+    <meta
+      name="description"
+      content="NarraSea is the ultimate video streaming platform. Watch trending videos, live streams, and upload your own content. Join the NarraSea community today for free!"
+    />
+
+    <meta
+      name="keywords"
+      content="NarraSea, Narrasea, video streaming, watch videos, upload videos, live streaming, pay-per-view, video platform, content creators, online video, streaming service"
+    />
+
+    <!-- Author and Robots -->
     <meta name="author" content="NarraSea Team" />
     <meta name="robots" content="index, follow" />
     <meta name="googlebot" content="index, follow" />
-    
-    <!-- ============================================================
-         CANONICAL URL
-         ============================================================ -->
+
+    <!-- Canonical URL -->
     <link rel="canonical" href="https://narrasea.onrender.com" />
-    
-    <!-- ============================================================
-         OPEN GRAPH (For Facebook, LinkedIn, etc.)
-         ============================================================ -->
+
+    <!-- Open Graph -->
     <meta property="og:title" content="NarraSea - Premium Video Streaming Platform" />
-    <meta property="og:description" content="Watch trending videos, live streams, and upload your own content on NarraSea." />
+    <meta
+      property="og:description"
+      content="Watch trending videos, live streams, and upload your own content on NarraSea."
+    />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://narrasea.onrender.com" />
-    <meta property="og:image" content="https://narrasea.onrender.com/narra-og-image.png" />
+    <meta
+      property="og:image"
+      content="https://narrasea.onrender.com/narra-og-image.png"
+    />
     <meta property="og:site_name" content="NarraSea" />
     <meta property="og:locale" content="en_US" />
-    
-    <!-- ============================================================
-         TWITTER CARDS
-         ============================================================ -->
+
+    <!-- Twitter Cards -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="NarraSea - Premium Video Streaming Platform" />
-    <meta name="twitter:description" content="Watch trending videos, live streams, and upload your own content on NarraSea." />
-    <meta name="twitter:image" content="https://narrasea.onrender.com/narra-og-image.png" />
+    <meta
+      name="twitter:description"
+      content="Watch trending videos, live streams, and upload your own content on NarraSea."
+    />
+    <meta
+      name="twitter:image"
+      content="https://narrasea.onrender.com/narra-og-image.png"
+    />
     <meta name="twitter:site" content="@NarraSea" />
-    
-    <!-- ============================================================
-         ADDITIONAL SEO META TAGS
-         ============================================================ -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    
-    <!-- ============================================================
-         STRUCTURED DATA (JSON-LD)
-         ============================================================ -->
+
+    <!-- Structured Data -->
     <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "WebApplication",
-      "name": "NarraSea",
-      "description": "Premium video streaming platform for creators and viewers.",
-      "url": "https://narrasea.onrender.com",
-      "applicationCategory": "Video Streaming",
-      "operatingSystem": "All",
-      "browserRequirements": "Requires modern browser with JavaScript enabled",
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD"
-      },
-      "author": {
-        "@type": "Organization",
-        "name": "NarraSea Team"
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "NarraSea",
+        "description": "Premium video streaming platform for creators and viewers.",
+        "url": "https://narrasea.onrender.com",
+        "applicationCategory": "Video Streaming",
+        "operatingSystem": "All",
+        "browserRequirements": "Requires modern browser with JavaScript enabled",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Organization",
+          "name": "NarraSea Team"
+        }
       }
-    }
     </script>
-    
-    <!-- ============================================================
-         FALLBACK TITLE (for browsers that don't support JS)
-         ============================================================ -->
+
+    <!-- Fallback for browsers without JavaScript -->
     <noscript>
-      <meta name="description" content="NarraSea - Premium Video Streaming Platform. Watch and upload videos for free." />
+      <meta
+        name="description"
+        content="NarraSea - Premium Video Streaming Platform. Watch and upload videos for free."
+      />
     </noscript>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
+
+<!-- END OF FILE: frontend/index.html -->
