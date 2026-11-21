@@ -1,24 +1,40 @@
 /**
- * server.js — Narra Backend
- * UPDATED: Full Socket.IO live streaming rooms + chat integration
- * FIXED: HLS static file serving for live streams on Windows
- * FIXED: HLS served BEFORE any auth middleware (public access)
- * FIXED: MongoDB connection with correct env variable
- * FIXED: Socket.IO admin auth - checks User model first then Admin model
- * ADDED: Cron job for automatic cleanup of expired trashed videos (30-day retention)
- * FIXED: Render deployment - added 0.0.0.0 binding and error handling
- * FIXED: CORS - allow multiple origins (narrasea.onrender.com, narraplay.onrender.com)
+ * File: backend/server.js
+ * Purpose: Narra API entry point — Express app, security middleware, HLS
+ *   delivery, static uploads, MongoDB connection, routes, cron, Socket.IO and
+ *   the RTMP streaming server.
+ *
+ * SECURITY CHANGES IN THIS VERSION
+ *   - helmet security headers (cross-origin resource policy relaxed so the
+ *     separate frontend can load images / video from this API).
+ *   - `trust proxy` configured so IP-based rate limiting sees real client IPs.
+ *   - Global API rate limit + strict limits on login, admin login, register and
+ *     password reset (middleware/rateLimiters.js).
+ *   - JSON body limit 10 MB → 1 MB; NoSQL-operator / prototype-pollution keys
+ *     stripped from bodies (middleware/sanitizeInput.js).
+ *   - HLS route only serves  /live/<token>/index.m3u8  and  segment_NNN.ts;
+ *     no directory access, no dotfiles, no per-request IP logging.
+ *   - /media removed (it exposed the whole media directory); /uploads gets
+ *     dotfile denial, a sandboxing CSP and the shared CORS policy.
+ *   - Socket.IO moved to socket/socketServer.js (authorisation on every event).
+ *   - CORS allow-list is shared by REST and WebSocket and can be extended with
+ *     ALLOWED_ORIGINS=a,b,c.
+ *   - Startup refuses to run without JWT_SECRET (and warns if it is weak). In
+ *     production the server exits if MongoDB cannot be reached, and shuts down
+ *     gracefully (stops live encoders) on SIGTERM / SIGINT.
+ *   - The per-request HLS log line (which recorded viewer IPs) was removed.
  */
 
-const express    = require('express');
-const mongoose   = require('mongoose');
-const cors       = require('cors');
-const path       = require('path');
-const http       = require('http');
-const socketIO   = require('socket.io');
-const jwt        = require('jsonwebtoken');
-const fs         = require('fs');
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const helmet = require('helmet');
+const path = require('path');
+const http = require('http');
+const fs = require('fs');
 require('dotenv').config();
+
+const isProduction = process.env.NODE_ENV === 'production';
 
 // Import cron for scheduled tasks (optional - runs if installed)
 let cron;
@@ -29,301 +45,90 @@ try {
   console.warn('   To enable automatic cleanup, run: npm install node-cron');
 }
 
-const User  = require('./models/User');
-const Admin = require('./models/Admin');
+if (!process.env.JWT_SECRET) {
+  console.error('❌ JWT_SECRET is not set — authentication cannot work. Add it to your environment.');
+  process.exit(1);
+}
+if (process.env.JWT_SECRET.length < 32) {
+  // Warn only: exiting here could take down an existing deployment.
+  console.warn('⚠️  JWT_SECRET is shorter than 32 characters — replace it with a long random value.');
+}
 
 // Routes
-const authRoutes              = require('./routes/authRoutes');
-const videoRoutes             = require('./routes/videoRoutes');
-const liveRoutes              = require('./routes/liveRoutes');
-const userRoutes              = require('./routes/userRoutes');
-const adminRoutes             = require('./routes/adminRoutes');
+const authRoutes = require('./routes/authRoutes');
+const videoRoutes = require('./routes/videoRoutes');
+const liveRoutes = require('./routes/liveRoutes');
+const userRoutes = require('./routes/userRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const liveQualificationRoutes = require('./routes/liveQualificationRoutes');
-const messageRoutes           = require('./routes/messageRoutes');
-const uploadRoutes            = require('./routes/uploadRoutes');
-const promotionRoutes         = require('./routes/promotionRoutes');
-const searchRoutes            = require('./routes/searchRoutes');
-const historyRoutes           = require('./routes/historyRoutes');
-const playlistRoutes          = require('./routes/playlistRoutes');
-const commentRoutes           = require('./routes/commentRoutes');
-const notificationRoutes      = require('./routes/notificationRoutes');
+const messageRoutes = require('./routes/messageRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
+const promotionRoutes = require('./routes/promotionRoutes');
+const searchRoutes = require('./routes/searchRoutes');
+const historyRoutes = require('./routes/historyRoutes');
+const playlistRoutes = require('./routes/playlistRoutes');
+const commentRoutes = require('./routes/commentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const errorHandler = require('./middleware/errorMiddleware');
+const sanitizeInput = require('./middleware/sanitizeInput');
+const {
+  apiLimiter,
+  loginLimiter,
+  adminLoginLimiter,
+  registerLimiter,
+  passwordLimiter,
+} = require('./middleware/rateLimiters');
+const { createSocketServer } = require('./socket/socketServer');
 
-const app    = express();
+const app = express();
 const server = http.createServer(app);
 
 // ─────────────────────────────────────────────
-// SOCKET.IO
+// PROXY + BASIC HARDENING
 // ─────────────────────────────────────────────
-const io = socketIO(server, {
-  cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-    credentials: true,
-    methods: ['GET', 'POST'],
+
+// Behind Render / a reverse proxy, req.ip must come from X-Forwarded-For or
+// every client would share one rate-limit bucket. Override with TRUST_PROXY.
+const parseTrustProxy = (value) => {
+  if (value === undefined || value === '') return isProduction ? 1 : false;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  const n = Number(value);
+  return Number.isInteger(n) ? n : value;
+};
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
+app.disable('x-powered-by');
+
+// ─────────────────────────────────────────────
+// CORS ORIGINS (shared by REST and WebSocket)
+// ─────────────────────────────────────────────
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'https://narrasea.onrender.com',
+  'https://narraplay.onrender.com',
+  ...(process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()),
+].filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // No Origin header = mobile apps, curl, <img>/<video> tags
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    console.warn(`CORS blocked origin: ${origin}`);
+    return callback(new Error('Not allowed by CORS'));
   },
-  transports: ['websocket', 'polling'],
-});
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with', 'Range', 'x-guest-id'],
+  exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
+};
 
+// ─────────────────────────────────────────────
+// SOCKET.IO (all event authorisation lives in socket/socketServer.js)
+// ─────────────────────────────────────────────
+const io = createSocketServer(server, { allowedOrigins });
 app.set('io', io);
-
-// ─── Socket Auth Middleware (FIXED - checks User model first) ───
-io.use(async (socket, next) => {
-  try {
-    const token = socket.handshake.auth?.token;
-    if (!token) return next(new Error('No token provided'));
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch {
-      return next(new Error('Invalid token'));
-    }
-
-    const normalizedRole = (decoded.role || '').toLowerCase().replace(/_/g, '');
-    const adminRoles = ['superadmin', 'platformadmin', 'supportadmin'];
-
-    if (adminRoles.includes(normalizedRole)) {
-      // FIXED: Check User model FIRST (where admins are stored)
-      let admin = await User.findById(decoded.id).select('-password').lean();
-      
-      // If not found in User, try Admin model as fallback
-      if (!admin) {
-        admin = await Admin.findById(decoded.id).select('-password').lean();
-      }
-      
-      if (!admin) {
-        console.error(`[Socket] Admin not found for ID: ${decoded.id}`);
-        return next(new Error('Admin not found'));
-      }
-      
-      // Check if admin account is active
-      if (admin.status === 'inactive' || admin.isDeactivated === true) {
-        return next(new Error('Admin account inactive'));
-      }
-
-      socket.actor = {
-        id:    admin._id,
-        model: 'Admin',
-        role:  admin.role,
-        name:  admin.fullName || admin.username || admin.name || admin.email,
-        avatar: admin.avatar || null,
-      };
-      
-      console.log(`[Socket] Admin authenticated: ${socket.actor.name} (${socket.actor.role})`);
-    } else {
-      // Regular user
-      const user = await User.findById(decoded.id).select('-password').lean();
-      if (!user) {
-        console.error(`[Socket] User not found for ID: ${decoded.id}`);
-        return next(new Error('User not found'));
-      }
-      
-      if (user.isBanned) {
-        return next(new Error('Account banned'));
-      }
-
-      if ((user.tokenVersion || 0) !== (decoded.tokenVersion || 0)) {
-        return next(new Error('Session expired'));
-      }
-
-      socket.actor = {
-        id:     user._id,
-        model:  'User',
-        role:   user.role,
-        name:   user.username || user.firstName || 'Viewer',
-        avatar: user.avatar || null,
-      };
-    }
-
-    next();
-  } catch (err) {
-    console.error('Socket auth error:', err.message);
-    next(new Error('Authentication failed'));
-  }
-});
-
-// ─── Socket Connection Handler ────────────────
-io.on('connection', (socket) => {
-  const { actor } = socket;
-  console.log(`[Socket] Connected: ${actor.model} "${actor.name}" (${actor.id})`);
-
-  // Personal notification room
-  const personalRoom = `${actor.model === 'Admin' ? 'admin' : 'user'}:${actor.id}`;
-  socket.join(personalRoom);
-
-  // ── MESSAGING ─────────────────────────────────
-  socket.on('subscribe-conversations', async (conversationIds) => {
-    if (!Array.isArray(conversationIds)) return;
-    const Conversation = require('./models/Conversation');
-    for (const convId of conversationIds) {
-      try {
-        const conv = await Conversation.findById(convId).lean();
-        if (!conv) continue;
-        const isMember = conv.participants.some(
-          (p) => p.participantId.toString() === actor.id.toString()
-        );
-        if (isMember) socket.join(`conversation:${convId}`);
-      } catch { /* skip */ }
-    }
-  });
-
-  socket.on('typing', ({ conversationId, isTyping }) => {
-    socket.to(`conversation:${conversationId}`).emit('typing', {
-      senderId: actor.id, senderName: actor.name, conversationId, isTyping,
-    });
-  });
-
-  socket.on('mark-read', async ({ conversationId }) => {
-    try {
-      const Message      = require('./models/Message');
-      const Conversation = require('./models/Conversation');
-
-      await Message.updateMany(
-        { conversationId, senderId: { $ne: actor.id }, 'readBy.readerId': { $ne: actor.id }, isDeleted: false },
-        { $push: { readBy: { readerId: actor.id, readerModel: actor.model, readAt: new Date() } } }
-      );
-
-      const conv = await Conversation.findById(conversationId);
-      if (conv) { conv.clearUnread(actor.id); await conv.save(); }
-
-      socket.to(`conversation:${conversationId}`).emit('messages-read', {
-        conversationId, readerId: actor.id, readerModel: actor.model, readAt: new Date(),
-      });
-    } catch (err) {
-      console.error('Socket mark-read error:', err.message);
-    }
-  });
-
-  // ── LIVE STREAMING ROOMS ──────────────────────
-
-  /**
-   * Join a live stream room
-   * Client sends: { liveId }
-   */
-  socket.on('live:join', async ({ liveId }) => {
-    if (!liveId) return;
-    const room = `live:${liveId}`;
-    socket.join(room);
-    console.log(`[Socket] ${actor.name} joined live room: ${liveId}`);
-
-    // Let everyone in the room know someone joined
-    socket.to(room).emit('live:viewer:joined', {
-      userId: actor.id,
-      name: actor.name,
-      avatar: actor.avatar,
-    });
-
-    // Acknowledge to sender
-    socket.emit('live:joined', { liveId, room });
-  });
-
-  /**
-   * Leave a live stream room
-   * Client sends: { liveId }
-   */
-  socket.on('live:leave', ({ liveId }) => {
-    if (!liveId) return;
-    const room = `live:${liveId}`;
-    socket.leave(room);
-    socket.to(room).emit('live:viewer:left', {
-      userId: actor.id,
-      name: actor.name,
-    });
-    console.log(`[Socket] ${actor.name} left live room: ${liveId}`);
-  });
-
-  /**
-   * Send a live chat message
-   * Client sends: { liveId, text }
-   * Broadcasts to entire room
-   */
-  socket.on('live:chat', async ({ liveId, text }) => {
-    if (!liveId || !text || !text.trim()) return;
-
-    // Sanitize text — strip HTML, limit length
-    const sanitized = String(text).replace(/<[^>]*>/g, '').substring(0, 300).trim();
-    if (!sanitized) return;
-
-    // Check if user is shadow banned (don't send but don't tell them)
-    if (actor.model === 'User') {
-      try {
-        const user = await User.findById(actor.id).select('isShadowBanned restrictions').lean();
-        if (user?.isShadowBanned || user?.restrictions?.comment) {
-          // Echo back to sender only (ghost mode)
-          socket.emit('live:chat:message', {
-            id: Date.now().toString(),
-            liveId,
-            userId: actor.id,
-            name: actor.name,
-            avatar: actor.avatar,
-            text: sanitized,
-            sentAt: new Date(),
-            isOwn: true,
-          });
-          return;
-        }
-      } catch { /* allow through */ }
-    }
-
-    const msg = {
-      id: `${actor.id}-${Date.now()}`,
-      liveId,
-      userId: actor.id,
-      name: actor.name,
-      avatar: actor.avatar,
-      role: actor.role,
-      text: sanitized,
-      sentAt: new Date(),
-    };
-
-    // Broadcast to everyone in the room including sender
-    io.to(`live:${liveId}`).emit('live:chat:message', msg);
-  });
-
-  /**
-   * Admin: delete a chat message
-   * Client sends: { liveId, messageId }
-   */
-  socket.on('live:chat:delete', ({ liveId, messageId }) => {
-    const adminRoles = ['superadmin', 'platformadmin', 'supportadmin'];
-    if (!adminRoles.includes(actor.role)) return;
-    io.to(`live:${liveId}`).emit('live:chat:deleted', { messageId });
-  });
-
-  /**
-   * Host heartbeat — keeps stream "live" flag accurate
-   * Client sends: { liveId }
-   */
-  socket.on('live:heartbeat', ({ liveId }) => {
-    socket.to(`live:${liveId}`).emit('live:heartbeat', { liveId, ts: Date.now() });
-  });
-
-  /**
-   * WebRTC signaling for browser-based streaming
-   * Client sends: { liveId, offer, targetId }
-   */
-  socket.on('webrtc:offer', ({ liveId, offer, targetId }) => {
-    if (targetId) {
-      io.to(targetId).emit('webrtc:offer', { offer, from: socket.id, liveId });
-    } else {
-      socket.to(`live:${liveId}`).emit('webrtc:offer', { offer, from: socket.id, liveId });
-    }
-  });
-
-  socket.on('webrtc:answer', ({ answer, to }) => {
-    io.to(to).emit('webrtc:answer', { answer, from: socket.id });
-  });
-
-  socket.on('webrtc:ice-candidate', ({ candidate, to }) => {
-    io.to(to).emit('webrtc:ice-candidate', { candidate, from: socket.id });
-  });
-
-  // ── DISCONNECT ────────────────────────────────
-  socket.on('disconnect', (reason) => {
-    console.log(`[Socket] Disconnected: ${actor.model} "${actor.name}" — ${reason}`);
-  });
-});
 
 // Attach io to messageController
 const messageController = require('./controllers/messageController');
@@ -337,112 +142,97 @@ try {
   if (typeof streamingServer.setSocketIO === 'function') {
     streamingServer.setSocketIO(io);
   }
-} catch { /* streaming server optional */ }
+} catch {
+  /* streaming server optional */
+}
 
 // ─────────────────────────────────────────────
-// CORS + BODY PARSING - FIXED: Allow multiple origins
+// SECURITY HEADERS
 // ─────────────────────────────────────────────
-
-// Allow multiple origins
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:5173',
-  'https://narrasea.onrender.com',
-  'https://narraplay.onrender.com'
-].filter(Boolean);
-
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with', 'Range'],
-  exposedHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges'],
-}));
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(
+  helmet({
+    // The frontend lives on another origin and loads images / video from here.
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 
 // ─────────────────────────────────────────────
-// STATIC FILES - HLS MUST BE FIRST (BEFORE ANY AUTH)
+// HLS  (public, BEFORE cors / body parsing / auth / limiters)
+// Only  /live/<token>/index.m3u8  and  /live/<token>/segment_NNN.ts  exist.
+// <token> is a random playbackId (viewers) — see streaming-server.js.
 // ─────────────────────────────────────────────
-
-// CRITICAL: Serve HLS files FIRST with NO authentication requirements
 const liveMediaPath = path.resolve(__dirname, 'media', 'live');
-console.log(`[Server] HLS files directory: ${liveMediaPath}`);
-console.log(`[Server] Directory exists: ${fs.existsSync(liveMediaPath)}`);
-
-// Create directory if it doesn't exist
 if (!fs.existsSync(liveMediaPath)) {
   fs.mkdirSync(liveMediaPath, { recursive: true });
   console.log(`[Server] Created HLS directory: ${liveMediaPath}`);
 }
 
-// Serve HLS files - PUBLIC access, no auth middleware should run before this
-app.use('/live', (req, res, next) => {
-  console.log(`[HLS Request] ${req.method} ${req.url} - IP: ${req.ip}`);
-  
-  // Set CORS headers for public access
+const HLS_TOKEN_RE = /^[a-f0-9]{32,64}$/;
+const HLS_FILE_RE = /^(index\.m3u8|segment_\d{3,}\.ts)$/;
+
+const hlsHeaders = (_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Content-Length, Content-Range, Accept-Ranges');
   res.setHeader('Cache-Control', 'no-cache, private');
   res.setHeader('Accept-Ranges', 'bytes');
-  
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
   next();
-}, express.static(liveMediaPath, {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.m3u8')) {
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-    } else if (filePath.endsWith('.ts')) {
-      res.setHeader('Content-Type', 'video/mp2t');
+};
+
+app.options('/live/:token/:file', hlsHeaders, (_req, res) => res.sendStatus(204));
+
+app.get('/live/:token/:file', hlsHeaders, (req, res) => {
+  const { token, file } = req.params;
+  if (!HLS_TOKEN_RE.test(token) || !HLS_FILE_RE.test(file)) return res.sendStatus(404);
+
+  res.setHeader(
+    'Content-Type',
+    file.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t'
+  );
+
+  res.sendFile(
+    file,
+    { root: path.join(liveMediaPath, token), dotfiles: 'deny', cacheControl: false },
+    (err) => {
+      if (err && !res.headersSent) res.sendStatus(404);
     }
+  );
+});
+
+// ─────────────────────────────────────────────
+// CORS + BODY PARSING
+// ─────────────────────────────────────────────
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(sanitizeInput);
+
+// ─────────────────────────────────────────────
+// STATIC UPLOADS
+// ─────────────────────────────────────────────
+app.use(
+  '/uploads',
+  cors(corsOptions),
+  (req, res, next) => {
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    // If a hostile HTML/SVG file ever lands here, forbid it from running script.
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    next();
   },
-  // Allow serving files even if they're being written
-  fallthrough: true
-}));
+  express.static(path.join(__dirname, 'uploads'), {
+    dotfiles: 'deny',
+    index: false,
+    redirect: false,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.mp4')) res.setHeader('Content-Type', 'video/mp4');
+    },
+  })
+);
 
 // ─────────────────────────────────────────────
-// OTHER STATIC FILES
-// ─────────────────────────────────────────────
-app.use('/uploads', (req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:5173');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
-  res.setHeader('Accept-Ranges', 'bytes');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-}, express.static(path.join(__dirname, 'uploads'), {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.mp4')) {
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Accept-Ranges', 'bytes');
-    }
-  },
-}));
-
-// Also serve media root for compatibility
-app.use('/media', (req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cache-Control', 'no-cache');
-  next();
-}, express.static(path.join(__dirname, 'media')));
-
-// ─────────────────────────────────────────────
-// DATABASE - FIXED: Use MONGODB_URI from .env
+// DATABASE
 // ─────────────────────────────────────────────
 const mongoURI = process.env.MONGODB_URI || process.env.MONGO_URI;
 
@@ -452,7 +242,7 @@ if (!mongoURI) {
   process.exit(1);
 }
 
-console.log(`[MongoDB] Connecting to database...`);
+console.log('[MongoDB] Connecting to database...');
 
 mongoose
   .connect(mongoURI, {
@@ -465,8 +255,7 @@ mongoose
     if (process.env.ENABLE_STREAMING !== 'false') {
       try {
         const startStreaming = require('./streaming-server');
-        const streamingServer = startStreaming();
-        // Pass io after start
+        startStreaming();
         if (typeof startStreaming.setSocketIO === 'function') {
           startStreaming.setSocketIO(io);
         }
@@ -476,87 +265,91 @@ mongoose
       }
     }
   })
-  .catch((err) => { 
+  .catch((err) => {
     console.error('❌ MongoDB connection error:', err.message);
     console.error('   Please check your internet connection and MongoDB Atlas settings');
-    console.error('   The server will continue running but database features will not work');
-    // Don't exit - let server run without DB for testing
+    if (isProduction) {
+      console.error('   Exiting: the API cannot run without its database in production.');
+      process.exit(1);
+    }
+    console.error('   Development mode: the server will keep running without database features.');
   });
 
 // ─────────────────────────────────────────────
 // HEALTH
 // ─────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
-  const dbState = mongoose.connection.readyState;
-  const dbStatus = {
-    0: 'disconnected',
-    1: 'connected',
-    2: 'connecting',
-    3: 'disconnecting'
-  };
-  res.json({ 
-    success: true, 
-    status: 'healthy', 
-    timestamp: new Date(), 
+  const dbStatus = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  res.json({
+    success: true,
+    status: 'healthy',
+    timestamp: new Date(),
     streaming: process.env.ENABLE_STREAMING !== 'false',
-    database: dbStatus[dbState] || 'unknown'
+    database: dbStatus[mongoose.connection.readyState] || 'unknown',
   });
 });
 
 // ─────────────────────────────────────────────
+// RATE LIMITING
+// ─────────────────────────────────────────────
+app.use('/api', apiLimiter);
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/admin/login', adminLoginLimiter);
+app.use('/api/auth/register', registerLimiter);
+app.use('/api/auth/password', passwordLimiter);
+
+// ─────────────────────────────────────────────
 // ROUTES
 // ─────────────────────────────────────────────
-app.use('/api/auth',              authRoutes);
-app.use('/api/videos',            videoRoutes);
-app.use('/api/lives',             liveRoutes);
-app.use('/api/users',             userRoutes);
-app.use('/api/admin',             adminRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/videos', videoRoutes);
+app.use('/api/lives', liveRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/live-qualification', liveQualificationRoutes);
-app.use('/api/messages',          messageRoutes);
-app.use('/api/uploads',           uploadRoutes);
-app.use('/api/promotions',        promotionRoutes);
-app.use('/api/ads',               promotionRoutes);   // backward compat
-app.use('/api/search',            searchRoutes);
-app.use('/api/history',           historyRoutes);
-app.use('/api/playlists',         playlistRoutes);
-app.use('/api/comments',          commentRoutes);
-app.use('/api/notifications',     notificationRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/uploads', uploadRoutes);
+app.use('/api/promotions', promotionRoutes);
+app.use('/api/ads', promotionRoutes); // backward compat
+app.use('/api/search', searchRoutes);
+app.use('/api/history', historyRoutes);
+app.use('/api/playlists', playlistRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
 app.use(errorHandler);
 
 // =====================================================
-// CRON JOB: Daily cleanup of expired trashed videos
-// Runs every day at 2:00 AM
+// CRON JOB: Daily cleanup of expired trashed videos (2:00 AM UTC)
 // =====================================================
 if (cron) {
   const cleanupTrash = require('./scripts/cleanupTrash');
-  
-  // Schedule cleanup job - runs at 2:00 AM every day
-  cron.schedule('0 2 * * *', async () => {
-    console.log('🕐 Running scheduled trash cleanup...');
-    try {
-      await cleanupTrash();
-      console.log('✅ Trash cleanup completed successfully');
-    } catch (err) {
-      console.error('❌ Trash cleanup failed:', err.message);
-    }
-  }, {
-    timezone: "UTC"
-  });
-  
+
+  cron.schedule(
+    '0 2 * * *',
+    async () => {
+      console.log('🕐 Running scheduled trash cleanup...');
+      try {
+        await cleanupTrash();
+        console.log('✅ Trash cleanup completed successfully');
+      } catch (err) {
+        console.error('❌ Trash cleanup failed:', err.message);
+      }
+    },
+    { timezone: 'UTC' }
+  );
+
   console.log('✅ Trash cleanup cron job scheduled (daily at 2:00 AM UTC)');
 } else {
   console.log('⚠️ Cron job not scheduled - node-cron not installed');
-  console.log('   To enable automatic cleanup of expired videos, run: npm install node-cron');
 }
 
 // ─────────────────────────────────────────────
-// START - FIXED FOR RENDER DEPLOYMENT
+// START
 // ─────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
-// Add error handling for the server
 server.on('error', (err) => {
   console.error('❌ Server error:', err);
   process.exit(1);
@@ -566,14 +359,39 @@ server.on('error', (err) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 Narra API  →  http://0.0.0.0:${PORT}`);
   console.log(`🔌 WebSocket  →  ws://0.0.0.0:${PORT}`);
-  console.log(`📺 HLS Media  →  http://0.0.0.0:${PORT}/live`);
+  console.log(`📺 HLS Media  →  http://0.0.0.0:${PORT}/live/<playbackId>/index.m3u8`);
   console.log(`📡 RTMP       →  rtmp://localhost:1935/live\n`);
 });
 
-// Handle uncaught errors gracefully
+// ─────────────────────────────────────────────
+// GRACEFUL SHUTDOWN (Render sends SIGTERM on every deploy)
+// ─────────────────────────────────────────────
+let shuttingDown = false;
+const shutdown = (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n${signal} received — shutting down gracefully...`);
+
+  // Stop every live encoder so FFmpeg processes are not orphaned.
+  try {
+    const streamingServer = require('./streaming-server');
+    for (const key of [...streamingServer.activeStreams.keys()]) streamingServer.forceStop(key);
+  } catch {
+    /* streaming server not running */
+  }
+
+  io.close();
+  server.close(() => {
+    mongoose.connection.close(false).finally(() => process.exit(0));
+  });
+
+  setTimeout(() => process.exit(1), 10000).unref(); // hard stop if something hangs
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
-  // Don't exit immediately - give the server a chance to log
   setTimeout(() => process.exit(1), 1000);
 });
 
@@ -581,6 +399,4 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-/**
- * END OF FILE: backend/server.js
- */
+// ═══ END OF FILE: backend/server.js ═══

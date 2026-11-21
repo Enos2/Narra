@@ -1,5 +1,29 @@
-// File: backend/models/Live.js
+/**
+ * File: backend/models/Live.js
+ * Purpose: Mongoose model for a live stream.
+ *
+ * SECURITY CHANGES
+ *   - `streamKey` (secret RTMP ingest key), `rtmpUrl` and `streamUrl` are now
+ *     `select: false`. No query returns them unless the code explicitly asks
+ *     with `.select('+streamKey')`. Every admin/list/populate query that was
+ *     leaking them is therefore safe without further changes.
+ *   - New public `playbackId` is the ONLY token used in HLS URLs, so viewers
+ *     never learn the ingest key.
+ *   - toJSON/toObject strip the secret fields as a second line of defence.
+ *
+ * NOTE: all streams are intentionally free (isPaid is forced false below).
+ */
+
 const mongoose = require('mongoose');
+
+// Defence in depth: even if a document that has secrets selected is serialised
+// by mistake, they are removed from the output.
+const stripSecrets = (_doc, ret) => {
+  delete ret.streamKey;
+  delete ret.rtmpUrl;
+  delete ret.streamUrl;
+  return ret;
+};
 
 const LiveSchema = new mongoose.Schema(
   {
@@ -86,15 +110,28 @@ const LiveSchema = new mongoose.Schema(
 
     isDeleted: { type: Boolean, default: false },
 
-    streamKey: { type: String, default: '' },
-    rtmpUrl: { type: String, default: '' },
-    streamUrl: { type: String, default: '' },
+    // ── Stream credentials ────────────────────────────────────────────────
+    // PUBLIC: the only token that appears in HLS URLs. Generated explicitly in
+    // the controller (no schema default, so legacy documents never get a
+    // different random value on every load).
+    playbackId: { type: String, unique: true, sparse: true },
+
+    // SECRET: hidden from every query unless explicitly selected with '+'.
+    streamKey: { type: String, default: '', select: false, index: true },
+    rtmpUrl: { type: String, default: '', select: false },
+    streamUrl: { type: String, default: '', select: false },
+
+    // Public playback URL (derived from playbackId; safe to expose).
     hlsUrl: { type: String, default: '' },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { transform: stripSecrets },
+    toObject: { transform: stripSecrets },
+  }
 );
 
-// ✅ FIXED MIDDLEWARE (NO next, NO crash)
+// Sync hook (no `next`) — Mongoose 8 safe.
 LiveSchema.pre('save', function () {
   // Prevent conflicting monetization types
   if (this.isSponsored && this.isFundraiser) {
@@ -105,10 +142,12 @@ LiveSchema.pre('save', function () {
   this.isPaid = false;
   this.price = 0;
 
-  // Auto-fill streamUrl from rtmpUrl if missing
+  // Auto-fill streamUrl from rtmpUrl if missing (only when both are loaded)
   if (this.rtmpUrl && !this.streamUrl) {
     this.streamUrl = this.rtmpUrl;
   }
 });
 
 module.exports = mongoose.model('Live', LiveSchema);
+
+// ═══ END OF FILE: backend/models/Live.js ═══

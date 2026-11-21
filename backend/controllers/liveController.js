@@ -1,38 +1,207 @@
 /**
  * File: backend/controllers/liveController.js
- * REBUILT FROM SCRATCH
- * Supports: OBS/RTMP, browser streaming, live chat via Socket.IO,
- * qualification checks, admin privilege control, strikes, free streams only
- * FIXED: hlsUrl always uses /live/<streamKey>/index.m3u8 format
- * FIXED: getStreamStatus returns hlsUrl regardless of status so frontend can poll correctly
- * FIXED: streamKey now returned to ALL authenticated viewers when stream is live
- * FIXED: buildHlsUrl uses port 5000 (matches server.js static file serving)
+ * Purpose: All live-streaming endpoints — qualification, create, public feed,
+ *   status / join / access, host start / stop / rotate-key, and admin moderation.
+ *
+ * SECURITY CHANGES IN THIS VERSION
+ *   - The secret RTMP stream key is returned ONLY to the host (create, status,
+ *     join, start, rotate, my-lives). The public feed, viewers, admins and the
+ *     Socket.IO events now receive the public `playbackId` instead.
+ *   - Responses are built from a whitelist (serializeLive), never `...live`.
+ *   - Public routes work for guests AND logged-in users (optionalAuth).
+ *   - Age-rating and regional blocks are enforced when joining.
+ *   - Hidden streams (shadow-banned / removed / rejected / unapproved) are 404
+ *     for everyone except the host and admins.
+ *   - Admin "end", delete, ban and reject now actually cut the RTMP publisher
+ *     and FFmpeg/HLS output (previously only a database flag changed).
+ *   - Input validation + creation rate limit on createLive; regex-escaped and
+ *     capped admin search; ObjectId checks; strict boolean for privileges.
+ *   - NEW: POST /lives/:id/rotate-key lets a host replace a leaked key.
  */
 
 const Live = require('../models/Live');
 const User = require('../models/User');
 const Video = require('../models/Video');
-const crypto = require('crypto');
-const mongoose = require('mongoose');
 const NotificationService = require('../services/notificationService');
 const AdminAuditLog = require('../models/AdminAuditLog');
+const {
+  generateStreamKey,
+  generatePlaybackId,
+  buildHlsUrl,
+  buildRtmpUrl,
+  getRtmpBase,
+  evaluateAccess,
+  serializeLive,
+  trackGuestViewer,
+  getGuestViewerCount,
+  clearGuestViewers,
+} = require('../utils/liveAccess');
 
 // ─────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────
 
 const ADMIN_ROLES = ['superadmin', 'platformadmin', 'supportadmin'];
+const HOST_FIELDS = 'username firstName lastName avatar isVerified';
+const LIVE_RATINGS = ['G', 'PG', 'PG-13', 'R', 'NC-17', '13+', '16+', '18+'];
+const MAX_LIVES_PER_HOUR = 5;
 
 const isAdmin = (user) => ADMIN_ROLES.includes(user?.role);
 
-/**
- * Build the canonical HLS URL.
- * FIXED: Use port 5000 — HLS files are served by server.js at /live/<streamKey>/index.m3u8
- * NOT port 8000 (that was Node Media Server's built-in HTTP which we don't use for HLS serving)
- */
-const buildHlsUrl = (streamKey) => {
-  const HLS_BASE = process.env.HLS_SERVER_URL || 'http://localhost:5000';
-  return `${HLS_BASE}/live/${streamKey}/index.m3u8`;
+const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
+const isObjectId = (v) => typeof v === 'string' && OBJECT_ID_RE.test(v);
+const sameId = (a, b) => !!a && !!b && String(a) === String(b);
+
+const clampInt = (value, min, max, fallback) => {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
+};
+
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const getStreamingServer = () => {
+  try {
+    return require('../streaming-server');
+  } catch {
+    return null; // streaming server is optional
+  }
+};
+
+/** Cut the live pipeline (RTMP publisher + FFmpeg + HLS output) for a stream. */
+const killPipeline = async (liveId) => {
+  try {
+    const doc = await Live.findById(liveId).select('+streamKey').lean();
+    const streamingServer = getStreamingServer();
+    if (doc?.streamKey && streamingServer?.forceStop) streamingServer.forceStop(doc.streamKey);
+    clearGuestViewers(liveId);
+  } catch (err) {
+    console.error('[Live] killPipeline failed:', err.message);
+  }
+};
+
+/** Streams created before playbackId existed get one on first access. */
+const backfillPlaybackId = async (live) => {
+  if (live.playbackId) return live.playbackId;
+  await Live.updateOne(
+    { _id: live._id, $or: [{ playbackId: { $exists: false } }, { playbackId: null }, { playbackId: '' }] },
+    { $set: { playbackId: generatePlaybackId() } }
+  );
+  const fresh = await Live.findById(live._id).select('playbackId').lean();
+  live.playbackId = fresh?.playbackId || null;
+  return live.playbackId;
+};
+
+const loadHostSecrets = async (liveId) => {
+  const s = await Live.findById(liveId).select('+streamKey +rtmpUrl').lean();
+  return { streamKey: s?.streamKey || undefined, rtmpUrl: s?.rtmpUrl || undefined };
+};
+
+const isHiddenFromPublic = (live) =>
+  !!(live.isShadowBanned || live.isRemoved || live.rejected || !live.approved);
+
+/** Is the host still allowed to broadcast? */
+const hostMayStream = async (hostId) => {
+  const host = await User.findById(hostId)
+    .select('isBanned isDeactivated canGoLive restrictions')
+    .lean();
+  return !!(host && !host.isBanned && !host.isDeactivated && host.canGoLive && host.restrictions?.goLive !== true);
+};
+
+const buildObsSettings = (streamKey) => {
+  const server = getRtmpBase();
+  return {
+    server,
+    streamKey,
+    fullUrl: buildRtmpUrl(streamKey),
+    instructions: [
+      'Open OBS Studio → Settings → Stream',
+      'Service: Custom',
+      `Server: ${server}`,
+      `Stream Key: ${streamKey}`,
+      'Click OK → Start Streaming',
+    ],
+  };
+};
+
+// ── Input validation ──────────────────────────
+const isHttpUrl = (value) => {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+const parseTags = (tags) => {
+  let arr = tags;
+  if (typeof arr === 'string') {
+    try {
+      arr = JSON.parse(arr);
+    } catch {
+      arr = arr.split(',');
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const t of arr) {
+    if (typeof t !== 'string') continue;
+    const v = t.trim();
+    if (!v || v.length > 30 || seen.has(v.toLowerCase())) continue;
+    seen.add(v.toLowerCase());
+    out.push(v);
+    if (out.length >= 10) break;
+  }
+  return out;
+};
+
+const parseLiveInput = (body = {}) => {
+  const {
+    title,
+    description = '',
+    thumbnailUrl = '',
+    scheduledAt = null,
+    category = 'general',
+    tags = [],
+    ageRating = 'PG',
+  } = body;
+
+  if (typeof title !== 'string' || !title.trim()) return { error: 'Title is required.' };
+  if (title.trim().length > 200) return { error: 'Title must be 200 characters or fewer.' };
+  if (typeof description !== 'string') return { error: 'Description must be text.' };
+  if (description.length > 5000) return { error: 'Description must be 5000 characters or fewer.' };
+  if (
+    typeof thumbnailUrl !== 'string' ||
+    thumbnailUrl.length > 2048 ||
+    (thumbnailUrl && !isHttpUrl(thumbnailUrl) && !thumbnailUrl.startsWith('/uploads/'))
+  ) {
+    return { error: 'Thumbnail must be a valid http(s) URL.' };
+  }
+  if (typeof category !== 'string' || category.length > 50) return { error: 'Invalid category.' };
+  if (!LIVE_RATINGS.includes(ageRating)) return { error: 'Invalid age rating.' };
+
+  let when = null;
+  if (scheduledAt) {
+    const d = new Date(scheduledAt);
+    if (Number.isNaN(d.getTime())) return { error: 'Invalid scheduled date.' };
+    if (d.getTime() < Date.now() - 5 * 60 * 1000) return { error: 'Scheduled time must be in the future.' };
+    if (d.getTime() > Date.now() + 366 * 24 * 60 * 60 * 1000) return { error: 'Scheduled time is too far ahead.' };
+    when = d;
+  }
+
+  return {
+    value: {
+      title: title.trim(),
+      description: description.trim(),
+      thumbnailUrl,
+      scheduledAt: when,
+      category: category.trim() || 'general',
+      tags: parseTags(tags),
+      ageRating,
+    },
+  };
 };
 
 const logAdminAction = async ({
@@ -160,6 +329,7 @@ const buildUnqualifiedMessage = (met, stats, needs) => {
     : 'Requirements not met.';
 };
 
+
 // ─────────────────────────────────────────────
 // CHECK LIVE QUALIFICATION (GET /lives/check-qualification)
 // ─────────────────────────────────────────────
@@ -188,13 +358,20 @@ const checkLiveQualification = async (req, res) => {
   }
 };
 
+
 // ─────────────────────────────────────────────
 // CREATE LIVE  (POST /lives)
 // ─────────────────────────────────────────────
 const createLive = async (req, res) => {
   try {
-    const qualification = await resolveQualification(req.user._id);
+    if (req.user.isShadowBanned) {
+      return res.status(403).json({ success: false, message: 'Shadow banned users cannot create live streams.' });
+    }
+    if (req.user.restrictions?.goLive === true) {
+      return res.status(403).json({ success: false, message: 'Your account is restricted from going live.' });
+    }
 
+    const qualification = await resolveQualification(req.user._id);
     if (!qualification.qualified) {
       return res.status(403).json({
         success: false,
@@ -204,55 +381,47 @@ const createLive = async (req, res) => {
       });
     }
 
-    if (req.user.isShadowBanned) {
-      return res.status(403).json({ success: false, message: 'Shadow banned users cannot create live streams.' });
-    }
+    const parsed = parseLiveInput(req.body);
+    if (parsed.error) return res.status(400).json({ success: false, message: parsed.error });
+    const input = parsed.value;
 
-    const {
-      title = '',
-      description = '',
-      thumbnailUrl = '',
-      scheduledAt = null,
-      category = 'general',
-      tags = [],
-      ageRating = 'PG',
-    } = req.body;
-
-    let parsedTags = tags;
-    if (typeof tags === 'string') {
-      try { parsedTags = JSON.parse(tags); }
-      catch { parsedTags = tags.split(',').map((t) => t.trim()).filter(Boolean); }
-    }
-
-    if (!title.trim()) {
-      return res.status(400).json({ success: false, message: 'Title is required.' });
-    }
-
-    // Generate stream credentials
-    const streamKey = crypto.randomBytes(20).toString('hex');
-    const RTMP_URL = process.env.RTMP_SERVER_URL || 'rtmp://localhost:1935/live';
-
-    // FIXED: Always use the correct HLS URL format pointing to port 5000
-    const rtmpUrl = `${RTMP_URL}/${streamKey}`;
-    const hlsUrl = buildHlsUrl(streamKey);
-
-    // All streams are FREE — payments disabled
-    const live = await Live.create({
-      title: title.trim(),
-      description: description.trim(),
-      thumbnailUrl: thumbnailUrl || '',
+    // Abuse guard: a host can only create a handful of streams per hour.
+    const recent = await Live.countDocuments({
       host: req.user._id,
-      status: scheduledAt ? 'scheduled' : 'live',
-      scheduledAt: scheduledAt || null,
+      createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+    if (recent >= MAX_LIVES_PER_HOUR) {
+      return res.status(429).json({
+        success: false,
+        message: 'You are creating live streams too quickly. Please try again later.',
+      });
+    }
+
+    // Two SEPARATE tokens: secret ingest key (host only) + public playback id.
+    const streamKey = generateStreamKey();
+    const playbackId = generatePlaybackId();
+    const rtmpUrl = buildRtmpUrl(streamKey);
+    const hlsUrl = buildHlsUrl(playbackId);
+
+    // NOTE: kept from the previous version — a non-scheduled stream starts as
+    // 'live' immediately. The new frontend should move it to 'live' only when
+    // the encoder connects (the RTMP server already does this in postPublish).
+    const live = await Live.create({
+      title: input.title,
+      description: input.description,
+      thumbnailUrl: input.thumbnailUrl,
+      host: req.user._id,
+      status: input.scheduledAt ? 'scheduled' : 'live',
+      scheduledAt: input.scheduledAt,
       isPaid: false,
       price: 0,
       currency: 'USD',
       purchases: [],
       isSponsored: false,
       isFundraiser: false,
-      category: category || 'general',
-      tags: parsedTags,
-      ageRating: ageRating || 'PG',
+      category: input.category,
+      tags: input.tags,
+      ageRating: input.ageRating,
       viewers: [],
       peakViewers: 0,
       totalViews: 0,
@@ -260,18 +429,11 @@ const createLive = async (req, res) => {
       chatSlowMode: false,
       approved: true,
       isDeleted: false,
+      playbackId,
       streamKey,
       rtmpUrl,
       hlsUrl,
     });
-
-    // Register with streaming server for key validation
-    try {
-      const streamingServer = require('../streaming-server');
-      if (streamingServer.registerStream) {
-        streamingServer.registerStream(streamKey, live._id);
-      }
-    } catch { /* streaming server optional */ }
 
     console.log(`🎬 Live created: "${live.title}" by ${req.user.email}`);
 
@@ -279,54 +441,57 @@ const createLive = async (req, res) => {
       success: true,
       message: 'Live stream created successfully.',
       live: {
-        ...live.toObject(),
-        streamKey,
-        rtmpUrl,
-        hlsUrl,
-        obsSettings: {
-          server: RTMP_URL,
-          streamKey,
-          fullUrl: rtmpUrl,
-          instructions: [
-            'Open OBS Studio → Settings → Stream',
-            'Service: Custom',
-            `Server: ${RTMP_URL}`,
-            `Stream Key: ${streamKey}`,
-            'Click OK → Start Streaming',
-          ],
-        },
+        ...serializeLive(live, { isHost: true, streamKey, rtmpUrl, viewerCount: 0 }),
+        obsSettings: buildObsSettings(streamKey),
         browserStreamUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/live/broadcast/${live._id}`,
       },
     });
   } catch (err) {
     console.error('createLive error:', err);
-    res.status(500).json({ success: false, message: 'Failed to create live stream.', error: process.env.NODE_ENV === 'development' ? err.message : undefined });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create live stream.',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
   }
 };
 
 // ─────────────────────────────────────────────
-// GET LIVE FEED  (GET /lives)
+// GET LIVE FEED  (GET /lives)  — PUBLIC, never contains secrets
 // ─────────────────────────────────────────────
 const getLiveFeed = async (req, res) => {
   try {
-    const lives = await Live.find({
+    const limit = clampInt(req.query.limit, 1, 100, 50);
+
+    const filter = {
       isDeleted: false,
       isShadowBanned: { $ne: true },
+      isRemoved: { $ne: true },
+      rejected: { $ne: true },
+      approved: true,
       status: { $in: ['live', 'scheduled'] },
-    })
-      .populate('host', 'username firstName lastName avatar isVerified')
+    };
+    if (req.user?.country) filter.blockedCountries = { $ne: req.user.country };
+    if (req.user?.continent) filter.blockedContinents = { $ne: req.user.continent };
+
+    const lives = await Live.find(filter)
+      .select(
+        'title description thumbnailUrl host status scheduledAt startedAt endedAt duration category tags ' +
+          'ageRating viewers peakViewers totalViews chatEnabled chatSlowMode approved playbackId createdAt ' +
+          'blockedCountries blockedContinents'
+      )
+      .populate('host', HOST_FIELDS)
       .sort({ status: -1, startedAt: -1, scheduledAt: 1 })
+      .limit(limit)
       .lean();
 
-    const result = lives.map((live) => ({
-      ...live,
-      // Always build the correct hlsUrl from the streamKey in case DB value is stale
-      hlsUrl: live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl,
-      playbackUrl: live.status === 'live' ? (live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl) : null,
-      isLive: live.status === 'live',
-      viewerCount: live.viewers?.length || 0,
-      isFree: true,
-    }));
+    const result = lives.map((live) => {
+      const access = evaluateAccess(live, req.user);
+      return serializeLive(live, {
+        viewerCount: (live.viewers?.length || 0) + getGuestViewerCount(live._id),
+        allowPlayback: access.allowed,
+      });
+    });
 
     res.json({ success: true, lives: result, count: result.length });
   } catch (err) {
@@ -340,52 +505,29 @@ const getLiveFeed = async (req, res) => {
 // ─────────────────────────────────────────────
 const getStreamStatus = async (req, res) => {
   try {
-    const live = await Live.findById(req.params.id)
-      .populate('host', 'username firstName lastName avatar isVerified')
-      .lean();
-
+    const live = await Live.findById(req.params.id).populate('host', HOST_FIELDS).lean();
     if (!live || live.isDeleted) {
       return res.status(404).json({ success: false, message: 'Live stream not found.' });
     }
 
-    // Always compute the correct hlsUrl from streamKey — never trust the stored value alone
-    const correctHlsUrl = live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl;
+    const isHostUser = !!req.user && sameId(live.host?._id, req.user._id);
+    const isAdminUser = isAdmin(req.user);
 
-    const isHostUser = req.user?._id?.toString() === live.host?._id?.toString();
+    if (isHiddenFromPublic(live) && !isHostUser && !isAdminUser) {
+      return res.status(404).json({ success: false, message: 'Live stream not found.' });
+    }
+
+    const access = evaluateAccess(live, req.user, { bypass: isHostUser || isAdminUser });
+    if (live.status === 'live' || isHostUser) await backfillPlaybackId(live);
+
+    const secrets = isHostUser ? await loadHostSecrets(live._id) : {};
+    const viewerCount = (live.viewers?.length || 0) + getGuestViewerCount(live._id);
 
     res.json({
       success: true,
       live: {
-        _id: live._id,
-        title: live.title,
-        description: live.description,
-        thumbnailUrl: live.thumbnailUrl,
-        host: live.host,
-        status: live.status,
-        isLive: live.status === 'live',
-        approved: live.approved,
-        startedAt: live.startedAt,
-        endedAt: live.endedAt,
-        duration: live.duration,
-        viewerCount: live.viewers?.length || 0,
-        peakViewers: live.peakViewers,
-        totalViews: live.totalViews,
-        // Always return hlsUrl so frontend can build player immediately.
-        // The HLS player handles retries if the stream hasn't started yet.
-        hlsUrl: correctHlsUrl,
-        playbackUrl: live.status === 'live' ? correctHlsUrl : null,
-        // FIXED: Return streamKey to ALL authenticated users when stream is live.
-        // Viewers need streamKey so LiveWatch.jsx can build the HLS URL client-side
-        // and showVideo becomes true (previously only host got streamKey → viewers saw black screen).
-        streamKey: live.status === 'live' ? live.streamKey : (isHostUser ? live.streamKey : undefined),
-        // Only expose rtmpUrl (RTMP ingest credentials) to the host
-        rtmpUrl: isHostUser ? live.rtmpUrl : undefined,
-        chatEnabled: live.chatEnabled,
-        chatSlowMode: live.chatSlowMode,
-        category: live.category,
-        tags: live.tags,
-        isFree: true,
-        scheduledAt: live.scheduledAt,
+        ...serializeLive(live, { isHost: isHostUser, viewerCount, allowPlayback: access.allowed, ...secrets }),
+        access,
       },
     });
   } catch (err) {
@@ -395,75 +537,68 @@ const getStreamStatus = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// JOIN / WATCH LIVE  (POST /lives/:id/join)
+// JOIN / WATCH LIVE  (POST /lives/:id/join)  — guests and users
 // ─────────────────────────────────────────────
 const joinLive = async (req, res) => {
   try {
-    const live = await Live.findById(req.params.id)
-      .populate('host', 'username firstName lastName avatar isVerified');
+    const live = await Live.findById(req.params.id).populate('host', HOST_FIELDS);
+    if (!live || live.isDeleted) {
+      return res.status(404).json({ success: false, message: 'Live stream not available.' });
+    }
 
-    if (!live || live.isDeleted || live.isShadowBanned) {
+    const isHostUser = !!req.user && sameId(live.host?._id, req.user._id);
+    const isAdminUser = isAdmin(req.user);
+
+    if (isHiddenFromPublic(live) && !isHostUser && !isAdminUser) {
       return res.status(404).json({ success: false, message: 'Live stream not available.' });
     }
 
     if (live.status !== 'live') {
       return res.status(400).json({
         success: false,
-        message: live.status === 'scheduled'
-          ? `This stream is scheduled for ${live.scheduledAt ? new Date(live.scheduledAt).toLocaleString() : 'later'}.`
-          : live.status === 'ended'
-            ? 'This stream has ended.'
-            : 'Stream is not yet live.',
+        message:
+          live.status === 'scheduled'
+            ? `This stream is scheduled for ${live.scheduledAt ? new Date(live.scheduledAt).toLocaleString() : 'later'}.`
+            : live.status === 'ended'
+              ? 'This stream has ended.'
+              : 'Stream is not yet live.',
         status: live.status,
         scheduledAt: live.scheduledAt,
       });
     }
 
-    const userId = req.user._id;
-    const isHostUser = live.host._id.toString() === userId.toString();
-
-    // Track viewer
-    if (!live.viewers.some((v) => v.toString() === userId.toString())) {
-      live.viewers.push(userId);
-      live.totalViews += 1;
-      live.peakViewers = Math.max(live.peakViewers, live.viewers.length);
-      await live.save({ validateBeforeSave: false });
+    const access = evaluateAccess(live, req.user, { bypass: isHostUser || isAdminUser });
+    if (!access.allowed) {
+      return res.status(403).json({ success: false, code: access.code, message: access.message });
     }
 
-    // Notify room of new viewer count via Socket.IO
+    await backfillPlaybackId(live);
+
+    // Track the viewer atomically (no read-modify-write race).
+    let userViewers = live.viewers?.length || 0;
+    if (req.user) {
+      const updated = await Live.findOneAndUpdate(
+        { _id: live._id, viewers: { $ne: req.user._id } },
+        { $addToSet: { viewers: req.user._id }, $inc: { totalViews: 1 } },
+        { new: true, projection: { viewers: 1 } }
+      ).lean();
+      if (updated) userViewers = updated.viewers.length;
+    } else if (req.isGuest && req.guestId) {
+      const { isNew } = trackGuestViewer(live._id, req.guestId);
+      if (isNew) await Live.updateOne({ _id: live._id }, { $inc: { totalViews: 1 } });
+    }
+
+    const viewerCount = userViewers + getGuestViewerCount(live._id);
+    await Live.updateOne({ _id: live._id, peakViewers: { $lt: viewerCount } }, { $set: { peakViewers: viewerCount } });
+
     const io = req.app.get('io');
-    if (io) {
-      io.to(`live:${live._id}`).emit('viewer:update', {
-        viewerCount: live.viewers.length,
-      });
-    }
+    if (io) io.to(`live:${live._id}`).emit('viewer:update', { viewerCount });
 
-    // Always derive hlsUrl from streamKey
-    const correctHlsUrl = live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl;
+    const secrets = isHostUser ? await loadHostSecrets(live._id) : {};
 
     res.json({
       success: true,
-      live: {
-        _id: live._id,
-        title: live.title,
-        description: live.description,
-        thumbnailUrl: live.thumbnailUrl,
-        host: live.host,
-        status: live.status,
-        isLive: true,
-        playbackUrl: correctHlsUrl,
-        hlsUrl: correctHlsUrl,
-        // FIXED: Always return streamKey to viewers on join so LiveWatch.jsx
-        // can set showVideo = true and initialise the HLS player
-        streamKey: live.streamKey,
-        viewerCount: live.viewers.length,
-        isHost: isHostUser,
-        chatEnabled: live.chatEnabled,
-        chatSlowMode: live.chatSlowMode,
-        isFree: true,
-        category: live.category,
-        tags: live.tags,
-      },
+      live: serializeLive(live, { isHost: isHostUser, viewerCount, ...secrets }),
     });
   } catch (err) {
     console.error('joinLive error:', err);
@@ -476,24 +611,34 @@ const joinLive = async (req, res) => {
 // ─────────────────────────────────────────────
 const checkLiveAccess = async (req, res) => {
   try {
-    const live = await Live.findById(req.params.id);
-    if (!live || live.isDeleted || live.isShadowBanned) {
+    const live = await Live.findById(req.params.id).lean();
+    if (!live || live.isDeleted) {
       return res.status(404).json({ success: false, message: 'Live stream not available.' });
     }
 
-    const isHostUser = live.host.toString() === req.user._id.toString();
+    const isHostUser = !!req.user && sameId(live.host, req.user._id);
     const isAdminUser = isAdmin(req.user);
-    const correctHlsUrl = live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl;
+
+    if (isHiddenFromPublic(live) && !isHostUser && !isAdminUser) {
+      return res.status(404).json({ success: false, message: 'Live stream not available.' });
+    }
+
+    const access = evaluateAccess(live, req.user, { bypass: isHostUser || isAdminUser });
+    if (live.status === 'live' || isHostUser) await backfillPlaybackId(live);
+
+    const secrets = isHostUser ? await loadHostSecrets(live._id) : {};
+    const ser = serializeLive(live, { isHost: isHostUser, allowPlayback: access.allowed, ...secrets });
 
     res.json({
       success: true,
-      hasAccess: true, // All streams are free
+      hasAccess: access.allowed,
+      code: access.code,
+      message: access.message,
       isHost: isHostUser,
       isAdmin: isAdminUser,
-      playbackUrl: live.status === 'live' ? correctHlsUrl : null,
-      hlsUrl: correctHlsUrl,
-      // Return streamKey to all authenticated users for access check
-      streamKey: live.status === 'live' ? live.streamKey : undefined,
+      playbackUrl: ser.playbackUrl,
+      hlsUrl: ser.hlsUrl,
+      streamKey: live.status === 'live' || isHostUser ? ser.streamKey : undefined,
       status: live.status,
       title: live.title,
       chatEnabled: live.chatEnabled,
@@ -506,43 +651,57 @@ const checkLiveAccess = async (req, res) => {
 
 // ─────────────────────────────────────────────
 // START STREAM  (POST /lives/:id/start)
-// Called manually by host or triggered by RTMP
 // ─────────────────────────────────────────────
 const startStream = async (req, res) => {
   try {
-    const live = await Live.findById(req.params.id);
-    if (!live) return res.status(404).json({ success: false, message: 'Live stream not found.' });
+    const live = await Live.findById(req.params.id).select('+streamKey +rtmpUrl');
+    if (!live || live.isDeleted) {
+      return res.status(404).json({ success: false, message: 'Live stream not found.' });
+    }
 
-    const isHostUser = live.host.toString() === req.user._id.toString();
+    const isHostUser = sameId(live.host, req.user._id);
     if (!isHostUser && !isAdmin(req.user)) {
       return res.status(403).json({ success: false, message: 'Not authorized to start this stream.' });
     }
 
-    const correctHlsUrl = live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl;
+    if (live.isRemoved || live.rejected || live.adminEnded || live.forceClosed || live.status === 'cancelled') {
+      return res.status(403).json({ success: false, message: 'This stream can no longer be started.' });
+    }
+    if (!live.approved) {
+      return res.status(403).json({ success: false, message: 'This stream is awaiting approval.' });
+    }
+    if (isHostUser && !(await hostMayStream(live.host))) {
+      return res.status(403).json({ success: false, message: 'You are not allowed to go live right now.' });
+    }
+
+    await backfillPlaybackId(live);
+    const hlsUrl = buildHlsUrl(live.playbackId);
+    const hostView = isHostUser ? { streamKey: live.streamKey, rtmpUrl: live.rtmpUrl } : {};
 
     if (live.status === 'live') {
       return res.json({
         success: true,
         message: 'Stream is already live.',
-        live: { _id: live._id, status: live.status, hlsUrl: correctHlsUrl, streamKey: live.streamKey },
+        live: serializeLive(live, { isHost: isHostUser, ...hostView }),
       });
     }
 
     live.status = 'live';
     live.startedAt = new Date();
+    live.endedAt = null;
     live.viewers = [];
-    // Ensure hlsUrl is always correct before saving
-    live.hlsUrl = correctHlsUrl;
+    live.hlsUrl = hlsUrl;
     await live.save({ validateBeforeSave: false });
+    clearGuestViewers(live._id);
 
-    // Notify Socket.IO room
     const io = req.app.get('io');
     if (io) {
       io.to(`live:${live._id}`).emit('stream:started', {
         liveId: live._id,
         title: live.title,
-        hlsUrl: correctHlsUrl,
-        streamKey: live.streamKey,
+        hlsUrl,
+        playbackId: live.playbackId,
+        streamKey: live.playbackId, // LEGACY COMPAT: public id under the old field name — never the secret
         startedAt: live.startedAt,
       });
       io.emit('feed:stream:started', { liveId: live._id, title: live.title });
@@ -553,15 +712,7 @@ const startStream = async (req, res) => {
     res.json({
       success: true,
       message: 'Stream started.',
-      live: {
-        _id: live._id,
-        title: live.title,
-        status: live.status,
-        hlsUrl: correctHlsUrl,
-        streamKey: live.streamKey,
-        rtmpUrl: live.rtmpUrl,
-        startedAt: live.startedAt,
-      },
+      live: serializeLive(live, { isHost: isHostUser, ...hostView }),
     });
   } catch (err) {
     console.error('startStream error:', err);
@@ -574,10 +725,12 @@ const startStream = async (req, res) => {
 // ─────────────────────────────────────────────
 const stopStream = async (req, res) => {
   try {
-    const live = await Live.findById(req.params.id);
-    if (!live) return res.status(404).json({ success: false, message: 'Live stream not found.' });
+    const live = await Live.findById(req.params.id).select('+streamKey');
+    if (!live || live.isDeleted) {
+      return res.status(404).json({ success: false, message: 'Live stream not found.' });
+    }
 
-    const isHostUser = live.host.toString() === req.user._id.toString();
+    const isHostUser = sameId(live.host, req.user._id);
     if (!isHostUser && !isAdmin(req.user)) {
       return res.status(403).json({ success: false, message: 'Not authorized to stop this stream.' });
     }
@@ -594,7 +747,11 @@ const stopStream = async (req, res) => {
     live.duration = duration;
     await live.save({ validateBeforeSave: false });
 
-    // Notify Socket.IO room
+    // Actually cut the encoder + HLS output (previously only the DB flag changed).
+    const streamingServer = getStreamingServer();
+    if (live.streamKey && streamingServer?.forceStop) streamingServer.forceStop(live.streamKey);
+    clearGuestViewers(live._id);
+
     const io = req.app.get('io');
     if (io) {
       io.to(`live:${live._id}`).emit('stream:ended', {
@@ -628,19 +785,68 @@ const stopStream = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
+// ROTATE STREAM KEY  (POST /lives/:id/rotate-key)  — NEW, host only
+// Replaces a leaked/compromised key and kicks whoever is using the old one.
+// ─────────────────────────────────────────────
+const rotateStreamKey = async (req, res) => {
+  try {
+    const live = await Live.findById(req.params.id).select('+streamKey +rtmpUrl');
+    if (!live || live.isDeleted) {
+      return res.status(404).json({ success: false, message: 'Live stream not found.' });
+    }
+    if (!sameId(live.host, req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Only the host can rotate the stream key.' });
+    }
+    if (live.isRemoved || live.rejected || live.adminEnded || live.forceClosed || live.status === 'cancelled') {
+      return res.status(403).json({ success: false, message: 'This stream can no longer be modified.' });
+    }
+
+    const oldKey = live.streamKey;
+    const newKey = generateStreamKey();
+    live.streamKey = newKey;
+    live.rtmpUrl = buildRtmpUrl(newKey);
+    live.streamUrl = live.rtmpUrl;
+    await live.save({ validateBeforeSave: false });
+
+    // Kick any publisher still using the old key.
+    const streamingServer = getStreamingServer();
+    if (oldKey && streamingServer?.forceStop) streamingServer.forceStop(oldKey);
+
+    await backfillPlaybackId(live);
+
+    res.json({
+      success: true,
+      message: 'Stream key rotated. Update your encoder with the new key.',
+      live: {
+        ...serializeLive(live, { isHost: true, streamKey: newKey, rtmpUrl: live.rtmpUrl }),
+        obsSettings: buildObsSettings(newKey),
+      },
+    });
+  } catch (err) {
+    console.error('rotateStreamKey error:', err);
+    res.status(500).json({ success: false, message: 'Failed to rotate stream key.' });
+  }
+};
+
+// ─────────────────────────────────────────────
 // GET USER'S OWN LIVE STREAMS  (GET /lives/my)
 // ─────────────────────────────────────────────
 const getMyLives = async (req, res) => {
   try {
     const lives = await Live.find({ host: req.user._id, isDeleted: false })
+      .select('+streamKey +rtmpUrl')
       .sort({ createdAt: -1 })
+      .limit(200)
       .lean();
 
-    // Ensure hlsUrl is always correct in list view too
-    const result = lives.map((live) => ({
-      ...live,
-      hlsUrl: live.streamKey ? buildHlsUrl(live.streamKey) : live.hlsUrl,
-    }));
+    const result = lives.map((live) => {
+      const stillUsable = !['ended', 'cancelled'].includes(live.status);
+      return serializeLive(live, {
+        isHost: true,
+        streamKey: stillUsable ? live.streamKey : undefined,
+        rtmpUrl: stillUsable ? live.rtmpUrl : undefined,
+      });
+    });
 
     res.json({ success: true, lives: result, count: result.length });
   } catch (err) {
@@ -655,6 +861,7 @@ const getMyLives = async (req, res) => {
 const purchaseLive = async (req, res) => {
   res.json({ success: true, message: 'All live streams are currently free. Enjoy!' });
 };
+
 
 // ─────────────────────────────────────────────
 // ADMIN: UPDATE LIVE STATUS  (PATCH /lives/:id/status)
@@ -673,13 +880,35 @@ const updateLiveStatus = async (req, res) => {
     const live = await Live.findById(req.params.id);
     if (!live) return res.status(404).json({ success: false, message: 'Live stream not found.' });
 
+    const wasLive = live.status === 'live';
     live.approved = status === 'approved';
     live.rejected = status === 'rejected';
     if (status === 'cancelled') live.status = 'cancelled';
     live.removalReason = status === 'rejected' ? removalReason || 'No reason provided' : '';
     live.approvedBy = req.user._id;
 
+    // Rejecting/cancelling a stream that is on air must actually take it off air.
+    const stopNow = wasLive && (status === 'rejected' || status === 'cancelled');
+    if (stopNow) {
+      if (status === 'rejected') live.status = 'ended';
+      live.endedAt = new Date();
+      live.duration = live.startedAt ? Math.floor((live.endedAt - live.startedAt) / 1000) : 0;
+      live.forceClosed = true;
+    }
+
     await live.save({ validateBeforeSave: false });
+
+    if (stopNow) {
+      await killPipeline(live._id);
+      const ioStop = req.app.get('io');
+      if (ioStop) {
+        ioStop.to(`live:${live._id}`).emit('stream:ended', {
+          liveId: live._id,
+          message: 'This stream has been ended by an admin.',
+          adminEnded: true,
+        });
+      }
+    }
 
     // Notify host
     const notifMap = {
@@ -792,6 +1021,7 @@ const deleteLive = async (req, res) => {
       }
     }
     await live.save({ validateBeforeSave: false });
+    await killPipeline(live._id);
 
     await logAdminAction({
       admin: req.user,
@@ -822,7 +1052,9 @@ const setLivePrivilege = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Support admins cannot modify live privileges.' });
     }
 
-    const { userId, canGoLive, reason } = req.body;
+    const { userId, reason } = req.body;
+    const canGoLive = req.body.canGoLive === true || req.body.canGoLive === 'true';
+    if (!isObjectId(userId)) return res.status(400).json({ success: false, message: 'Invalid user id.' });
     const targetUser = await User.findById(userId);
     if (!targetUser) return res.status(404).json({ success: false, message: 'User not found.' });
 
@@ -882,6 +1114,7 @@ const addLiveStrike = async (req, res) => {
     if (!isAdmin(req.user)) return res.status(403).json({ success: false, message: 'Not authorized.' });
 
     const { userId, reason } = req.body;
+    if (!isObjectId(userId)) return res.status(400).json({ success: false, message: 'Invalid user id.' });
     const targetUser = await User.findById(userId);
     if (!targetUser) return res.status(404).json({ success: false, message: 'User not found.' });
 
@@ -1035,10 +1268,16 @@ const getUserLiveDetails = async (req, res) => {
 // ─────────────────────────────────────────────
 const getAdminLiveStreams = async (req, res) => {
   try {
-    const { status, search, page = 1, limit = 20 } = req.query;
+    const LIVE_STATUSES = ['pending', 'scheduled', 'live', 'ended', 'cancelled'];
+    const { status, search } = req.query;
+    const page = clampInt(req.query.page, 1, 100000, 1);
+    const limit = clampInt(req.query.limit, 1, 100, 20);
+
     const filter = { isDeleted: false };
-    if (status) filter.status = status;
-    if (search) filter.$or = [{ title: { $regex: search, $options: 'i' } }];
+    if (typeof status === 'string' && LIVE_STATUSES.includes(status)) filter.status = status;
+    if (typeof search === 'string' && search.trim()) {
+      filter.$or = [{ title: { $regex: escapeRegex(search.trim().slice(0, 100)), $options: 'i' } }];
+    }
 
     const skip = (page - 1) * limit;
     const [lives, total] = await Promise.all([
@@ -1046,7 +1285,7 @@ const getAdminLiveStreams = async (req, res) => {
         .populate('host', 'name email avatar isVerified')
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(parseInt(limit))
+        .limit(limit)
         .lean(),
       Live.countDocuments(filter),
     ]);
@@ -1054,7 +1293,7 @@ const getAdminLiveStreams = async (req, res) => {
     res.json({
       success: true,
       lives,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / limit) },
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   } catch (err) {
     console.error('getAdminLiveStreams error:', err);
@@ -1097,8 +1336,10 @@ const endLiveStreamAdmin = async (req, res) => {
     live.duration = live.startedAt ? Math.floor((endedAt - live.startedAt) / 1000) : 0;
     live.adminEnded = true;
     live.adminEndedBy = req.user._id;
-    live.adminEndedReason = req.body.reason || 'Terminated by admin';
+    live.adminEndedReason = String(req.body.reason || 'Terminated by admin').slice(0, 500);
+    live.forceClosed = true;
     await live.save({ validateBeforeSave: false });
+    await killPipeline(live._id);
 
     const io = req.app.get('io');
     if (io) {
@@ -1255,7 +1496,9 @@ const banUserFromStreaming = async (req, res) => {
     for (const stream of activeUserStreams) {
       stream.status = 'ended';
       stream.endedAt = new Date();
+      stream.forceClosed = true;
       await stream.save({ validateBeforeSave: false });
+      await killPipeline(stream._id);
       if (io) {
         io.to(`live:${stream._id}`).emit('stream:ended', {
           liveId: stream._id,
@@ -1302,6 +1545,7 @@ const getLiveStreamReports = async (req, res) => {
   res.json({ success: true, reports: [], count: 0 });
 };
 
+
 // ─────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────
@@ -1314,6 +1558,7 @@ module.exports = {
   checkLiveAccess,
   startStream,
   stopStream,
+  rotateStreamKey,
   getMyLives,
   purchaseLive,
   updateLiveStatus,
@@ -1332,3 +1577,5 @@ module.exports = {
   removeShadowBanFromLive,
   banUserFromStreaming,
 };
+
+// ═══ END OF FILE: backend/controllers/liveController.js ═══
