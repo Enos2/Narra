@@ -12,7 +12,7 @@
 
 'use strict';
 
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 const make = ({ windowMs, limit, message, skipSuccessfulRequests = false, skip }) =>
   rateLimit({
@@ -63,6 +63,38 @@ const passwordLimiter = make({
   message: 'Too many password requests. Please try again later.',
 });
 
-module.exports = { apiLimiter, loginLimiter, adminLoginLimiter, registerLimiter, passwordLimiter };
+// Wallet limits are per signed-in user (fall back to the IP address).
+const userKey = (req) => (req.user?._id ? `u:${req.user._id}` : ipKeyGenerator(req.ip));
+
+// Starting an M-Pesa prompt sends an SMS-like push to a phone: keep it scarce.
+const topupLimiter = rateLimit({
+  windowMs: 10 * MINUTE,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: userKey,
+  handler: (_req, res) =>
+    res.status(429).json({ success: false, message: 'Too many top-up attempts. Please wait a few minutes.' }),
+});
+
+const purchaseLimiter = rateLimit({
+  windowMs: MINUTE,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: userKey,
+  handler: (_req, res) =>
+    res.status(429).json({ success: false, message: 'Too many purchase requests. Please slow down.' }),
+});
+
+module.exports = {
+  apiLimiter,
+  loginLimiter,
+  adminLoginLimiter,
+  registerLimiter,
+  passwordLimiter,
+  topupLimiter,
+  purchaseLimiter,
+};
 
 // ═══ END OF FILE: backend/middleware/rateLimiters.js ═══

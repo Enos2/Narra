@@ -23,6 +23,10 @@
  *     production the server exits if MongoDB cannot be reached, and shuts down
  *     gracefully (stops live encoders) on SIGTERM / SIGINT.
  *   - The per-request HLS log line (which recorded viewer IPs) was removed.
+ *   - Wallet / payments are now mounted (/api/payments). They were never
+ *     mounted before. POST /api/videos/:id/purchase is served by the new
+ *     atomic wallet code and is registered BEFORE the video router so it takes
+ *     precedence over the old, unsafe handler inside videoRoutes.
  */
 
 const express = require('express');
@@ -69,6 +73,9 @@ const historyRoutes = require('./routes/historyRoutes');
 const playlistRoutes = require('./routes/playlistRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
+const paymentController = require('./controllers/paymentController');
+const { protect } = require('./middleware/authMiddleware');
 
 const errorHandler = require('./middleware/errorMiddleware');
 const sanitizeInput = require('./middleware/sanitizeInput');
@@ -78,6 +85,7 @@ const {
   adminLoginLimiter,
   registerLimiter,
   passwordLimiter,
+  purchaseLimiter,
 } = require('./middleware/rateLimiters');
 const { createSocketServer } = require('./socket/socketServer');
 
@@ -302,6 +310,11 @@ app.use('/api/auth/password', passwordLimiter);
 // ROUTES
 // ─────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+
+// Video purchases go through the atomic wallet service. Registered before the
+// video router so it overrides the old handler in videoRoutes/videoController.
+app.post('/api/videos/:id/purchase', protect, purchaseLimiter, paymentController.purchaseVideo);
+
 app.use('/api/videos', videoRoutes);
 app.use('/api/lives', liveRoutes);
 app.use('/api/users', userRoutes);
@@ -316,6 +329,7 @@ app.use('/api/history', historyRoutes);
 app.use('/api/playlists', playlistRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/payments', paymentRoutes);
 
 app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
 app.use(errorHandler);
