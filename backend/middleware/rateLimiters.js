@@ -87,6 +87,39 @@ const purchaseLimiter = rateLimit({
     res.status(429).json({ success: false, message: 'Too many purchase requests. Please slow down.' }),
 });
 
+// Uploads (per signed-in user).
+const uploadLimiter = rateLimit({
+  windowMs: HOUR,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: userKey,
+  handler: (_req, res) =>
+    res.status(429).json({ success: false, message: 'Upload limit reached. Please try again in a while.' }),
+});
+
+// Requesting signed direct-upload parameters (one per file, so more generous).
+const signLimiter = rateLimit({
+  windowMs: HOUR,
+  limit: 200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: userKey,
+  handler: (_req, res) =>
+    res.status(429).json({ success: false, message: 'Too many upload requests. Please try again later.' }),
+});
+
+// Avatar / cover / thumbnail / document uploads.
+const mediaLimiter = rateLimit({
+  windowMs: HOUR,
+  limit: 40,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: userKey,
+  handler: (_req, res) =>
+    res.status(429).json({ success: false, message: 'Too many uploads. Please try again later.' }),
+});
+
 module.exports = {
   apiLimiter,
   loginLimiter,
@@ -95,6 +128,9 @@ module.exports = {
   passwordLimiter,
   topupLimiter,
   purchaseLimiter,
+  uploadLimiter,
+  signLimiter,
+  mediaLimiter,
 };
 
 // ═══ END OF FILE: backend/middleware/rateLimiters.js ═══
