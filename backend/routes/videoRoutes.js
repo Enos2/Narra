@@ -1,151 +1,108 @@
 /**
  * File: backend/routes/videoRoutes.js
- * Description: Handles video-related endpoints with proper Express router
- * FULLY UPDATED: Added like/dislike, share tracking, and watch history routes
- * UPDATED: Added /recommended route before /:id to fix CastError
- * FIXED: Removed userPermanentDeleteVideo - users cannot permanently delete
- * ADDED: Guest middleware support for guest mode
+ * Purpose: Video routes (mounted at /api/videos): public browsing and watching,
+ *   viewer interactions, creator release / trash, and admin moderation.
+ *
+ * CHANGES IN THIS VERSION
+ *   - Public routes now use `optionalAuth`. Before, they only ran the guest
+ *     middleware, which never identifies a logged-in user, so everyone was
+ *     treated as a guest (paid / purchased viewing could not work and the
+ *     access checks had nothing to check).
+ *   - Viewing, interaction and edit handlers moved to videoPublicController.js,
+ *     which returns whitelisted responses (no creator / liker e-mails, no buyer
+ *     lists, no stream URL unless the viewer may watch).
+ *   - REMOVED the legacy POST /upload. It saved files to this server's own disk
+ *     with only a login check — no age / restriction / quota checks, served
+ *     publicly through /uploads. Use POST /api/uploads/video (or the direct
+ *     /api/uploads/sign + /video/finalize flow). The route now answers 410.
+ *   - `/health` is registered BEFORE `/:id` (it was unreachable).
+ *   - Ids in the path are validated (400 instead of a 500 CastError).
+ *   - POST /:id/purchase is served by the wallet code registered in server.js
+ *     ahead of this router.
  */
 
 const express = require('express');
 const router = express.Router();
-const Video = require('../models/Video'); // Video model
-const { protect } = require('../middleware/authMiddleware');
-const { guestAuth, guestRateLimiter } = require('../middleware/guestMiddleware');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-// Import video controller
 const videoController = require('../controllers/videoController');
+const videoPublic = require('../controllers/videoPublicController');
+const { protect } = require('../middleware/authMiddleware');
+const optionalAuth = require('../middleware/optionalAuth');
+const { guestAuth, guestRateLimiter } = require('../middleware/guestMiddleware');
 
-/* --------------------------
-   MULTER CONFIGURATION
--------------------------- */
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    let folder = 'uploads/videos';
-    
-    if (file.fieldname === 'thumbnail') {
-      folder = 'uploads/thumbnails';
-    } else if (file.fieldname.includes('trailer')) {
-      folder = 'uploads/trailers';
-    }
-    
-    // Ensure directory exists
-    if (!fs.existsSync(folder)) {
-      fs.mkdirSync(folder, { recursive: true });
-    }
-    cb(null, folder);
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    const safeName = file.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-    cb(null, uniqueName + '-' + safeName);
-  },
+const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
+const validateId = (_req, res, next, value) =>
+  OBJECT_ID_RE.test(value) ? next() : res.status(400).json({ success: false, message: 'Invalid video ID format' });
+router.param('id', validateId);
+router.param('videoId', validateId);
+
+/* ================================
+   BASIC ROUTES (before /:id)
+================================ */
+
+// Simple health check for video routes
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Video routes are working',
+    timestamp: new Date(),
+  });
 });
 
-const upload = multer({ 
-  storage,
-  limits: {
-    fileSize: 200 * 1024 * 1024, // 200MB limit per file
-  }
-});
-
-// Function to generate dynamic fields for series
-const getSeriesFields = () => {
-  const fields = [
-    { name: 'video', maxCount: 1 },
-    { name: 'trailer', maxCount: 1 },
-    { name: 'thumbnail', maxCount: 1 },
-  ];
-  
-  // Add dynamic fields for series (up to 10 seasons, 20 episodes each)
-  for (let s = 0; s < 10; s++) {
-    fields.push({ name: `season-${s}-trailer`, maxCount: 1 });
-    for (let e = 0; e < 20; e++) {
-      fields.push({ name: `season-${s}-episode-${e}-video`, maxCount: 1 });
-      fields.push({ name: `season-${s}-episode-${e}-trailer`, maxCount: 1 });
-    }
-  }
-  
-  return fields;
-};
-
 /* ================================
-   PUBLIC ROUTES (Limited access - with guest support)
+   PUBLIC ROUTES (guests and logged-in users)
 ================================ */
 
-// GET ALL VIDEOS (Public - Only RELEASED videos that are free/public)
-// Guest users can view videos with rate limiting
-router.get('/', guestAuth, guestRateLimiter(100, 60000), videoController.getVideoFeed);
+// GET ALL VIDEOS (only released, age-appropriate videos; guests see free ones)
+router.get('/', optionalAuth, guestAuth, guestRateLimiter(100, 60000), videoPublic.getVideoFeed);
 
-// GET RECOMMENDED VIDEOS - MUST be BEFORE the /:id route to avoid CastError
-// Guest users can view recommendations with rate limiting
-router.get('/recommended', guestAuth, guestRateLimiter(50, 60000), videoController.getRecommendedVideos);
+// GET RECOMMENDED VIDEOS - must be BEFORE /:id
+router.get('/recommended', optionalAuth, guestAuth, guestRateLimiter(50, 60000), videoPublic.getRecommendedVideos);
 
-// GET VIDEO BY ID (Public - But with access checks)
-// Guest users can view videos with rate limiting
-router.get('/:id', guestAuth, guestRateLimiter(30, 60000), videoController.getVideoById);
+// GET VIDEO BY ID
+router.get('/:id', optionalAuth, guestAuth, guestRateLimiter(30, 60000), videoPublic.getVideoById);
 
-// GET SERIES EPISODE (Public - But with access checks)
-// Guest users can view episodes with rate limiting
-router.get('/:videoId/seasons/:seasonNumber/episodes/:episodeNumber', guestAuth, guestRateLimiter(30, 60000), videoController.getSeriesEpisode);
+// GET SERIES EPISODE
+router.get(
+  '/:videoId/seasons/:seasonNumber/episodes/:episodeNumber',
+  optionalAuth,
+  guestAuth,
+  guestRateLimiter(30, 60000),
+  videoPublic.getSeriesEpisode
+);
 
-/* ================================
-   PROTECTED ROUTES (Require Authentication)
-================================ */
+// CHECK VIDEO ACCESS
+router.get('/:id/access', optionalAuth, guestAuth, guestRateLimiter(60, 60000), videoPublic.checkVideoAccess);
 
-// CHECK VIDEO ACCESS (requires login for paid/private videos)
-router.get('/:id/access', guestAuth, videoController.checkVideoAccess);
-
-// WATCH VIDEO (requires login for paid/private videos)
-router.get('/:id/watch', guestAuth, videoController.watchVideo);
-
-// PURCHASE VIDEO (requires login)
-router.post('/:id/purchase', protect, videoController.purchaseVideo);
-
-// RATE VIDEO (requires login)
-router.post('/:id/rate', protect, videoController.rateVideo);
-
-// EDIT VIDEO (Creator only)
-router.put('/:id/edit', protect, videoController.editVideo);
-
-/* ================================
-   🆕 NEW: LIKE / DISLIKE ROUTES
-   Guest users are blocked by protect middleware
-================================ */
-
-// LIKE VIDEO (toggle like/unlike)
-router.post('/:id/like', protect, videoController.likeVideo);
-
-// DISLIKE VIDEO (toggle dislike/undislike)
-router.post('/:id/dislike', protect, videoController.dislikeVideo);
-
-// GET USER'S LIKE/DISLIKE STATUS
-router.get('/:id/interaction-status', protect, videoController.getVideoInteractionStatus);
-
-/* ================================
-   🆕 NEW: SHARE TRACKING ROUTE
-   Guests can share but with rate limiting
-================================ */
+// WATCH VIDEO
+router.get('/:id/watch', optionalAuth, guestAuth, guestRateLimiter(60, 60000), videoPublic.watchVideo);
 
 // TRACK VIDEO SHARE
-router.post('/:id/share', guestAuth, guestRateLimiter(20, 60000), videoController.trackShare);
+router.post('/:id/share', optionalAuth, guestAuth, guestRateLimiter(20, 60000), videoPublic.trackShare);
 
 /* ================================
-   🆕 NEW: WATCH HISTORY WITH RESUME
+   PROTECTED VIEWER ROUTES (require login)
 ================================ */
 
-// RECORD WATCH PROGRESS (call periodically while watching)
-router.post('/:id/progress', protect, videoController.recordWatchProgress);
+// PURCHASE VIDEO — handled by the wallet service (see server.js)
 
-// GET RESUME POSITION (call when loading video)
-router.get('/:id/resume', protect, videoController.getResumePosition);
+// RATE VIDEO
+router.post('/:id/rate', protect, videoPublic.rateVideo);
+
+// EDIT VIDEO (creator only)
+router.put('/:id/edit', protect, videoPublic.editVideo);
+
+// LIKE / DISLIKE (toggle) + status
+router.post('/:id/like', protect, videoPublic.likeVideo);
+router.post('/:id/dislike', protect, videoPublic.dislikeVideo);
+router.get('/:id/interaction-status', protect, videoPublic.getVideoInteractionStatus);
+
+// WATCH HISTORY WITH RESUME
+router.post('/:id/progress', protect, videoPublic.recordWatchProgress);
+router.get('/:id/resume', protect, videoPublic.getResumePosition);
 
 /* ================================
-   USER DASHBOARD ROUTES (Require Authentication)
+   USER DASHBOARD ROUTES (require login)
 ================================ */
 
 // GET VIDEOS BY STATUS (for user dashboard)
@@ -161,40 +118,37 @@ router.post('/:id/release', protect, videoController.releaseVideo);
 router.post('/:id/release-episode', protect, videoController.releaseSeriesEpisode);
 
 /* ================================
-   USER DELETE ROUTES - FOR REGULAR USERS (Require Authentication)
-   USERS CAN ONLY SOFT DELETE AND RESTORE - NO PERMANENT DELETE
+   USER DELETE ROUTES
+   Users can only soft delete and restore — no permanent delete.
 ================================ */
 
-// SOFT DELETE VIDEO (User can move their own videos to trash)
+// SOFT DELETE VIDEO (move own video to trash)
 router.delete('/:id/delete', protect, videoController.userSoftDeleteVideo);
 
-// RESTORE VIDEO (User can restore their own deleted videos from trash)
+// RESTORE VIDEO (restore own video from trash)
 router.put('/:id/restore', protect, videoController.userRestoreVideo);
 
-// PERMANENT DELETE - REMOVED (Users cannot permanently delete videos)
-// Videos auto-delete after 30 days in trash or when restore limit exceeded
-// Admins can permanently delete from admin panel
+// PERMANENT DELETE — not available to users. Videos in trash are deleted automatically after 30 days.
 router.delete('/:id/permanent', protect, (req, res) => {
-  res.status(403).json({ 
-    success: false, 
-    message: 'Users cannot permanently delete videos. Use soft delete (move to trash) instead. Videos in trash are automatically deleted after 30 days.' 
+  res.status(403).json({
+    success: false,
+    message:
+      'Users cannot permanently delete videos. Use soft delete (move to trash) instead. Videos in trash are automatically deleted after 30 days.',
   });
 });
 
 /* ================================
-   UPLOAD ROUTES (Require Authentication)
+   UPLOAD — legacy route removed
 ================================ */
-
-// UPLOAD VIDEO (Movies & Series) - using controller function
-router.post(
-  '/upload',
-  protect,
-  upload.fields(getSeriesFields()),
-  videoController.uploadVideo
-);
+router.post('/upload', protect, (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'This upload endpoint has been replaced. Use POST /api/uploads/video, or the direct upload flow (POST /api/uploads/sign then POST /api/uploads/video/finalize).',
+  });
+});
 
 /* ================================
-   ADMIN ROUTES - COMPLETE SET (Require Authentication + Admin)
+   ADMIN ROUTES (require login + admin role)
 ================================ */
 
 // Helper middleware for admin check
@@ -214,43 +168,33 @@ router.get('/admin/moderation', protect, requireAdmin, videoController.getVideos
 // ADMIN: GET VIDEO MODERATION STATS
 router.get('/admin/stats', protect, requireAdmin, videoController.getVideoModerationStats);
 
-// ✅ ADMIN APPROVE VIDEO
+// ADMIN APPROVE / REJECT
 router.put('/admin/:id/approve', protect, requireAdmin, videoController.adminApproveVideo);
-
-// ✅ ADMIN REJECT VIDEO
 router.put('/admin/:id/reject', protect, requireAdmin, videoController.adminRejectVideo);
 
-// ✅ ADMIN REMOVE VIDEO (soft delete - admin version)
+// ADMIN REMOVE / RESTORE (soft delete — admin version)
 router.delete('/admin/:id/remove', protect, requireAdmin, videoController.adminRemoveVideo);
-
-// ✅ ADMIN RESTORE VIDEO (undo soft delete - admin version)
 router.put('/admin/:id/restore', protect, requireAdmin, videoController.adminRestoreVideo);
 
-// ✅ ADMIN PERMANENT DELETE VIDEO (admin version)
+// ADMIN PERMANENT DELETE
 router.delete('/admin/:id/permanent', protect, requireAdmin, videoController.adminPermanentDeleteVideo);
 
-// ✅ ADMIN RESTRICT VIDEO
+// ADMIN RESTRICT / REMOVE RESTRICTION
 router.put('/admin/:id/restrict', protect, requireAdmin, videoController.adminRestrictVideo);
-
-// ✅ ADMIN REMOVE RESTRICTION
 router.put('/admin/:id/remove-restriction', protect, requireAdmin, videoController.adminRemoveRestriction);
 
-// ✅ ADMIN FLAG VIDEO
+// ADMIN FLAG / REMOVE FLAG
 router.put('/admin/:id/flag', protect, requireAdmin, videoController.adminFlagVideo);
-
-// ✅ ADMIN REMOVE FLAG
 router.put('/admin/:id/remove-flag', protect, requireAdmin, videoController.adminRemoveFlag);
 
-// ✅ ADMIN SHADOW BAN VIDEO
+// ADMIN SHADOW BAN / REMOVE SHADOW BAN
 router.put('/admin/:id/shadow-ban', protect, requireAdmin, videoController.adminShadowBanVideo);
-
-// ✅ ADMIN REMOVE SHADOW BAN
 router.put('/admin/:id/remove-shadow-ban', protect, requireAdmin, videoController.adminRemoveShadowBan);
 
 // ADMIN: UPDATE VIDEO FLAGS (age rating, content flags)
 router.put('/:id/admin/flags', protect, requireAdmin, videoController.adminUpdateVideoFlags);
 
-// ADMIN: UPDATE VIDEO STATUS (approve/reject) - Legacy support
+// ADMIN: UPDATE VIDEO STATUS (approve/reject) - legacy support
 router.put('/:id/admin/status', protect, requireAdmin, videoController.updateVideoStatus);
 
 // ADMIN: SHADOW BAN VIDEO (legacy)
@@ -259,21 +203,6 @@ router.post('/:id/admin/shadowban', protect, requireAdmin, videoController.shado
 // ADMIN: DELETE VIDEO (soft delete - legacy)
 router.delete('/:id/admin/delete', protect, requireAdmin, videoController.deleteVideo);
 
-/* ================================
-   BASIC VIDEO ROUTES
-================================ */
-
-// Simple health check for video routes
-router.get('/health', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Video routes are working',
-    timestamp: new Date()
-  });
-});
-
 module.exports = router;
 
-/**
- * END OF FILE: backend/routes/videoRoutes.js
- */
+// ═══ END OF FILE: backend/routes/videoRoutes.js ═══
